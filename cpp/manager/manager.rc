@@ -1,0 +1,17 @@
+// MSCoreManager resources: embedded manifest (asInvoker, comctl32 v6, per-monitor DPI, UTF-8) + Add mod dialog.
+#include <windows.h>
+
+1 ICON "mscore.ico"
+1 24 "manager.manifest"
+
+// IDD_ADDMOD = 300, IDC_REPO = 301 (main.cpp)
+300 DIALOG 0, 0, 230, 80
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add mod"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "owner/repo or GitHub URL:", -1, 10, 10, 210, 10
+    EDITTEXT        301, 10, 24, 210, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK", IDOK, 112, 52, 50, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 168, 52, 50, 16
+END

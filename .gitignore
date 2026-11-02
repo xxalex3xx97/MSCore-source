@@ -1,0 +1,7 @@
+selfcheck.log
+*.log
+tests/out/
+build/
+backups/
+*.dll
+*.exe
