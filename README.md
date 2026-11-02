@@ -57,7 +57,7 @@ Environment overrides (set them when your paths differ from the defaults):
 |---|---|---|
 | `MS_UE4SS_ROOT` | `build.ps1`, `scripts\release.ps1` | `F:\MSDemoMods\build\RE-UE4SS` |
 | `MS_GAME_DIR` | `build.ps1`, `scripts\release.ps1` | `F:\SteamLibrary\steamapps\common\Main Sequence Demo` |
-| `MS_LUAC` | `scripts\check.ps1` | `F:\MSDemoMods-release\tests\out\luac.exe` |
+| `MS_LUAC` | `scripts\check.ps1` | luac on PATH, else F:\MSDemoMods-public\tests\out\luac.exe |
 
 PowerShell example: `$env:MS_UE4SS_ROOT = 'D:\src\RE-UE4SS'`.
 
