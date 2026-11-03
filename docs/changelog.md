@@ -5,6 +5,12 @@ nav_order: 6
 
 # Changelog
 
+## 0.6.0 - Scan and chunk hold
+- **New:** world scan of ships, resource asteroids and stations (`MSCore.scan`, native `MSCore_scan`, Lua `MSCoreNative_scan`). Cached per kind.
+- **New:** chunk hold: keep the 3x3x3 chunk cube around a point loaded for an owner (`MSCore.chunks.hold` / `release`, native `MSCore_chunk_hold` / `MSCore_chunk_release` / `MSCore_chunk_ready`).
+- **New:** selfcheck checks `scan` and `chunks`, and `scan.api`.
+- Native API 3 (was 2). Lua API still 1. Scan and chunk hold are not verified in game yet.
+
 ## 0.5.1
 - **Fixed:** update checks could show an old version because GitHub caches release files. Checks now always fetch the current manifest.
 - **Removed:** `force_install`. Nothing is downloaded or installed unless you click Update / Add / Install. The game only checks and logs "update available".

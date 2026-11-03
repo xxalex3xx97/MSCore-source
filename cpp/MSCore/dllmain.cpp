@@ -29,11 +29,13 @@ using namespace RC::Unreal;
 #include "msc_orders.hpp"
 #include "msc_warp.hpp"
 #include "msc_pin.hpp"
+#include "msc_chunks.hpp"
+#include "msc_scan.hpp"
 #include "msc_loader.hpp"
 
 namespace
 {
-    constexpr const char* kVersion = "0.5.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.6.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -92,6 +94,19 @@ namespace
             { detail = "AddInputCommand/SetShipAutopilot/SkipToOrder missing"; return false; }
             detail = ctrl->GetFunctionByNameInChain(STR("DeleteOrder")) ? "ok" : "warn: DeleteOrder missing (ConfigureShipOrders fallback)";
             return true;
+        }
+        if (name == "scan")
+        {
+            const auto rows = scan_rows(0, 0, std::string(), 0, false);
+            if (rows.empty()) { detail = "SKIP no ships"; return false; }
+            detail = std::to_string(rows.size()) + " ships";
+            return true;
+        }
+        if (name == "chunks")
+        {
+            const bool ok = chunk_ready(why);
+            detail = ok ? std::string("natives found") : narrow(why);
+            return ok;
         }
         if (name == "sectors")
         {
@@ -442,6 +457,73 @@ namespace
         return 2;
     }
 
+    // one scan row as a text line: id|kind|sys|loaded|docked|piloted|dock_id|hull|max_hull|order_idx|order_dock|chX,chY,chZ|locX,locY,locZ|wX,wY,wZ|world_ok|name|type|order
+    // WHY: Lua splits on '|'; name, type and order are cleaned so they cannot add fields.
+    std::string scan_line(const MsScanRow& r)
+    {
+        auto i = [](long long v) { return std::to_string(v); };
+        auto v3 = [&](const long long* a) { return i(a[0]) + "," + i(a[1]) + "," + i(a[2]); };
+        auto d3 = [](const double* a) { return std::to_string(a[0]) + "," + std::to_string(a[1]) + "," + std::to_string(a[2]); };
+        auto txt = [](const wchar_t* w) {
+            std::string s = narrow(std::wstring(w));
+            for (char& c : s) if (c == '|' || c == '\n' || c == '\r') c = ' ';
+            return s;
+        };
+        return i(r.id) + "|" + i(r.kind) + "|" + i(r.sys) + "|" + i(r.loaded) + "|" + i(r.docked) + "|" + i(r.piloted) + "|" + i(r.dock_id) + "|" +
+               i(r.hull) + "|" + i(r.max_hull) + "|" + i(r.order_idx) + "|" + i(r.order_dock) + "|" + v3(r.ch) + "|" + v3(r.loc) + "|" +
+               d3(r.world) + "|" + i(r.world_ok) + "|" + txt(r.name) + "|" + txt(r.type) + "|" + txt(r.order);
+    }
+
+    // Lua: scan(kind, max_age_ms, type, sys, loaded_only) -> string, one scan_line per row. "" when args are wrong or on exception.
+    int lua_scan(const LuaMadeSimple::Lua& lua)
+    {
+        std::string out;
+        try
+        {
+            if (nums(lua, 2) && lua.is_number(4) && lua.is_number(5) && lua.is_string(3))
+            {
+                const long long age = lua.get_integer(2);
+                const auto rows = scan_rows(arg_int(lua, 1), age < 0 ? 0 : static_cast<ULONGLONG>(age), std::string(lua.get_string(3)),
+                                            arg_int(lua, 4), lua.get_integer(5) != 0);
+                for (const MsScanRow& r : rows) out += scan_line(r) + "\n";
+            }
+        }
+        catch (...) { out.clear(); }
+        lua.set_string(out);
+        return 1;
+    }
+
+    // Lua: chunk_hold(owner, sys, X, Y, Z) -> ok, err. ok is true for a set (1) and for an unchanged cube (2).
+    int lua_chunk_hold(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 5)) err = STR("chunk_hold needs owner, sys, X, Y, Z numbers");
+            else
+            {
+                const int64_t c[3] = {lua.get_integer(3), lua.get_integer(4), lua.get_integer(5)};
+                ok = chunk_hold(arg_int(lua, 1), arg_int(lua, 2), c, err) != 0;
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: chunk_release(owner) -> ok. Drops the owner's cube (no-op without one).
+    int lua_chunk_release(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        try
+        {
+            if (lua.is_number(1)) { chunk_hold_release_owner(arg_int(lua, 1)); ok = true; }
+        }
+        catch (...) { ok = false; }
+        lua.set_bool(ok);
+        return 1;
+    }
+
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
 
     struct LoaderRow { std::string name, installed, remote, state; };
@@ -535,7 +617,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.5.1");
+        ModVersion = STR("0.6.0");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -545,6 +627,8 @@ public:
     ~MSCoreMod()
     {
         g_loader_stop = true;   // detached worker checks this between network steps
+        try { chunk_hold_release_all(); }
+        catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
     }
 
     auto on_lua_start(LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -568,6 +652,9 @@ public:
         lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
         lua.register_function("MSCoreNative_check", lua_check);
         lua.register_function("MSCoreNative_loader_status", lua_loader_status);
+        lua.register_function("MSCoreNative_scan", lua_scan);
+        lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
+        lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
         Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals MSCoreNative_* registered\n"));
     }
 };
@@ -579,8 +666,8 @@ extern "C"
     MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
-    // MSCore_api: 2 = the set below (mining refuses to load below 2).
-    MSCORE_API int MSCore_api() { return 2; }
+    // MSCore_api: 3 = the set below (mining refuses to load below 3 when it needs scan or chunk hold).
+    MSCORE_API int MSCore_api() { return 3; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -764,4 +851,52 @@ extern "C"
 
     // last map-pinned sector id, 0 = none
     MSCORE_API int MSCore_pinned() { return g_pinned_sector; }
+
+    // scanned rows of kind (0 ship, 1 asteroid, 2 station) that pass type and sys filters: returns the total, or -1 on exception.
+    // out gets min(total, max) rows; out = nullptr or max = 0 counts only. loaded_only: asteroid kind = loaded rock actors only.
+    MSCORE_API int MSCore_scan(int kind, long long max_age_ms, const char* type, int sys, int loaded_only, MsScanRow* out, int max)
+    {
+        try
+        {
+            const auto rows = scan_rows(kind, max_age_ms < 0 ? 0 : static_cast<ULONGLONG>(max_age_ms), type ? std::string(type) : std::string(),
+                                        sys, loaded_only != 0);
+            const int n = static_cast<int>(rows.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
+            return n;
+        }
+        catch (...) { return -1; }
+    }
+
+    // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
+    MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)
+    {
+        std::wstring e;
+        int r = 0;
+        try
+        {
+            if (!ch3) e = STR("null chunk");
+            else r = chunk_hold(owner, sys, ch3, e);
+        }
+        catch (...) { r = 0; e = STR("exception"); }
+        copy_err(e, err, errlen);
+        return r;
+    }
+
+    // drops the owner's chunk hold. 1 = done (also when there was none), 0 = exception.
+    MSCORE_API int MSCore_chunk_release(int owner)
+    {
+        try { chunk_hold_release_owner(owner); return 1; }
+        catch (...) { return 0; }
+    }
+
+    // 1 when the chunk-hold natives are found (why gets the reason otherwise). Read-only.
+    MSCORE_API int MSCore_chunk_ready(wchar_t* why, int len)
+    {
+        std::wstring w;
+        int ok = 0;
+        try { ok = chunk_ready(w) ? 1 : 0; }
+        catch (...) { ok = 0; w = STR("exception"); }
+        copy_err(w, why, len);
+        return ok;
+    }
 }

@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v1. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
-local MSCore = { api = 1, version = "0.5.1", verified_build = 149200896 }
+local MSCore = { api = 1, version = "0.6.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -9,7 +9,8 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     new_order = _G.MSCoreNative_new_order, update_order = _G.MSCoreNative_update_order, delete_order = _G.MSCoreNative_delete_order,
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
     warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
-    check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status } or nil
+    check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
+    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -464,6 +465,83 @@ function MSCore.find_item(res)
     if n == 0 then return nil, "no Item matches '" .. tostring(res) .. "'" end
     return nil, "'" .. tostring(res) .. "' matches " .. n .. " Items (ambiguous)"
 end
+
+---------------------------------------------------------------- world scan + chunk hold (native; see docs/mod-authors/lua-api/scan.md)
+local SCAN_KINDS = { ship = 0, asteroid = 1, station = 2 }
+
+-- splits s on "|" (empty fields kept)
+local function splitBar(s)
+    local out, i = {}, 1
+    while true do
+        local j = string.find(s, "|", i, true)
+        if not j then out[#out + 1] = string.sub(s, i) break end
+        out[#out + 1] = string.sub(s, i, j - 1)
+        i = j + 1
+    end
+    return out
+end
+
+-- "x,y,z" -> {X=,Y=,Z=} numbers, nil when not three numbers
+local function triple(s)
+    local a, b, c = string.match(s, "^([^,]+),([^,]+),([^,]+)$")
+    if not a then return nil end
+    local X, Y, Z = tonumber(a), tonumber(b), tonumber(c)
+    if not (X and Y and Z) then return nil end
+    return { X = X, Y = Y, Z = Z }
+end
+
+-- one native row line -> table. hull/max_hull/order_idx are nil when -1; only ships have hull, docked, piloted, dock_id, order;
+-- only rocks have loaded; world is nil when world_ok is 0.
+local function scanRow(line)
+    local f = splitBar(line)
+    if #f < 18 then return nil end
+    local kind = tonumber(f[2])
+    local row = {
+        id = tonumber(f[1]), kind = kind, sys = tonumber(f[3]),
+        ch = triple(f[12]), loc = triple(f[13]),
+        world = f[15] == "1" and triple(f[14]) or nil,
+        name = f[16], type = f[17],
+    }
+    if kind == 0 then
+        row.docked = f[5] == "1"
+        row.piloted = f[6] == "1"
+        row.dock_id = tonumber(f[7])
+        row.hull = tonumber(f[8]) ~= -1 and tonumber(f[8]) or nil
+        row.max_hull = tonumber(f[9]) ~= -1 and tonumber(f[9]) or nil
+        row.order_idx = tonumber(f[10]) ~= -1 and tonumber(f[10]) or nil
+        row.order_dock = tonumber(f[11])
+        row.order = f[18] ~= "" and f[18] or nil
+    elseif kind == 1 then
+        row.loaded = f[4] == "1"
+    end
+    return row
+end
+
+-- world objects of one kind: kind = "ship" | "asteroid" | "station". f (optional): max_age_ms (default 60000, native cache),
+-- type (case-insensitive match on row type, oname or any ore name; "" = no filter), sys (solar system id; 0 = all),
+-- loaded_only (asteroid: only rock actors in the world). Returns a list of rows (see scanRow), or nil, reason.
+function MSCore.scan(kind, f)
+    local k = SCAN_KINDS[kind]
+    if k == nil then return nil, "unknown kind" end
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.scan then return nil, "native scan missing" end
+    f = f or {}
+    local text = N.scan(k, f.max_age_ms or 60000, f.type or "", f.sys or 0, f.loaded_only and 1 or 0)
+    local out = {}
+    for line in string.gmatch(text or "", "[^\n]+") do
+        local row = scanRow(line)
+        if row then out[#out + 1] = row end
+    end
+    return out
+end
+
+-- chunk hold: a 3x3x3 cube of chunks around ch (raw {X,Y,Z}) stays loaded for owner (integer). Returns ok, err.
+-- ok is true for a new set and for an unchanged cube. Each owner holds one cube; a new call moves it.
+MSCore.chunks = {}
+function MSCore.chunks.hold(owner, sys, ch) return call("chunk_hold", owner, sys, ch.X, ch.Y, ch.Z) end
+-- drops owner's cube (ok = true also when it had none)
+function MSCore.chunks.release(owner) return call("chunk_release", owner) end
 
 ---------------------------------------------------------------- loader: mod update checks (C++ thread does the network, Lua reads rows)
 -- row = {name, installed, remote, state}; state = pending | uptodate | update | skipped:min_native | error:<msg>
