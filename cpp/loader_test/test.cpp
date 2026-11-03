@@ -190,6 +190,30 @@ int main() {
     CHECK(read_text(P.core / L"loader.ini") == "force_install.Other=1\n");
     CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
 
+    // remove without install list: the mod folder is the list (mscore.mod, files; .log stays)
+    write_text(P.mods / L"U" / L"mscore.mod", "name=U\n");
+    write_text(P.mods / L"U" / L"dlls" / L"main.dll", "U");
+    write_text(P.mods / L"U" / L"a.log", "log");
+    CHECK(remove_mod(P, "U", err));
+    CHECK(!fs::exists(P.mods / L"U" / L"dlls" / L"main.dll"));
+    CHECK(read_text(P.mods / L"U" / L"a.log") == "log");
+    CHECK(!remove_mod(P, "U", err));  // mscore.mod gone: not installed
+
+    // toggle: enabled.txt + mods.txt line (CRLF kept)
+    write_text(P.mods / L"T" / L"enabled.txt", "");
+    write_text(P.mods / L"mods.txt", "T : 1\r\n");
+    CHECK(mod_enabled(P, "T"));
+    CHECK(set_mod_enabled(P, "T", false, err));
+    CHECK(!fs::exists(P.mods / L"T" / L"enabled.txt"));
+    CHECK(read_text(P.mods / L"mods.txt") == "T : 0\r\n");
+    CHECK(!mod_enabled(P, "T"));
+    CHECK(set_mod_enabled(P, "T", true, err));
+    CHECK(fs::exists(P.mods / L"T" / L"enabled.txt"));
+    CHECK(read_text(P.mods / L"mods.txt") == "T : 1\r\n");
+    CHECK(mod_enabled(P, "T"));
+    CHECK(!set_mod_enabled(P, "MSCore", true, err));
+    write_text(P.mods / L"mods.txt", "# hdr\nOther : 1\n");
+
     // path traversal in an install list is ignored, not followed
     write_text(P.core / L"installed" / L"Evil.txt", "1.0.0\nMods/../../evil.txt\n");
     CHECK(!remove_mod(P, "Evil", err));

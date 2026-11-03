@@ -917,8 +917,16 @@ inline bool remove_plan(const Paths& p, const std::string& mod, std::vector<Remo
     }
     std::string text = read_text(p.core / L"installed" / to_wide(mod + ".txt"));
     if (text.empty()) {
-        err = mod + " has no install list (not installed by MSCore)";
-        return false;
+        // no install list: the mod folder is the list
+        fs::path d = p.mods / to_wide(mod);
+        std::error_code ec;
+        if (!fs::is_regular_file(d / L"mscore.mod", ec)) {
+            err = mod + " is not installed";
+            return false;
+        }
+        text = "0\n";
+        for (auto it = fs::recursive_directory_iterator(d, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+            if (it->is_regular_file(ec)) text += "Mods/" + to_utf8(fs::relative(it->path(), p.mods).generic_wstring()) + "\n";
     }
     std::istringstream in(text);
     std::string l;
@@ -959,6 +967,78 @@ inline bool drop_lines(const fs::path& f, const std::function<bool(const std::st
     }
     if (any) write_text(f, out);
     return any;
+}
+
+// mods.txt "mod : v" line (comments and blanks never match). val = trimmed value.
+inline bool mods_txt_match(const std::string& line, const std::string& mod, std::string& val) {
+    std::string t = trim(line);
+    if (t.empty() || t[0] == '#' || t[0] == ';') return false;
+    size_t c = t.find(':');
+    if (c == std::string::npos || lower(trim(t.substr(0, c))) != lower(mod)) return false;
+    val = trim(t.substr(c + 1));
+    return true;
+}
+
+inline bool mods_txt_line(const std::string& text, const std::string& mod, std::string& val) {
+    std::istringstream in(text);
+    std::string l;
+    while (std::getline(in, l))
+        if (mods_txt_match(l, mod, val)) return true;
+    return false;
+}
+
+// First matching line becomes "<mod> : <v>"; CR of a CRLF line kept; other bytes untouched.
+inline std::string mods_txt_set(const std::string& text, const std::string& mod, const std::string& v) {
+    std::string out, val;
+    bool done = false;
+    size_t pos = 0;
+    for (;;) {
+        size_t e = text.find('\n', pos);
+        bool last = e == std::string::npos;
+        std::string line = text.substr(pos, last ? std::string::npos : e - pos);
+        if (!done && mods_txt_match(line, mod, val)) {
+            out += mod + " : " + v + (!line.empty() && line.back() == '\r' ? "\r" : "");
+            done = true;
+        } else {
+            out += line;
+        }
+        if (last) break;
+        out += '\n';
+        pos = e + 1;
+    }
+    return out;
+}
+
+// Enabled = enabled.txt exists, or mods.txt says "mod : 1".
+inline bool mod_enabled(const Paths& p, const std::string& mod) {
+    std::error_code ec;
+    if (fs::is_regular_file(p.mods / to_wide(mod) / L"enabled.txt", ec)) return true;
+    std::string val;
+    return mods_txt_line(read_text(p.mods / L"mods.txt"), mod, val) && !val.empty() && val[0] == '1';
+}
+
+// enabled.txt (UE4SS starts it even if mods.txt says 0) + mods.txt line if one exists (never adds one).
+// Refuses MSCore. The caller must check the game is not running.
+inline bool set_mod_enabled(const Paths& p, const std::string& mod, bool on, std::string& err) {
+    if (!safe_name(mod) || lower(mod) == "mscore") {
+        err = "refusing to toggle " + mod;
+        return false;
+    }
+    try {
+        if (on) {
+            write_text(p.mods / to_wide(mod) / L"enabled.txt", "");
+        } else {
+            std::error_code ec;
+            fs::remove(p.mods / to_wide(mod) / L"enabled.txt", ec);
+        }
+        fs::path txt = p.mods / L"mods.txt";
+        std::string text = read_text(txt), val;
+        if (mods_txt_line(text, mod, val)) write_text(txt, mods_txt_set(text, mod, on ? "1" : "0"));
+        return true;
+    } catch (const std::exception& e) {
+        err = e.what();
+        return false;
+    }
 }
 
 // Deletes the files listed for mod. A file that was overwritten by an update is put back from backup\.
