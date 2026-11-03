@@ -40,5 +40,14 @@ if ($Install) {
     New-Item -ItemType Directory -Force "$mod\dlls","$mod\Scripts" | Out-Null
     Copy-Item $dll "$mod\dlls\main.dll" -Force
     Copy-Item "$root\mods\MSCore\Scripts\*.lua" "$mod\Scripts\" -Force
+    Copy-Item "$root\mods\MSCore\mscore.mod" "$mod\" -Force
+    # install list (UTF-8 no BOM, LF): version line, then sorted zip-relative files
+    $ver = [regex]::Match((Get-Content "$mod\mscore.mod" -Raw), '(?m)^version=(.+?)\s*$').Groups[1].Value
+    $files = @('Mods/MSCore/dlls/main.dll', 'Mods/MSCore/mscore.mod')
+    $files += Get-ChildItem "$root\mods\MSCore\Scripts\*.lua" | ForEach-Object { "Mods/MSCore/Scripts/$($_.Name)" }
+    if (Test-Path "$mod\enabled.txt") { $files += 'Mods/MSCore/enabled.txt' }
+    New-Item -ItemType Directory -Force "$mod\installed" | Out-Null
+    $list = (@($ver) + @($files | Sort-Object)) -join "`n"
+    [IO.File]::WriteAllText("$mod\installed\MSCore.txt", $list + "`n", (New-Object Text.UTF8Encoding $false))
     "Installed. Backup: $bk"
 }
