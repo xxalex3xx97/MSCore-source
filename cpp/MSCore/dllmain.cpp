@@ -482,9 +482,12 @@ namespace
         {
             if (nums(lua, 2) && lua.is_number(4) && lua.is_number(5) && lua.is_string(3))
             {
+                // get_string removes its stack slot, so read the string last
                 const long long age = lua.get_integer(2);
-                const auto rows = scan_rows(arg_int(lua, 1), age < 0 ? 0 : static_cast<ULONGLONG>(age), std::string(lua.get_string(3)),
-                                            arg_int(lua, 4), lua.get_integer(5) != 0);
+                const int kind = arg_int(lua, 1), sys = arg_int(lua, 4);
+                const bool loaded = lua.get_integer(5) != 0;
+                const std::string type(lua.get_string(3));
+                const auto rows = scan_rows(kind, age < 0 ? 0 : static_cast<ULONGLONG>(age), type, sys, loaded);
                 for (const MsScanRow& r : rows) out += scan_line(r) + "\n";
             }
         }
