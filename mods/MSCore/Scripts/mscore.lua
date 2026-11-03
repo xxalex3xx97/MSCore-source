@@ -128,15 +128,20 @@ local function sf(path) local o = StaticFindObject(path) if o and o:IsValid() th
 function ui.mk(cls, outer) return StaticConstructObject(sf(R.umg .. cls), outer, 0, 0, 0, nil, false, false, nil) end
 function ui.setText(tb, s) tb:SetText(FText(s)) end
 
-local BTN, hooked = {}, false
+local BTN, hookIds = {}, nil
+-- WHY: the click hook fires for EVERY widget in the game; callers that drop their UI call ui.clearClicks() so the button map does not grow and the hook is removed (re-registered on the next onClick).
+function ui.clearClicks()
+    BTN = {}
+    if hookIds then pcall(UnregisterHook, R.clickHook, hookIds[1], hookIds[2]); hookIds = nil end
+end
 function ui.onClick(btn, fn)
-    if not hooked then
-        hooked = true
-        pcall(RegisterHook, R.clickHook, function(self)
+    if not hookIds then
+        local s, pre, post = pcall(RegisterHook, R.clickHook, function(self)
             local okn, key = pcall(function() return self:get():GetFullName() end)
             local f = okn and BTN[key]
             if f then pcall(ExecuteInGameThread, function() pcall(f) end) end
         end)
+        if s then hookIds = { pre, post } end
     end
     BTN[btn:GetFullName()] = fn
     btn.OnClicked:Add(btn, FName("ForceLayoutPrepass"))
