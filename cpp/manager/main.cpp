@@ -25,12 +25,13 @@ const char* kRepo = "xxalex3xx97/MSCore";
 const UINT WM_APP_CHECKED = WM_APP + 1;
 const UINT WM_APP_WORK = WM_APP + 2;
 
-enum : int { ID_LIST = 100, ID_CHECK, ID_UPD_SEL, ID_UPD_ALL, ID_INSTALL, ID_ROLLBACK, ID_BROWSE, ID_GAME, ID_STATUS, ID_ADD, ID_REMOVE };
+enum : int { ID_LIST = 100, ID_CHECK, ID_UPD_SEL, ID_UPD_ALL, ID_INSTALL, ID_ROLLBACK, ID_BROWSE, ID_GAME, ID_STATUS, ID_ADD, ID_REMOVE, ID_TOGGLE };
 const int IDD_ADDMOD = 300, IDC_REPO = 301;  // manager.rc DIALOG
 
 HWND g_hwnd = nullptr, g_list = nullptr, g_game_lbl = nullptr, g_status = nullptr;
 HWND g_btn_check = nullptr, g_btn_add = nullptr, g_btn_upd_sel = nullptr, g_btn_upd_all = nullptr,
-     g_btn_install = nullptr, g_btn_rollback = nullptr, g_btn_browse = nullptr, g_btn_remove = nullptr;
+     g_btn_install = nullptr, g_btn_rollback = nullptr, g_btn_browse = nullptr, g_btn_remove = nullptr,
+     g_btn_toggle = nullptr;
 std::string g_add_repo;  // set by the Add mod dialog
 mscl::Paths g_paths;
 bool g_has_game = false;
@@ -425,7 +426,8 @@ void refresh_list() {
     ListView_DeleteAllItems(g_list);
     for (int i = 0; i < static_cast<int>(g_rows.size()); ++i) {
         const mscl::Check& c = g_rows[i];
-        std::wstring cells[4] = {mscl::to_wide(c.mod.name), mscl::to_wide(c.mod.version),
+        std::wstring cells[4] = {mscl::to_wide(c.mod.name) + (mscl::mod_enabled(g_paths, c.mod.name) ? L"" : L" (disabled)"),
+                                 mscl::to_wide(c.mod.version),
                                  mscl::to_wide(c.m.version.empty() ? std::string("-") : c.m.version),
                                  mscl::to_wide(c.state)};
         LVITEMW it{};
@@ -447,6 +449,7 @@ void update_ui() {
     EnableWindow(g_btn_install, can && !running);
     EnableWindow(g_btn_rollback, can && !running);
     EnableWindow(g_btn_remove, can && !running);
+    EnableWindow(g_btn_toggle, can && !running);
     EnableWindow(g_btn_browse, !g_busy);
     std::string t = g_has_game ? "Game: " + mscl::to_utf8(g_paths.win64.wstring())
                                : std::string("No game folder - click Browse game folder");
@@ -607,11 +610,38 @@ void do_remove() {
     });
 }
 
+void do_toggle() {
+    if (g_busy || !g_has_game) return;
+    int i = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
+    if (i < 0) {
+        set_status("Select a mod row, then Disable/Enable");
+        return;
+    }
+    if (game_running()) {
+        set_status("Game is running - close it first");
+        return;
+    }
+    std::string name = g_rows[i].mod.name;
+    if (mscl::lower(name) == "mscore") {
+        set_status("MSCore itself cannot be disabled here");
+        return;
+    }
+    bool on = !mscl::mod_enabled(g_paths, name);
+    std::string err;
+    if (mscl::set_mod_enabled(g_paths, name, on, err))
+        set_status(std::string(on ? "Enabled " : "Disabled ") + name + ". Restart game to apply.");
+    else
+        set_status("Toggle " + name + " failed: " + err);
+    start_check();
+    refresh_list();
+}
+
 void on_command(int id) {
     switch (id) {
         case ID_CHECK: start_check(); break;
         case ID_ADD: do_add(); break;
         case ID_REMOVE: do_remove(); break;
+        case ID_TOGGLE: do_toggle(); break;
         case ID_UPD_SEL: do_update(false); break;
         case ID_UPD_ALL: do_update(true); break;
         case ID_INSTALL: do_install(); break;
@@ -649,6 +679,7 @@ void create_controls(HWND h) {
     g_btn_rollback = mk(h, L"BUTTON", L"Rollback", BS_PUSHBUTTON, 722, 346, 136, 30, ID_ROLLBACK);
     g_btn_browse = mk(h, L"BUTTON", L"Browse game folder", BS_PUSHBUTTON, 864, 346, 136, 30, ID_BROWSE);
     g_btn_remove = mk(h, L"BUTTON", L"Remove mod", BS_PUSHBUTTON, 12, 384, 136, 30, ID_REMOVE);
+    g_btn_toggle = mk(h, L"BUTTON", L"Disable/Enable", BS_PUSHBUTTON, 154, 384, 136, 30, ID_TOGGLE);
     g_status = mk(h, L"STATIC", L"", 0, 12, 426, 988, 20, ID_STATUS);
 }
 
