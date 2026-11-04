@@ -203,24 +203,29 @@ namespace
         msc_log(s);
     }
 
-    // WHAT: native failure: level 0 on every held chunk outside the player zone (zone chunks are kept as deferred), then the feature is off.
+    // WHAT: native failure: level 0 on every held chunk outside the player zone, then the feature is off.
+    // WHY: player-zone chunks (or all of them when the player is unreadable) are not cleared; they stay deferred and ch_drain
+    //      (chunk_hold_release_all) clears them once the player is out of the zone. The game reads run under SEH: a second fault only clears tracking.
     void ch_disable(const std::wstring& why)
     {
         msc_log(STR("CHUNKHOLD disabled for this session: ") + why + STR(" (held chunks released, feature off)"));
         g_ch.disabled = true;
-        int psys = 0;
-        int64_t pch[3] = {0, 0, 0};
-        const bool have = ch_player(psys, pch);
-        std::set<ChKey> all;
+        std::set<ChKey> all, keep;
         for (const auto& p : g_ch.refs) all.insert(p.first);
         for (const ChKey& key : g_ch.deferred) all.insert(key);
-        for (const ChKey& key : all)
-        {
-            if (!have || ch_in_zone(key, psys, pch)) continue;   // never touch the player's zone
-            ch_native(find_by_id(STR("SolarSystem"), key.sys), key.k, 0);   // result ignored: already failing
-        }
+        const bool ran = seh_run([&] {
+            int psys = 0;
+            int64_t pch[3] = {0, 0, 0};
+            const bool have = ch_player(psys, pch);
+            for (const ChKey& key : all)
+            {
+                if (!have || ch_in_zone(key, psys, pch)) { keep.insert(key); continue; }   // never touch the player's zone
+                ch_native(find_by_id(STR("SolarSystem"), key.sys), key.k, 0);   // result ignored: already failing
+            }
+        });
+        if (!ran) msc_log(STR("CHUNKHOLD disable: fault while releasing, tracking cleared"));
         g_ch.refs.clear();
-        g_ch.deferred.clear();
+        g_ch.deferred = ran ? keep : std::set<ChKey>();
         g_ch.owners.clear();
     }
 
@@ -385,8 +390,7 @@ namespace
         {
             err = STR("cap: ") + std::to_wstring(g_ch.refs.size()) + STR(" held, ") + std::to_wstring(need) + STR(" new chunks needed, max ") +
                   std::to_wstring(CH_MAX_CHUNKS);
-            ch_log_throttled(STR("CHUNKHOLD ") + err + STR(" owner=") + std::to_wstring(owner) + STR(", no hold"));
-            chunk_hold_release_owner(owner);
+            ch_log_throttled(STR("CHUNKHOLD ") + err + STR(" owner=") + std::to_wstring(owner) + STR(", request refused, old hold kept"));
             return 0;
         }
         // set the new cube first (a chunk another owner already holds only gets one more reference)

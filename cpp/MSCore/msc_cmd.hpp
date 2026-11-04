@@ -23,14 +23,22 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
+    // WHAT: SEH filter: a native fault runs the handler; a C++ exception (MSVC code 0xE06D7363) keeps searching, so the caller's catch sees it.
+    // WHY: bad_alloc and other C++ throws are not native faults; treating them as faults would turn a feature off for the session.
+    int seh_filter(unsigned long code)
+    {
+        return code == 0xE06D7363UL ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER;
+    }
+
     // WHAT: runs f inside SEH. false when it faulted (access violation on a freed object, bad native call). f's C++ locals are not destroyed then (a leak, not a crash).
     // WHY: game memory and ProcessEvent calls on dying objects fault; the caller turns the feature off instead of crashing the game.
     // NOTE: this helper has no C++ objects of its own (MSVC forbids __try in functions that have them); f may have any locals.
+    //       A C++ exception thrown by f propagates out of seh_run (it does not return false).
     template <typename F>
     bool seh_run(F&& f)
     {
         __try { f(); return true; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        __except (seh_filter(GetExceptionCode())) { return false; }
     }
 
     // WHAT: copies n bytes into a UFunction parameter buffer at the named parameter's offset; false if missing or it would overflow.

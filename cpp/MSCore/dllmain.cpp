@@ -529,10 +529,12 @@ namespace
     }
 
     // Lua: scan(kind, max_age_ms, type, sys, loaded_only) -> string, one scan_line per row, ok. "" when args are wrong or on exception.
-    // ok = false when the native scan is off (kill switch after a fault): the Lua side then runs its own scan.
+    // ok = true only for a real native scan. ok = false when args are wrong, on exception, or when the native scan is off
+    // (kill switch after a fault): the Lua side then runs its own scan, so an empty "" never passes as a scan result.
     int lua_scan(const LuaMadeSimple::Lua& lua)
     {
         std::string out;
+        bool ok = false;
         try
         {
             if (nums(lua, 2) && lua.is_number(4) && lua.is_number(5) && lua.is_string(3))
@@ -544,11 +546,12 @@ namespace
                 const bool loaded = arg_int(lua) != 0;
                 const auto rows = scan_rows(kind, age < 0 ? 0 : static_cast<ULONGLONG>(age), type, sys, loaded);
                 for (const MsScanRow& r : rows) out += scan_line(r) + "\n";
+                ok = true;
             }
         }
-        catch (...) { out.clear(); }
+        catch (...) { out.clear(); ok = false; }
         lua.set_string(out);
-        lua.set_bool(!g_scan_off);
+        lua.set_bool(ok && !g_scan_off);
         return 2;
     }
 
@@ -928,6 +931,9 @@ extern "C"
         }
         catch (...) { return -1; }
     }
+
+    // 1 = native scan on, 0 = off for this session (a walk faulted: MSCore_scan returns 0 rows; MSCore.scan uses its Lua fallback).
+    MSCORE_API int MSCore_scan_ok() { return g_scan_off ? 0 : 1; }
 
     // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
     MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)

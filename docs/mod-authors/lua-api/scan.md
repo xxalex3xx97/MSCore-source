@@ -55,6 +55,17 @@ nav_order: 10
 
 `'|'` and newlines in names are replaced with spaces by the native side, so the fields stay aligned.
 
+### Lua fallback
+
+If a native scan walk faults, the native scan is off for the rest of the session (kill switch). `MSCore_scan_ok` returns `0` then. `MSCore.scan` does not return an empty list in that case: it runs a pure-Lua scan (same row fields, logged once as `scan: native scan off`). The native side reports `ok = false` for this, for an exception and for bad arguments, so the fallback runs for those too.
+
+Known limits (not fixed):
+
+- The Lua fallback can differ from the native rows in detail (ore lists, `world`, cache age). The row shape is the same.
+- `max_age_ms` is the cache age of the native scan only. A row served from cache can be older than the value you pass, as long as its object is still alive.
+- A freed object's row pointer can be reused by the game. Cached rows are checked (object alive, same save id) before they are returned.
+- The chunk hold does not set or clear the player's own zone, so that part of a cube can be missing (see chunks).
+
 ### Example
 
 ```lua
@@ -82,7 +93,8 @@ A chunk cube is 27 chunks: the centre chunk and its 26 neighbours. The native si
 Rules:
 
 - Each owner holds one cube. Chunks held by several owners are cleared when the last one releases them.
-- At most 150 distinct chunks are held at once. A request over the cap returns `false` with a `cap:` reason and drops that owner's cube.
-- If the natives are not found, or a native call fails, chunk hold turns off for the rest of the session and every held chunk outside the player's zone is cleared. `chunk_ready` / the `chunks` check reports why.
+- At most 150 distinct chunks are held at once. A request over the cap returns `false` with a `cap:` reason. The owner's existing cube is kept (the request is refused, nothing is moved).
+- If the natives are not found, or a native call fails, chunk hold turns off for the rest of the session and every held chunk outside the player's zone is cleared. Chunks in the player's zone are not cleared at that point; they are cleared on `release_all` (mod unload) once the player has left the zone. `chunk_ready` / the `chunks` check reports why.
+- Known limit: the player's own zone is never set or cleared, so a cube can have holes there.
 
 Check it with selfcheck. The `chunks` check only reads: it does not set anything.
