@@ -10,6 +10,10 @@
 //       Item objects. The second form is not verified in game.
 // DEPENDS ON: msc_api.hpp (MsScanRow), msc_cmd.hpp (alive, first_of), msc_ue.hpp (obj_id, get_int_prop, get_bool_prop, get_obj_prop, call_int,
 //             actor_vec_call, obj_display, lower, widen, msc_log), msc_warp.hpp (get_chunk, sec_axes, sys_id).
+// SAFETY: game thread only (Lua and MSCore_scan). The whole walk runs under scan_guard (SEH). A fault turns native scan OFF for the session
+//         (logged once, g_scan_off): scans return no rows and lua_scan reports ok = false, so MSCore.scan falls back to its Lua scan.
+//         Cached rows are checked before they are handed out (row_live: object alive and same save id; row_clean: dead actor / ores dropped).
+// LOG: every walk logs "SCAN walk <kind>" on entry, so a crash log shows the last step.
 // USED BY: dllmain.cpp (MSCore_scan, MSCoreNative_scan, check "scan").
 #pragma once
 #include <map>
@@ -24,12 +28,24 @@ namespace
     // one cached scan: time of the last read (GetTickCount64, 0 = never) and its rows
     struct ScanCache { ULONGLONG t = 0; std::vector<MsScanRow> rows; };
     ScanCache g_scan[SLOT_COUNT];
+    bool g_scan_off = false;   // kill switch: a native scan walk faulted once; no native scan for the rest of the session
 
     // WHAT: alive() that survives a freed object (access violation -> false).
     bool alive_seh(UObject* o)
     {
         __try { return alive(o); }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    // WHAT: runs one scan walk (f) under SEH. A fault sets g_scan_off, logs once and returns false. Once off, f is never called.
+    template <typename F>
+    bool scan_guard(F&& f)
+    {
+        if (g_scan_off) return false;
+        if (seh_run(f)) return true;
+        g_scan_off = true;
+        msc_log(STR("SCAN native fault: native scan OFF for this session (Lua fallback in MSCore.scan). The last 'SCAN walk' line is the step that faulted."));
+        return false;
     }
 
     // WHAT: writes s into a wide char array of n chars, always NUL-terminated.
@@ -128,6 +144,7 @@ namespace
     // WHAT: every live ship: id, names, dock state, piloted, hull, order, actor world position.
     void scan_ships(std::vector<MsScanRow>& out)
     {
+        msc_log(STR("SCAN walk ship"));
         UObject* ctrl = first_of(STR("DMSPlayerController"));
         const int cid = alive(ctrl) ? obj_id(ctrl) : -1;
         std::vector<UObject*> ships;
@@ -163,6 +180,7 @@ namespace
     // WHAT: every live resource asteroid save object. loaded = its BP_GenericResourceAsteroid_C actor is in the world (matched by ObjectId).
     void scan_rocks_all(std::vector<MsScanRow>& out)
     {
+        msc_log(STR("SCAN walk asteroid-all"));
         std::map<int, UObject*> actor_by_id;
         std::vector<UObject*> acts;
         UObjectGlobals::FindAllOf(STR("BP_GenericResourceAsteroid_C"), acts);
@@ -202,6 +220,7 @@ namespace
     // WHAT: every live BP_GenericResourceAsteroid_C actor (loaded rocks). obj = actor, ore = GetScanItem.
     void scan_rocks_loaded(std::vector<MsScanRow>& out)
     {
+        msc_log(STR("SCAN walk asteroid-loaded"));
         std::vector<UObject*> acts;
         UObjectGlobals::FindAllOf(STR("BP_GenericResourceAsteroid_C"), acts);
         for (UObject* a : acts)
@@ -233,6 +252,7 @@ namespace
     // WHAT: every live SolarSystemSector-like station: FindAllOf Dock. name = display name, type = class name, oname = object name.
     void scan_stations(std::vector<MsScanRow>& out)
     {
+        msc_log(STR("SCAN walk station"));
         std::vector<UObject*> docks;
         UObjectGlobals::FindAllOf(STR("Dock"), docks);
         for (UObject* d : docks)
@@ -267,16 +287,30 @@ namespace
         return false;
     }
 
-    // WHAT: the rows of kind (0 ship, 1 asteroid, 2 station) that pass the filters. The slot is rescanned when it is empty,
-    //       max_age_ms is 0, or it is older than max_age_ms (GetTickCount64 ms). Unknown kind: no rows.
-    // WHY: one cache per kind, so repeated calls within max_age_ms do not walk FindAllOf again.
-    std::vector<MsScanRow> scan_rows(int kind, ULONGLONG max_age_ms, const std::string& type, int sys, bool loaded_only)
+    // WHAT: true when the row's object is still the one it was read from: alive, and its save id still matches.
+    // WHY: a cached row can outlive its object, and freed memory can be reused. Loaded rock rows hold the actor, which is matched by ObjectId.
+    bool row_live(const MsScanRow& r, bool actor_obj)
     {
-        int slot = -1;
-        if (kind == 0) slot = SLOT_SHIP;
-        else if (kind == 1) slot = loaded_only ? SLOT_ROCK_LOADED : SLOT_ROCK_ALL;
-        else if (kind == 2) slot = SLOT_STATION;
-        if (slot < 0) return {};
+        UObject* o = static_cast<UObject*>(r.obj);
+        if (!o) return false;
+        if (!actor_obj) return cached_ok(o, r.id);
+        bool ok = false;
+        return seh_run([&] { int32_t v = -1; ok = alive(o) && get_int_prop(o, STR("ObjectId"), v) && v == r.id; }) && ok;
+    }
+
+    // WHAT: drops dead references from a row copy: a dead actor (actor null, loaded 0, world_ok 0) and dead ore objects (pruned).
+    void row_clean(MsScanRow& r)
+    {
+        if (r.actor && !alive_seh(static_cast<UObject*>(r.actor))) { r.actor = nullptr; r.loaded = 0; r.world_ok = 0; }
+        int n = 0;
+        for (int i = 0; i < r.nores; ++i) if (alive_seh(static_cast<UObject*>(r.ores[i]))) r.ores[n++] = r.ores[i];
+        for (int i = n; i < r.nores; ++i) r.ores[i] = nullptr;
+        r.nores = n;
+    }
+
+    // WHAT: rescans slot when it is empty, max_age_ms is 0 or it is too old, then appends the cached rows that pass the filters to out.
+    void scan_rows_walk(int slot, ULONGLONG max_age_ms, const std::string& type, int sys, std::vector<MsScanRow>& out)
+    {
         ScanCache& c = g_scan[slot];
         const ULONGLONG now = GetTickCount64();
         if (c.t == 0 || max_age_ms == 0 || now - c.t >= max_age_ms)
@@ -290,14 +324,29 @@ namespace
             c.t = now;
         }
         const std::wstring want = lower(widen(type));
-        std::vector<MsScanRow> out;
-        for (const MsScanRow& r : c.rows)
+        for (const MsScanRow& cached : c.rows)
         {
+            if (!row_live(cached, slot == SLOT_ROCK_LOADED)) continue;
+            MsScanRow r = cached;
+            row_clean(r);
             if (sys > 0 && r.sys != sys) continue;
             if (!want.empty() && !row_matches(r, want)) continue;
-            if (!alive_seh(static_cast<UObject*>(r.obj))) continue;
             out.push_back(r);
         }
+    }
+
+    // WHAT: the rows of kind (0 ship, 1 asteroid, 2 station) that pass the filters. The slot is rescanned when it is empty,
+    //       max_age_ms is 0, or it is older than max_age_ms (GetTickCount64 ms). Unknown kind or native scan off: no rows.
+    // WHY: one cache per kind, so repeated calls within max_age_ms do not walk FindAllOf again. The whole call runs under scan_guard.
+    std::vector<MsScanRow> scan_rows(int kind, ULONGLONG max_age_ms, const std::string& type, int sys, bool loaded_only)
+    {
+        int slot = -1;
+        if (kind == 0) slot = SLOT_SHIP;
+        else if (kind == 1) slot = loaded_only ? SLOT_ROCK_LOADED : SLOT_ROCK_ALL;
+        else if (kind == 2) slot = SLOT_STATION;
+        if (slot < 0) return {};
+        std::vector<MsScanRow> out;
+        if (!scan_guard([&] { scan_rows_walk(slot, max_age_ms, type, sys, out); })) out.clear();
         return out;
     }
 }

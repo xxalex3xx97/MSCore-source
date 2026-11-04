@@ -23,6 +23,16 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
+    // WHAT: runs f inside SEH. false when it faulted (access violation on a freed object, bad native call). f's C++ locals are not destroyed then (a leak, not a crash).
+    // WHY: game memory and ProcessEvent calls on dying objects fault; the caller turns the feature off instead of crashing the game.
+    // NOTE: this helper has no C++ objects of its own (MSVC forbids __try in functions that have them); f may have any locals.
+    template <typename F>
+    bool seh_run(F&& f)
+    {
+        __try { f(); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
     // WHAT: copies n bytes into a UFunction parameter buffer at the named parameter's offset; false if missing or it would overflow.
     // WHY: sets inputs for ProcessEvent calls without a header; the bounds check stops a wrong name from writing past the buffer.
     bool put(UFunction* fn, std::vector<uint8_t>& buf, const TCHAR* name, const void* src, size_t n)

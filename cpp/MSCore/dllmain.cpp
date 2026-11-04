@@ -213,13 +213,18 @@ namespace
         return true;
     }
 
-    // UObject of Lua arg i; nullptr for nil or a non-userdata
-    UObject* lua_obj(const LuaMadeSimple::Lua& lua, int i)
-    {
-        return lua.is_userdata(i) ? lua.get_userdata<LuaType::UObject>(i).get_remote_cpp_object() : nullptr;
-    }
+    // Lua args are CONSUMED IN ORDER: every LuaMadeSimple getter (get_integer, get_float, get_string, get_userdata) removes its
+    // stack slot, so the next arg is always index 1. Read each arg as its own statement, in order. Never use a fixed index
+    // after a getter: the index then points past the top, lua_remove decrements top and the Lua stack is corrupted (crash later).
+    // Type checks (is_number, is_string, is_userdata) do not remove anything, so they may use fixed indexes before any read.
+    int arg_int(const LuaMadeSimple::Lua& lua) { return static_cast<int>(lua.get_integer(1)); }
 
-    int arg_int(const LuaMadeSimple::Lua& lua, int i) { return static_cast<int>(lua.get_integer(i)); }
+    // next arg as a UObject: nullptr for nil or a non-userdata. Always consumes the arg.
+    UObject* arg_obj(const LuaMadeSimple::Lua& lua)
+    {
+        if (!lua.is_userdata(1)) { lua.discard_value(1); return nullptr; }
+        return lua.get_userdata<LuaType::UObject>(1).get_remote_cpp_object();
+    }
 
     // Lua: send_cmd(receiver int, cmd UObject) -> ok, err
     int lua_send_cmd(const LuaMadeSimple::Lua& lua)
@@ -232,12 +237,13 @@ namespace
             else if (!lua.is_userdata(2)) err = STR("cmd is not a UObject");
             else
             {
-                UObject* cmd = lua.get_userdata<LuaType::UObject>(2).get_remote_cpp_object();
+                const int receiver = arg_int(lua);
+                UObject* cmd = arg_obj(lua);
                 if (!alive(cmd)) err = STR("cmd is not alive");
                 else
                 {
                     fix_type_id(cmd);
-                    ok = add_input(static_cast<int>(lua.get_integer(1)), cmd, err);
+                    ok = add_input(receiver, cmd, err);
                 }
             }
         }
@@ -255,9 +261,10 @@ namespace
             if (!nums(lua, 3)) err = STR("view_send needs cid, yaw, pitch numbers");
             else
             {
-                ok = view_send(static_cast<int>(lua.get_integer(1)),
-                               static_cast<int64_t>(lua.get_float(2) * kViewRawPerDeg),
-                               static_cast<int64_t>(lua.get_float(3) * kViewRawPerDeg), err);
+                const int cid = arg_int(lua);
+                const float yaw = lua.get_float(1);
+                const float pitch = lua.get_float(1);
+                ok = view_send(cid, static_cast<int64_t>(yaw * kViewRawPerDeg), static_cast<int64_t>(pitch * kViewRawPerDeg), err);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -272,7 +279,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("throttle needs sid, delta numbers");
-            else ok = send_ship_throttle(arg_int(lua, 1), arg_int(lua, 2), err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int delta = arg_int(lua);
+                ok = send_ship_throttle(sid, delta, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -323,7 +335,12 @@ namespace
         try
         {
             if (!nums(lua, 1) || !lua.is_string(2)) err = STR("new_order needs receiver number, cls string");
-            else ok = new_order(arg_int(lua, 1), widen(std::string(lua.get_string(2))), err);
+            else
+            {
+                const int receiver = arg_int(lua);
+                const std::string cls(lua.get_string(1));
+                ok = new_order(receiver, widen(cls), err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -337,7 +354,15 @@ namespace
         try
         {
             if (!nums(lua, 2) || !lua.is_number(4) || !lua.is_number(5)) err = STR("update_order needs oid, target, cmp, amount numbers");
-            else ok = update_order(arg_int(lua, 1), arg_int(lua, 2), lua_obj(lua, 3), arg_int(lua, 4), arg_int(lua, 5), err);
+            else
+            {
+                const int oid = arg_int(lua);
+                const int target = arg_int(lua);
+                UObject* item = arg_obj(lua);
+                const int cmp = arg_int(lua);
+                const int amount = arg_int(lua);
+                ok = update_order(oid, target, item, cmp, amount, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -351,7 +376,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("delete_order needs sid, oid numbers");
-            else ok = delete_order(arg_int(lua, 1), arg_int(lua, 2), err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int oid = arg_int(lua);
+                ok = delete_order(sid, oid, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -365,7 +395,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("autopilot needs sid, on numbers");
-            else ok = set_autopilot(arg_int(lua, 1), arg_int(lua, 2) != 0, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const bool on = arg_int(lua) != 0;
+                ok = set_autopilot(sid, on, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -380,7 +415,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("skip_to needs sid, idx numbers");
-            else ok = skip_to(arg_int(lua, 1), arg_int(lua, 2), before, after, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int idx = arg_int(lua);
+                ok = skip_to(sid, idx, before, after, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         lua.set_bool(ok);
@@ -398,7 +438,16 @@ namespace
         try
         {
             if (!nums(lua, 2) || !lua.is_number(4) || !lua.is_number(5) || !lua.is_number(6)) err = STR("filter_send needs sid, idx, amount, action, remove numbers");
-            else ok = filter_send(arg_int(lua, 1), arg_int(lua, 2), lua_obj(lua, 3), arg_int(lua, 4), arg_int(lua, 5), arg_int(lua, 6) != 0, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int idx = arg_int(lua);
+                UObject* item = arg_obj(lua);
+                const int amount = arg_int(lua);
+                const int action = arg_int(lua);
+                const bool remove = arg_int(lua) != 0;
+                ok = filter_send(sid, idx, item, amount, action, remove, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -415,9 +464,14 @@ namespace
             if (!nums(lua, 10)) err = STR("warp_send needs 10 numbers");
             else
             {
-                const int64_t ch[3] = {lua.get_integer(3), lua.get_integer(4), lua.get_integer(5)};
-                const int64_t arr[3] = {lua.get_integer(6), lua.get_integer(7), lua.get_integer(8)};
-                ok = warp_send(arg_int(lua, 1), arg_int(lua, 2), ch, arr, lua.get_integer(9) != 0, err, lua.get_integer(10) != 0);
+                const int sid = arg_int(lua);
+                const int sys = arg_int(lua);
+                int64_t ch[3], arr[3];
+                for (int i = 0; i < 3; ++i) ch[i] = lua.get_integer(1);
+                for (int i = 0; i < 3; ++i) arr[i] = lua.get_integer(1);
+                const bool wrap = lua.get_integer(1) != 0;
+                const bool set_target = lua.get_integer(1) != 0;
+                ok = warp_send(sid, sys, ch, arr, wrap, err, set_target);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -474,7 +528,8 @@ namespace
                d3(r.world) + "|" + i(r.world_ok) + "|" + txt(r.name) + "|" + txt(r.type) + "|" + txt(r.order);
     }
 
-    // Lua: scan(kind, max_age_ms, type, sys, loaded_only) -> string, one scan_line per row. "" when args are wrong or on exception.
+    // Lua: scan(kind, max_age_ms, type, sys, loaded_only) -> string, one scan_line per row, ok. "" when args are wrong or on exception.
+    // ok = false when the native scan is off (kill switch after a fault): the Lua side then runs its own scan.
     int lua_scan(const LuaMadeSimple::Lua& lua)
     {
         std::string out;
@@ -482,18 +537,19 @@ namespace
         {
             if (nums(lua, 2) && lua.is_number(4) && lua.is_number(5) && lua.is_string(3))
             {
-                // get_string removes its stack slot, so read the string last
-                const long long age = lua.get_integer(2);
-                const int kind = arg_int(lua, 1), sys = arg_int(lua, 4);
-                const bool loaded = lua.get_integer(5) != 0;
-                const std::string type(lua.get_string(3));
+                const int kind = arg_int(lua);
+                const long long age = lua.get_integer(1);
+                const std::string type(lua.get_string(1));
+                const int sys = arg_int(lua);
+                const bool loaded = arg_int(lua) != 0;
                 const auto rows = scan_rows(kind, age < 0 ? 0 : static_cast<ULONGLONG>(age), type, sys, loaded);
                 for (const MsScanRow& r : rows) out += scan_line(r) + "\n";
             }
         }
         catch (...) { out.clear(); }
         lua.set_string(out);
-        return 1;
+        lua.set_bool(!g_scan_off);
+        return 2;
     }
 
     // Lua: chunk_hold(owner, sys, X, Y, Z) -> ok, err. ok is true for a set (1) and for an unchanged cube (2).
@@ -506,8 +562,11 @@ namespace
             if (!nums(lua, 5)) err = STR("chunk_hold needs owner, sys, X, Y, Z numbers");
             else
             {
-                const int64_t c[3] = {lua.get_integer(3), lua.get_integer(4), lua.get_integer(5)};
-                ok = chunk_hold(arg_int(lua, 1), arg_int(lua, 2), c, err) != 0;
+                const int owner = arg_int(lua);
+                const int sys = arg_int(lua);
+                int64_t c[3];
+                for (int i = 0; i < 3; ++i) c[i] = lua.get_integer(1);
+                ok = chunk_hold(owner, sys, c, err) != 0;
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -520,7 +579,7 @@ namespace
         bool ok = false;
         try
         {
-            if (lua.is_number(1)) { chunk_hold_release_owner(arg_int(lua, 1)); ok = true; }
+            if (lua.is_number(1)) ok = chunk_hold_release_owner(arg_int(lua));
         }
         catch (...) { ok = false; }
         lua.set_bool(ok);
@@ -885,10 +944,10 @@ extern "C"
         return r;
     }
 
-    // drops the owner's chunk hold. 1 = done (also when there was none), 0 = exception.
+    // drops the owner's chunk hold. 1 = done (also when there was none), 0 = a native call failed or exception (feature off).
     MSCORE_API int MSCore_chunk_release(int owner)
     {
-        try { chunk_hold_release_owner(owner); return 1; }
+        try { return chunk_hold_release_owner(owner) ? 1 : 0; }
         catch (...) { return 0; }
     }
 

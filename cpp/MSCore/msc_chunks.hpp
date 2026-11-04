@@ -10,7 +10,8 @@
 //        only chunks that have a Chunk object are set (the rest is counted as no_object in the log).
 // SAFETY: game thread only. The natives are found by byte pattern (msc_natives.hpp, nat_resolve: exactly one match each, else
 //         the feature is off) and ch_native_check (get_system(PlayerObject) == FindAllOf SolarSystem) runs once per session before
-//         the first set. Every native call is inside a ch_seh_* helper (SEH). A native failure -> ch_disable: level 0 on every held
+//         the first set. Every native call is inside a ch_seh_* helper (SEH), and every API call runs under ch_guard (SEH, whole body:
+//         ChunkMap reads, player reads). A native failure or a fault -> ch_disable: level 0 on every held
 //         chunk outside the player zone, feature off for the session. The first set is verified by a canary (chunk object still
 //         there after a re-read of the map). The controller is never written. bForceLoadChunks is never written.
 // DEPENDS ON: msc_cmd.hpp (alive, first_of), msc_ue.hpp (cached_ok, obj_id, find_by_id, get_obj_prop, msc_log), msc_warp.hpp (sec_axes, sys_id),
@@ -286,19 +287,31 @@ namespace
 // ---- API (called from dllmain.cpp) ----
 namespace
 {
-    // WHAT: drops one owner's cube (its chunks no other owner holds are cleared). No-op without a cube.
-    void chunk_hold_release_owner(int owner)
+    // WHAT: runs one chunk-hold call under SEH. A fault turns the feature off (ch_disable: held chunks cleared outside the player zone). false = faulted.
+    template <typename F>
+    bool ch_guard(F&& f)
+    {
+        if (seh_run(f)) return true;
+        ch_disable(STR("fault inside a chunk hold call"));
+        return false;
+    }
+
+    // WHAT: drops one owner's cube (its chunks no other owner holds are cleared). true when done or when there was no cube;
+    //       false = a native call failed (the feature is off now). The owner's record is gone either way.
+    bool chunk_hold_release_owner(int owner)
     {
         const auto it = g_ch.owners.find(owner);
-        if (it == g_ch.owners.end()) return;
+        if (it == g_ch.owners.end()) return true;
         const ChRec rec = it->second;
         g_ch.owners.erase(it);
         int cleared = 0, kept = 0;
-        if (!ch_drop(rec, cleared, kept)) return;
-        ch_drain();
+        bool dropped = false;
+        if (!ch_guard([&] { dropped = ch_drop(rec, cleared, kept); }) || !dropped) return false;
+        ch_guard([] { ch_drain(); });
         msc_log(STR("CHUNKHOLD released owner=") + std::to_wstring(owner) + STR(" sys=") + std::to_wstring(rec.sys) + STR(" centre=") + ch_key_text(rec.c) +
                 STR(" cleared=") + std::to_wstring(cleared) + STR(" shared_kept=") + std::to_wstring(kept) + STR(" held=") + std::to_wstring(g_ch.refs.size()) +
                 STR(" deferred=") + std::to_wstring(g_ch.deferred.size()));
+        return true;
     }
 
     // WHAT: releases every hold, then retries the deferred clears. Game exit, mod unload.
@@ -307,7 +320,7 @@ namespace
         std::vector<int> ids;
         for (const auto& p : g_ch.owners) ids.push_back(p.first);
         for (int id : ids) chunk_hold_release_owner(id);
-        ch_drain();
+        ch_guard([] { ch_drain(); });
         msc_log(STR("CHUNKHOLD release_all owners=") + std::to_wstring(ids.size()) + STR(" held=") + std::to_wstring(g_ch.refs.size()) +
                 STR(" deferred=") + std::to_wstring(g_ch.deferred.size()));
     }
@@ -322,9 +335,9 @@ namespace
         return true;
     }
 
-    // WHAT: sets (or moves) the owner's cube of 27 chunks centred on c in system sys. Returns 0 fail (err says why), 1 set, 2 unchanged.
+    // WHAT: set/move body of chunk_hold (no SEH here: chunk_hold wraps it). Returns 0 fail (err says why), 1 set, 2 unchanged.
     // WHY: the new cube is set before the old one is cleared, so chunks both cubes use never unload.
-    int chunk_hold(int owner, int sys, const int64_t c3[3], std::wstring& err)
+    int ch_set(int owner, int sys, const int64_t c3[3], std::wstring& err)
     {
         if (!ch_ready(err)) return 0;
         int psys = 0;
@@ -425,5 +438,14 @@ namespace
                 STR(" no_object=") + std::to_wstring(no_obj) + STR(" player_zone=") + std::to_wstring(zone) + STR(" cleared=") + std::to_wstring(cleared) +
                 STR(" held=") + std::to_wstring(g_ch.refs.size()) + STR(" deferred=") + std::to_wstring(g_ch.deferred.size()));
         return 1;
+    }
+
+    // WHAT: sets (or moves) the owner's cube of 27 chunks centred on c in system sys. Returns 0 fail (err says why), 1 set, 2 unchanged.
+    // WHY: runs ch_set under ch_guard (SEH): a fault turns the feature off instead of crashing the game.
+    int chunk_hold(int owner, int sys, const int64_t c3[3], std::wstring& err)
+    {
+        int r = 0;
+        if (!ch_guard([&] { r = ch_set(owner, sys, c3, err); })) { err = STR("fault inside chunk hold"); return 0; }
+        return r;
     }
 }
