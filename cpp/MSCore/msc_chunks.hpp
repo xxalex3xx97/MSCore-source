@@ -1,11 +1,12 @@
 // FILE: cpp/MSCore/msc_chunks.hpp
 // WHAT: chunk hold. A 3x3x3 cube of chunks around a centre chunk stays loaded: SetLevel(S,&key,1) + Apply(S,&key) per chunk (native).
-//       chunk_hold(owner, sys, c, err)  sets or moves the owner's cube. Returns 0 fail (err says why), 1 set, 2 unchanged.
+//       chunk_hold(owner, sys, c, err)  sets or moves the owner's cube. Returns 0 fail (err says why), 1 set (or pending chunks added), 2 unchanged.
 //       chunk_hold_release_owner(owner) drops the owner's cube.
 //       chunk_hold_release_all()        drops every cube (game exit / mod unload).
 //       chunk_ready(why)                natives found by pattern (nat_resolve); why = reason when not ready.
 // WHY: LoadChunks() streams only the player's surroundings, so far-away chunks stay unloaded until a caller holds their cube.
-// RULES: the player's own loaded set (player chunk +- CH_PLAYER_ZONE) is never set or cleared (deferred instead);
+// RULES: the player's own loaded set (player chunk +- CH_PLAYER_ZONE) is never set or cleared: a cube chunk in it is pending (ChRec.pend)
+//        and is set by a later hold / drain call once the player has left the zone (ch_fill_rec); a clear there is deferred;
 //        a chunk held by several owners is cleared when the last one drops it; at most CH_MAX_CHUNKS held chunks;
 //        only chunks that have a Chunk object are set (the rest is counted as no_object in the log).
 // SAFETY: game thread only. The natives are found by byte pattern (msc_natives.hpp, nat_resolve: exactly one match each, else
@@ -49,7 +50,8 @@ namespace
     {
         int sys = 0;
         int32_t c[3] = {0, 0, 0};
-        std::vector<ChKey> keys;
+        std::vector<ChKey> keys;   // chunks this owner holds (level 1 applied, counted in refs)
+        std::vector<ChKey> pend;   // cube chunks skipped because they were in the player zone; added when they leave it
     };
 
     struct ChState
@@ -250,8 +252,79 @@ namespace
         return true;
     }
 
+    // WHAT: adds the owner's pending chunks (ChRec.pend: skipped in the player zone) that have left the zone and have a Chunk object.
+    //       A chunk another owner already holds gets one more reference; otherwise level 1 + apply. Added chunks move to rec.keys.
+    //       The cap (CH_MAX_CHUNKS) is checked here too: a chunk over it stays pending.
+    // WHY: the player's zone is never set, so a chunk wanted there is added on a later hold / drain call once the player has moved on.
+    // RETURNS: chunks added (0 when none or when the player / system is unreadable), -1 when a native call failed (ch_disable ran: rec and
+    //          g_ch.owners are not valid after that, the caller must return at once).
+    int ch_fill_rec(int owner, ChRec& rec, std::wstring& err)
+    {
+        if (rec.pend.empty()) return 0;
+        int psys = 0;
+        int64_t pch[3] = {0, 0, 0};
+        if (!ch_player(psys, pch)) return 0;
+        UObject* S = find_by_id(STR("SolarSystem"), rec.sys);
+        if (!alive(S)) return 0;
+        std::vector<ChEntry> v;
+        std::wstring info;
+        bool read = false;
+        int added = 0;
+        for (auto it = rec.pend.begin(); it != rec.pend.end();)
+        {
+            if (ch_in_zone(*it, psys, pch)) { ++it; continue; }
+            if (!read)
+            {
+                if (!ch_map_read(S, v, info)) { ch_log_throttled(STR("CHUNKHOLD pending: ChunkMap unreadable: ") + info); return 0; }
+                read = true;
+            }
+            if (!ch_find(v, it->k)) { ++it; continue; }
+            const auto ref = g_ch.refs.find(*it);
+            if (ref != g_ch.refs.end()) ++ref->second;
+            else
+            {
+                if (g_ch.refs.size() >= CH_MAX_CHUNKS) { ++it; continue; }
+                g_ch.refs[*it] = 1;   // tracked before the call: ch_disable clears it when the call fails
+                if (!ch_native(S, it->k, 1))
+                {
+                    err = STR("set level 1 failed at pending chunk ") + ch_key_text(it->k);
+                    ch_disable(err);
+                    return -1;
+                }
+            }
+            rec.keys.push_back(*it);
+            it = rec.pend.erase(it);
+            ++added;
+        }
+        if (added > 0)
+            msc_log(STR("CHUNKHOLD pending added owner=") + std::to_wstring(owner) + STR(" sys=") + std::to_wstring(rec.sys) +
+                    STR(" added=") + std::to_wstring(added) + STR(" still_pending=") + std::to_wstring(rec.pend.size()) +
+                    STR(" held=") + std::to_wstring(g_ch.refs.size()));
+        return added;
+    }
+
+    // WHAT: ch_fill_rec for every owner that has pending chunks. Returns the number added to owner watch (0 for none), -1 = native failure.
+    int ch_fill_all(int watch)
+    {
+        std::vector<int> ids;
+        for (const auto& p : g_ch.owners) if (!p.second.pend.empty()) ids.push_back(p.first);
+        int mine = 0;
+        for (int id : ids)
+        {
+            const auto it = g_ch.owners.find(id);
+            if (it == g_ch.owners.end()) continue;
+            ChRec rec = it->second;   // copy: ch_disable clears g_ch.owners
+            std::wstring err;
+            const int n = ch_fill_rec(id, rec, err);
+            if (n < 0) return -1;
+            g_ch.owners[id] = rec;
+            if (id == watch) mine = n;
+        }
+        return mine;
+    }
+
     // WHAT: retries the deferred clears: a chunk nobody holds, outside the player zone, gets level 0 + apply.
-    void ch_drain()
+    void ch_clear_deferred()
     {
         if (g_ch.deferred.empty()) return;
         int psys = 0;
@@ -266,6 +339,13 @@ namespace
             if (!ch_native(S, it->k, 0)) { ch_disable(STR("level 0 failed on deferred chunk ") + ch_key_text(it->k)); return; }
             it = g_ch.deferred.erase(it);
         }
+    }
+
+    // WHAT: periodic drain (every hold, release and unload call): the deferred clears, then the pending adds of every owner.
+    void ch_drain()
+    {
+        ch_clear_deferred();
+        if (!g_ch.disabled) ch_fill_all(-1);
     }
 
     // WHAT: exe check and native check, once per session, before the first set. false = not ready (retried next call) or disabled; err = reason.
@@ -348,10 +428,16 @@ namespace
         int psys = 0;
         int64_t pch[3] = {0, 0, 0};
         if (!ch_player(psys, pch)) { err = STR("player chunk unknown"); return 0; }
-        ch_drain();
+        // deferred clears, then pending adds of every owner (this owner's count decides 1 or 2 below)
+        ch_clear_deferred();
+        if (g_ch.disabled) { err = STR("chunk hold disabled for this session"); return 0; }
+        const int own_added = ch_fill_all(owner);
+        if (own_added < 0) { err = STR("chunk hold disabled for this session"); return 0; }
         const int32_t c[3] = {static_cast<int32_t>(c3[0]), static_cast<int32_t>(c3[1]), static_cast<int32_t>(c3[2])};
         const auto old = g_ch.owners.find(owner);
-        if (old != g_ch.owners.end() && old->second.sys == sys && old->second.c[0] == c[0] && old->second.c[1] == c[1] && old->second.c[2] == c[2]) return 2;
+        // unchanged cube: 2, unless pending chunks were just added (then the cube changed: 1)
+        if (old != g_ch.owners.end() && old->second.sys == sys && old->second.c[0] == c[0] && old->second.c[1] == c[1] && old->second.c[2] == c[2])
+            return own_added > 0 ? 1 : 2;
         UObject* S = find_by_id(STR("SolarSystem"), sys);
         if (!alive(S))
         {
@@ -363,7 +449,7 @@ namespace
         std::wstring info;
         if (!ch_map_read(S, v, info)) { err = STR("ChunkMap unreadable: ") + info; ch_log_throttled(STR("CHUNKHOLD ") + err); return 0; }
         // the cube: 27 chunks, only those with a Chunk object; the player's own zone is never set
-        std::vector<ChKey> want;
+        std::vector<ChKey> want, pend;
         int no_obj = 0, zone = 0;
         for (int dz = -1; dz <= 1; ++dz)
             for (int dy = -1; dy <= 1; ++dy)
@@ -372,7 +458,7 @@ namespace
                     ChKey key;
                     key.sys = sys;
                     key.k[0] = c[0] + dx; key.k[1] = c[1] + dy; key.k[2] = c[2] + dz;
-                    if (ch_in_zone(key, psys, pch)) { ++zone; continue; }
+                    if (ch_in_zone(key, psys, pch)) { ++zone; pend.push_back(key); continue; }
                     if (!ch_find(v, key.k)) { ++no_obj; continue; }
                     want.push_back(key);
                 }
@@ -397,6 +483,7 @@ namespace
         ChRec rec;
         rec.sys = sys;
         for (int i = 0; i < 3; ++i) rec.c[i] = c[i];
+        rec.pend = pend;
         int set_n = 0, shared = 0;
         for (const ChKey& key : want)
         {
