@@ -1,9 +1,14 @@
 // FILE: cpp/MSCore/msc_scan.hpp
 // WHAT: world scan of ships, resource asteroids and stations as MsScanRow (msc_api.hpp). scan_rows() serves a cached list with filters.
 // WHY: ported from MiningBenchMod mb_rocks (alive_seh, actor_scan_item) so every mod reads the world the same way.
-// CACHE: 4 slots: ship, asteroid-all, asteroid-loaded, station. A slot is rescanned when it was never read, max_age_ms is 0, or it is older than max_age_ms.
+// CACHE: 4 slots: ship, asteroid-all, asteroid-loaded, station. A slot is rescanned when it was never read, its age limit is 0, or it is older
+//       than the limit. The limit is min(max_age_ms, SCAN_MAX_AGE_CAP_MS): cached rows are not refreshed on serve (only identity is checked),
+//       so the cap bounds how stale loaded / actor / world / docked / hull / order fields can be.
 // FILTERS (on serve): type = case-insensitive equal to the row type, oname or any ore name (empty = no filter); sys > 0 = that solar system only.
-//       Only rows whose obj is still alive are served (a freed object is never read).
+//       Only rows whose obj is still alive and still the same save id are served (row_live).
+// IDENTITY (on serve, row_clean): the actor pointer is kept only while it is still the row's actor (rock actor: ObjectId = row id; ship and
+//       station: the save object's current Actor). Each ore pointer is kept only while its object id is still the id read at build time.
+//       A pointer that fails the check is nulled / dropped (loaded 0, world_ok 0 for a lost actor).
 // ASTEROID ROWS: asteroid-all = every live SmallResourceAsteroidObject (ores from ResourceItems, loaded/actor when its BP_GenericResourceAsteroid_C
 //       actor is in the world, matched by ObjectId). asteroid-loaded = only the BP_GenericResourceAsteroid_C actors (obj = actor, ore = GetScanItem).
 // ORE LAYOUT: ResourceItems is read as an array of structs with an Item object property (like GenParams.ResourceRichness), or as an array of
@@ -12,7 +17,7 @@
 //             actor_vec_call, obj_display, lower, widen, msc_log), msc_warp.hpp (get_chunk, sec_axes, sys_id).
 // SAFETY: game thread only (Lua and MSCore_scan). The whole walk runs under scan_guard (SEH). A fault turns native scan OFF for the session
 //         (logged once, g_scan_off): scans return no rows and lua_scan reports ok = false, so MSCore.scan falls back to its Lua scan.
-//         Cached rows are checked before they are handed out (row_live: object alive and same save id; row_clean: dead actor / ores dropped).
+//         Every read on a cached pointer goes through alive_seh / cached_ok / seh_run (row_live, actor_ok, row_clean).
 // LOG: every walk logs "SCAN walk <kind>" on entry, so a crash log shows the last step.
 // USED BY: dllmain.cpp (MSCore_scan, MSCoreNative_scan, check "scan").
 #pragma once
@@ -22,11 +27,15 @@
 
 namespace
 {
-    constexpr int SCAN_ORES = 8;   // ore items kept per row (MsScanRow.ores size)
+    constexpr int SCAN_ORES = 8;                    // ore items kept per row (MsScanRow.ores size)
+    constexpr ULONGLONG SCAN_MAX_AGE_CAP_MS = 5000; // a slot is never served older than this (see CACHE)
     enum ScanSlot : int { SLOT_SHIP = 0, SLOT_ROCK_ALL = 1, SLOT_ROCK_LOADED = 2, SLOT_STATION = 3, SLOT_COUNT = 4 };
 
+    // one built row and the save ids of its ores (ore_id[i] = ObjectID of r.ores[i]); the ids are what the ore pointers are checked against on serve
+    struct ScanEntry { MsScanRow r; int32_t ore_id[SCAN_ORES]; };
+
     // one cached scan: time of the last read (GetTickCount64, 0 = never) and its rows
-    struct ScanCache { ULONGLONG t = 0; std::vector<MsScanRow> rows; };
+    struct ScanCache { ULONGLONG t = 0; std::vector<ScanEntry> rows; };
     ScanCache g_scan[SLOT_COUNT];
     bool g_scan_off = false;   // kill switch: a native scan walk faulted once; no native scan for the rest of the session
 
@@ -63,6 +72,15 @@ namespace
         return r;
     }
 
+    // WHAT: r with its ore ids (ids[i] for r.ores[i]) as a cache entry.
+    ScanEntry entry_of(const MsScanRow& r, const int32_t* ids)
+    {
+        ScanEntry e{};
+        e.r = r;
+        for (int i = 0; i < SCAN_ORES; ++i) e.ore_id[i] = ids[i];
+        return e;
+    }
+
     // WHAT: system id, chunk and chunk-relative Location of o into r. Each part stays 0 when unreadable.
     void fill_place(MsScanRow& r, UObject* o)
     {
@@ -78,8 +96,8 @@ namespace
         if (alive_seh(a) && actor_vec_call(a, STR("K2_GetActorLocation"), r.world, why)) r.world_ok = 1;
     }
 
-    // WHAT: ore items of a save object's ResourceItems into r.ores (max SCAN_ORES). An element is a struct with an Item object property, or the Item object itself.
-    void fill_ores(MsScanRow& r, UObject* o)
+    // WHAT: ore items of a save object's ResourceItems into r.ores (max SCAN_ORES) and their ids into ids. An element is a struct with an Item object property, or the Item object itself.
+    void fill_ores(MsScanRow& r, UObject* o, int32_t* ids)
     {
         FProperty* p = o->GetPropertyByNameInChain(STR("ResourceItems"));
         auto* ap = p ? CastField<FArrayProperty>(p) : nullptr;
@@ -100,7 +118,9 @@ namespace
         for (int32_t i = 0; i < arr->Num() && r.nores < SCAN_ORES; ++i)
         {
             UObject* it = *reinterpret_cast<UObject**>(arr->GetData() + static_cast<size_t>(i) * es + item_off);
-            if (alive_seh(it)) r.ores[r.nores++] = it;
+            if (!alive_seh(it)) continue;
+            ids[r.nores] = obj_id(it);
+            r.ores[r.nores++] = it;
         }
     }
 
@@ -142,7 +162,7 @@ namespace
     }
 
     // WHAT: every live ship: id, names, dock state, piloted, hull, order, actor world position.
-    void scan_ships(std::vector<MsScanRow>& out)
+    void scan_ships(std::vector<ScanEntry>& out)
     {
         msc_log(STR("SCAN walk ship"));
         UObject* ctrl = first_of(STR("DMSPlayerController"));
@@ -171,14 +191,15 @@ namespace
                 UObject* act = get_obj_prop(s, STR("Actor"));
                 r.actor = act;
                 fill_world(r, act);
-                out.push_back(r);
+                const int32_t no_ores[SCAN_ORES] = {};
+                out.push_back(entry_of(r, no_ores));
             }
             catch (...) {}
         }
     }
 
     // WHAT: every live resource asteroid save object. loaded = its BP_GenericResourceAsteroid_C actor is in the world (matched by ObjectId).
-    void scan_rocks_all(std::vector<MsScanRow>& out)
+    void scan_rocks_all(std::vector<ScanEntry>& out)
     {
         msc_log(STR("SCAN walk asteroid-all"));
         std::map<int, UObject*> actor_by_id;
@@ -201,7 +222,8 @@ namespace
                 MsScanRow r = blank_row(1, o);
                 r.id = obj_id(o);
                 fill_place(r, o);
-                fill_ores(r, o);
+                int32_t ids[SCAN_ORES] = {};
+                fill_ores(r, o, ids);
                 set_wstr(r.type, 64, first_ore_name(r));
                 set_wstr(r.oname, 64, o->GetName());
                 const auto it = actor_by_id.find(r.id);
@@ -211,14 +233,14 @@ namespace
                     r.loaded = 1;
                     fill_world(r, it->second);
                 }
-                out.push_back(r);
+                out.push_back(entry_of(r, ids));
             }
             catch (...) {}
         }
     }
 
     // WHAT: every live BP_GenericResourceAsteroid_C actor (loaded rocks). obj = actor, ore = GetScanItem.
-    void scan_rocks_loaded(std::vector<MsScanRow>& out)
+    void scan_rocks_loaded(std::vector<ScanEntry>& out)
     {
         msc_log(STR("SCAN walk asteroid-loaded"));
         std::vector<UObject*> acts;
@@ -234,23 +256,25 @@ namespace
                 int32_t id = 0;
                 if (get_int_prop(a, STR("ObjectId"), id)) r.id = id;
                 fill_place(r, a);
+                int32_t ids[SCAN_ORES] = {};
                 UObject* item = actor_scan_item(a);
                 if (alive_seh(item))
                 {
+                    ids[0] = obj_id(item);
                     r.ores[0] = item;
                     r.nores = 1;
                     set_wstr(r.type, 64, obj_display(item));
                 }
                 set_wstr(r.oname, 64, a->GetName());
                 fill_world(r, a);
-                out.push_back(r);
+                out.push_back(entry_of(r, ids));
             }
             catch (...) {}
         }
     }
 
     // WHAT: every live SolarSystemSector-like station: FindAllOf Dock. name = display name, type = class name, oname = object name.
-    void scan_stations(std::vector<MsScanRow>& out)
+    void scan_stations(std::vector<ScanEntry>& out)
     {
         msc_log(STR("SCAN walk station"));
         std::vector<UObject*> docks;
@@ -269,7 +293,8 @@ namespace
                 UObject* act = get_obj_prop(d, STR("Actor"));
                 r.actor = act;
                 fill_world(r, act);
-                out.push_back(r);
+                const int32_t no_ores[SCAN_ORES] = {};
+                out.push_back(entry_of(r, no_ores));
             }
             catch (...) {}
         }
@@ -298,24 +323,54 @@ namespace
         return seh_run([&] { int32_t v = -1; ok = alive(o) && get_int_prop(o, STR("ObjectId"), v) && v == r.id; }) && ok;
     }
 
-    // WHAT: drops dead references from a row copy: a dead actor (actor null, loaded 0, world_ok 0) and dead ore objects (pruned).
-    void row_clean(MsScanRow& r)
+    // WHAT: true when the cached actor pointer of r is still r's actor: a rock actor with ObjectId = r.id, or a ship / station whose save
+    //       object's current Actor is that pointer. Read under SEH; false on any fault.
+    // WHY: a freed actor's address can be reused by another actor; the id read (or the owner's current Actor) decides which one it is.
+    bool actor_ok(const MsScanRow& r)
     {
-        if (r.actor && !alive_seh(static_cast<UObject*>(r.actor))) { r.actor = nullptr; r.loaded = 0; r.world_ok = 0; }
+        bool ok = false;
+        const bool ran = seh_run([&] {
+            UObject* a = static_cast<UObject*>(r.actor);
+            if (!alive(a)) return;
+            if (r.kind == 1)
+            {
+                int32_t v = -1;
+                ok = get_int_prop(a, STR("ObjectId"), v) && v == r.id;
+                return;
+            }
+            UObject* o = static_cast<UObject*>(r.obj);
+            ok = alive(o) && get_obj_prop(o, STR("Actor")) == a;
+        });
+        return ran && ok;
+    }
+
+    // WHAT: checks the cached copy r against the game before it is served: a lost actor is nulled (loaded 0, world_ok 0); each ore whose
+    //       object id changed (or is gone) is dropped, and its id with it (ids: one per ore, compacted with r.ores).
+    void row_clean(MsScanRow& r, int32_t* ids)
+    {
+        if (r.actor && !actor_ok(r)) { r.actor = nullptr; r.loaded = 0; r.world_ok = 0; }
         int n = 0;
-        for (int i = 0; i < r.nores; ++i) if (alive_seh(static_cast<UObject*>(r.ores[i]))) r.ores[n++] = r.ores[i];
+        for (int i = 0; i < r.nores; ++i)
+        {
+            if (!cached_ok(static_cast<UObject*>(r.ores[i]), ids[i])) continue;
+            r.ores[n] = r.ores[i];
+            ids[n] = ids[i];
+            ++n;
+        }
         for (int i = n; i < r.nores; ++i) r.ores[i] = nullptr;
         r.nores = n;
     }
 
-    // WHAT: rescans slot when it is empty, max_age_ms is 0 or it is too old, then appends the cached rows that pass the filters to out.
+    // WHAT: rescans slot when it is empty, its age limit is 0 or it is too old, then appends the cached rows that pass the filters to out.
+    //       The age limit is min(max_age_ms, SCAN_MAX_AGE_CAP_MS).
     void scan_rows_walk(int slot, ULONGLONG max_age_ms, const std::string& type, int sys, std::vector<MsScanRow>& out)
     {
         ScanCache& c = g_scan[slot];
         const ULONGLONG now = GetTickCount64();
-        if (c.t == 0 || max_age_ms == 0 || now - c.t >= max_age_ms)
+        const ULONGLONG age = max_age_ms < SCAN_MAX_AGE_CAP_MS ? max_age_ms : SCAN_MAX_AGE_CAP_MS;
+        if (c.t == 0 || age == 0 || now - c.t >= age)
         {
-            std::vector<MsScanRow> rows;
+            std::vector<ScanEntry> rows;
             if (slot == SLOT_SHIP) scan_ships(rows);
             else if (slot == SLOT_ROCK_ALL) scan_rocks_all(rows);
             else if (slot == SLOT_ROCK_LOADED) scan_rocks_loaded(rows);
@@ -324,11 +379,13 @@ namespace
             c.t = now;
         }
         const std::wstring want = lower(widen(type));
-        for (const MsScanRow& cached : c.rows)
+        for (const ScanEntry& cached : c.rows)
         {
-            if (!row_live(cached, slot == SLOT_ROCK_LOADED)) continue;
-            MsScanRow r = cached;
-            row_clean(r);
+            if (!row_live(cached.r, slot == SLOT_ROCK_LOADED)) continue;
+            MsScanRow r = cached.r;
+            int32_t ids[SCAN_ORES];
+            for (int i = 0; i < SCAN_ORES; ++i) ids[i] = cached.ore_id[i];
+            row_clean(r, ids);
             if (sys > 0 && r.sys != sys) continue;
             if (!want.empty() && !row_matches(r, want)) continue;
             out.push_back(r);
@@ -336,8 +393,9 @@ namespace
     }
 
     // WHAT: the rows of kind (0 ship, 1 asteroid, 2 station) that pass the filters. The slot is rescanned when it is empty,
-    //       max_age_ms is 0, or it is older than max_age_ms (GetTickCount64 ms). Unknown kind or native scan off: no rows.
-    // WHY: one cache per kind, so repeated calls within max_age_ms do not walk FindAllOf again. The whole call runs under scan_guard.
+    //       its age limit is 0, or it is older than that limit (min(max_age_ms, SCAN_MAX_AGE_CAP_MS), GetTickCount64 ms).
+    //       Unknown kind or native scan off: no rows.
+    // WHY: one cache per kind, so repeated calls within the limit do not walk FindAllOf again. The whole call runs under scan_guard.
     std::vector<MsScanRow> scan_rows(int kind, ULONGLONG max_age_ms, const std::string& type, int sys, bool loaded_only)
     {
         int slot = -1;
