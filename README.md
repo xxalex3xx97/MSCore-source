@@ -12,10 +12,18 @@ Status: the selfcheck log is the check. Run the game with MSCore installed and r
 
 ## Install
 
+Use **MSCoreManager.exe**. It installs UE4SS and MSCore, keeps them current and adds mods for you. Do not copy files by hand unless you have to.
+
 1. Close the game.
-2. Copy `mods\MSCore` to `<game>\Windows\MainSequence\Binaries\Win64\ue4ss\Mods\MSCore` (or run the manager).
-3. In `...\ue4ss\Mods\mods.txt`, add `MSCore : 1` above your mods.
+2. Download `MSCoreManager.exe` from the [latest release](https://github.com/xxalex3xx97/MSCore/releases/latest) and run it.
+3. Click **Install/Repair MSCore**, then **Add mod...** for each mod.
 4. Start the game, load a world, wait about 8 s, then read `Mods\MSCore\selfcheck.log`.
+
+Manual install (only if the manager cannot be used):
+
+1. Close the game.
+2. Copy `mods\MSCore` to `<game>\Windows\MainSequence\Binaries\Win64\ue4ss\Mods\MSCore`.
+3. In `...\ue4ss\Mods\mods.txt`, add `MSCore : 1` above your mods.
 
 Each UE4SS mod has its own Lua state, so each mod requires its own copy of `mscore.lua`. Add this to the top of your mod's `Scripts\main.lua`:
 
