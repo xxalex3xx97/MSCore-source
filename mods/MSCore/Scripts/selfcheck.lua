@@ -119,9 +119,17 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "chunks" }) do
         check("world." .. n, nativeCheck(n))
     end
+    check("scan.api", function()
+        if type(MSCore.scan) ~= "function" or type(MSCore.chunks.hold) ~= "function" or type(MSCore.chunks.release) ~= "function" then
+            return "BROKEN", "MSCore.scan / chunks.hold / chunks.release missing"
+        end
+        local rows, err = MSCore.scan("ship")
+        if not rows then return "BROKEN", tostring(err) end
+        if #rows == 0 then return "SKIP", "no ship rows" end
+        return yes(type(rows[1].id) == "number", #rows .. " ship rows, first id=" .. tostring(rows[1].id)) end)
     check("warp.sectors", function()
         local l = MSCore.warp.sectors() if #l == 0 then return "SKIP", "no sectors" end
         return yes(#l > 0, #l .. " sectors, first id=" .. tostring(l[1].id) .. " " .. tostring(l[1].name)) end)

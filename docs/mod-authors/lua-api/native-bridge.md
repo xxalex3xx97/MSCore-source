@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.5.1"`). |
+| `native.version` | `()` | string | The native version (`"0.6.0"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |
@@ -29,8 +29,11 @@ nav_order: 8
 | `native.warp_send` | `(sid, sys, cx, cy, cz, ax, ay, az, wrap, set_target)` | `ok, err` | Teleport warp. `cx, cy, cz` = chunk, `ax, ay, az` = raw arrival. |
 | `native.pinned` | `()` | number | Sector id, `0` = none. |
 | `native.pin_ensure` | `()` | boolean | `true` once the map pin hook is armed. Call every tick until it returns `true`. |
-| `native.check` | `(name)` | `ok, detail` | Read-only world checks. Names: `classes`, `controller`, `sectors`, `arrival`, `jump_cost`, `pin_hook`, `filters_read`, `find_item`, `find_dock`. |
+| `native.check` | `(name)` | `ok, detail` | Read-only world checks. Names: `classes`, `controller`, `sectors`, `arrival`, `jump_cost`, `pin_hook`, `filters_read`, `find_item`, `find_dock`, `scan`, `chunks`. |
 | `native.loader_status` | `()` | string | One line per mod: `name\|installed\|remote\|state`. |
+| `native.scan` | `(kind, max_age_ms, type, sys, loaded_only)` | string | One line per row, `\n` ended. Numbers as in `MSCore_scan`. Use `MSCore.scan` instead; it parses the lines. |
+| `native.chunk_hold` | `(owner, sys, X, Y, Z)` | `ok, err` | Holds the chunk cube for `owner`. `ok` is true for a set and for an unchanged cube. |
+| `native.chunk_release` | `(owner)` | boolean | Drops the owner's cube. |
 
 ## Example
 

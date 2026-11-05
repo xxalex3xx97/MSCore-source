@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v1. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
-local MSCore = { api = 1, version = "0.5.1", verified_build = 149200896 }
+local MSCore = { api = 1, version = "0.6.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -9,7 +9,8 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     new_order = _G.MSCoreNative_new_order, update_order = _G.MSCoreNative_update_order, delete_order = _G.MSCoreNative_delete_order,
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
     warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
-    check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status } or nil
+    check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
+    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -464,6 +465,250 @@ function MSCore.find_item(res)
     if n == 0 then return nil, "no Item matches '" .. tostring(res) .. "'" end
     return nil, "'" .. tostring(res) .. "' matches " .. n .. " Items (ambiguous)"
 end
+
+---------------------------------------------------------------- world scan + chunk hold (native; see docs/mod-authors/lua-api/scan.md)
+local SCAN_KINDS = { ship = 0, asteroid = 1, station = 2 }
+
+-- splits s on "|" (empty fields kept)
+local function splitBar(s)
+    local out, i = {}, 1
+    while true do
+        local j = string.find(s, "|", i, true)
+        if not j then out[#out + 1] = string.sub(s, i) break end
+        out[#out + 1] = string.sub(s, i, j - 1)
+        i = j + 1
+    end
+    return out
+end
+
+-- "x,y,z" -> {X=,Y=,Z=} numbers, nil when not three numbers
+local function triple(s)
+    local a, b, c = string.match(s, "^([^,]+),([^,]+),([^,]+)$")
+    if not a then return nil end
+    local X, Y, Z = tonumber(a), tonumber(b), tonumber(c)
+    if not (X and Y and Z) then return nil end
+    return { X = X, Y = Y, Z = Z }
+end
+
+-- one native row line -> table. hull/max_hull/order_idx are nil when -1; only ships have hull, docked, piloted, dock_id, order;
+-- only rocks have loaded; world is nil when world_ok is 0.
+local function scanRow(line)
+    local f = splitBar(line)
+    if #f < 18 then return nil end
+    local kind = tonumber(f[2])
+    local row = {
+        id = tonumber(f[1]), kind = kind, sys = tonumber(f[3]),
+        ch = triple(f[12]), loc = triple(f[13]),
+        world = f[15] == "1" and triple(f[14]) or nil,
+        name = f[16], type = f[17],
+    }
+    if kind == 0 then
+        row.docked = f[5] == "1"
+        row.piloted = f[6] == "1"
+        row.dock_id = tonumber(f[7])
+        row.hull = tonumber(f[8]) ~= -1 and tonumber(f[8]) or nil
+        row.max_hull = tonumber(f[9]) ~= -1 and tonumber(f[9]) or nil
+        row.order_idx = tonumber(f[10]) ~= -1 and tonumber(f[10]) or nil
+        row.order_dock = tonumber(f[11])
+        row.order = f[18] ~= "" and f[18] or nil
+    elseif kind == 1 then
+        row.loaded = f[4] == "1"
+    end
+    return row
+end
+
+-- pure-Lua scan, used only when the native scan is off (a native walk faulted once this session). Same row fields and filters as scanRow.
+-- Rows are copied values read in one walk (no pointers kept), so no identity check is needed. Cache age is wall-clock seconds (os.time, 1 s steps).
+local SCAN_MAX_AGE_MS = 5000   -- default max_age_ms and the cap, same as native SCAN_MAX_AGE_CAP_MS
+local luaScanCache = {}
+local function xyz(v) local t = vec3(v) return { X = t[1], Y = t[2], Z = t[3] } end
+local function findAll(cls) local ok, l = pcall(FindAllOf, cls) return ok and l or {} end
+local function classOf(o)
+    local ok, c = pcall(function() return o:GetClass():GetFName():ToString() end)
+    return ok and c or "?"
+end
+local function chunkOf(o)
+    local ok, c = pcall(function() return o:GetChunkLocation() end)
+    return xyz(ok and c or prop(o, "ChunkLocation"))
+end
+-- same order as native sys_id: GetSolarSystem, SolarSystemID / SolarSystemId, the SolarSystem object
+local function sysOf(o)
+    local ok, s = pcall(function() return o:GetSolarSystem() end)
+    if ok and safe.valid(s) then return prop(s, "ID") or -1 end
+    local id = prop(o, "SolarSystemID") or prop(o, "SolarSystemId")
+    if id then return id end
+    local sys = prop(o, "SolarSystem")
+    return (safe.valid(sys) and prop(sys, "ID")) or 0
+end
+-- display text like native obj_display: DisplayName, then GetDisplayName; "" when neither
+local function textOf(o)
+    if not safe.valid(o) then return "" end
+    local ok, t = pcall(function() return o.DisplayName:ToString() end)
+    if ok and t and t ~= "" then return t end
+    ok, t = pcall(function() return o:GetDisplayName():ToString() end)
+    if ok and t then return t end
+    return ""
+end
+-- current order of ship o, like native fill_order: idx = CurrentOrderIndex. Out of range: nil, 0, nil.
+-- Returns order_idx, order_dock, order (class name; nil when the order object is gone).
+local function orderOf(o, idx)
+    local arr = prop(o, "Orders")
+    if not arr or type(idx) ~= "number" or idx < 0 then return nil, 0, nil end
+    local ord, i, n = nil, 0, 0
+    pcall(function()
+        arr:ForEach(function(_, el)
+            if i == idx then ord = el:get() end
+            i = i + 1
+            n = n + 1
+        end)
+    end)
+    if idx >= n then return nil, 0, nil end
+    if not safe.valid(ord) then return idx, 0, nil end
+    return idx, prop(ord, "DockID") or 0, classOf(ord)
+end
+local function worldOf(a)
+    if not safe.valid(a) then return nil end
+    local ok, p = pcall(function() return a:K2_GetActorLocation() end)
+    return ok and p and xyz(p) or nil
+end
+-- ore items of ResourceItems[] (struct with Item, or the Item object itself)
+local SCAN_ORES = 8   -- native MsScanRow.ores size
+local function resOres(o)
+    local out = {}
+    local arr = prop(o, "ResourceItems")
+    if arr then
+        pcall(function()
+            arr:ForEach(function(_, el)
+                if #out >= SCAN_ORES then return end
+                local v = el:get()
+                local it = safe.valid(v.Item) and v.Item or v
+                if safe.valid(it) then out[#out + 1] = it end
+            end)
+        end)
+    end
+    return out
+end
+-- lowercase names a type filter matches, like native row_matches: oname, row type, every ore display name
+local function matchNames(row, oname, ores)
+    local t = { string.lower(oname or ""), string.lower(row.type or "") }
+    for _, it in ipairs(ores) do t[#t + 1] = string.lower(textOf(it)) end
+    return t
+end
+-- kind: 0 ship, 1 asteroid (save objects, loaded = actor in the world), 2 station, 3 loaded rock actors only
+-- Returns entries { row = <scan row>, names = <match names> }.
+local function luaRows(kind)
+    local out = {}
+    local function add(row, oname, ores)
+        out[#out + 1] = { row = row, names = matchNames(row, oname, ores or {}) }
+    end
+    if kind == 0 then
+        local ctrl = safe.live("DMSPlayerController")
+        local cid = safe.valid(ctrl) and prop(ctrl, "ID") or -1
+        for _, cls in ipairs(R.ship) do
+            for _, o in ipairs(findAll(cls)) do
+                if safe.valid(o) then
+                    local dock, pilot, mh = prop(o, "DockID") or 0, prop(o, "PilotID"), prop(o, "MaxHealth")
+                    local okh, hull = pcall(function() return o:GetCurrentHull() end)
+                    local ord, odock, oclass = orderOf(o, prop(o, "CurrentOrderIndex"))
+                    local tx = textOf(o)
+                    add({ id = prop(o, "ID") or -1, kind = 0, sys = sysOf(o), ch = chunkOf(o), loc = xyz(prop(o, "Location")),
+                        world = worldOf(prop(o, "Actor")), name = tx ~= "" and tx or safe.objName(o), type = classOf(o),
+                        docked = dock ~= 0, piloted = cid > 0 and pilot == cid,
+                        dock_id = dock, hull = okh and type(hull) == "number" and hull or nil, max_hull = mh ~= -1 and mh or nil,
+                        order_idx = ord, order_dock = odock, order = oclass }, safe.objName(o))
+                end
+            end
+        end
+    elseif kind == 1 or kind == 3 then
+        local acts = {}   -- loaded rock actors by ObjectId (ids > 0, like native)
+        for _, a in ipairs(findAll("BP_GenericResourceAsteroid_C")) do
+            if safe.valid(a) then
+                local id = prop(a, "ObjectId")
+                if kind == 3 then
+                    local okS, it = pcall(function() return a:GetScanItem() end)
+                    local ore = (okS and safe.valid(it)) and it or nil
+                    add({ id = id or 0, kind = 1, sys = sysOf(a), ch = chunkOf(a), loc = xyz(prop(a, "Location")), world = worldOf(a),
+                        name = "", type = ore and textOf(ore) or "", loaded = true }, safe.objName(a), ore and { ore } or {})
+                end
+                if id and id > 0 then acts[id] = a end
+            end
+        end
+        if kind == 1 then
+            for _, o in ipairs(findAll("SmallResourceAsteroidObject")) do
+                if safe.valid(o) and prop(o, "bAlive") ~= false then
+                    local id = prop(o, "ID") or -1
+                    local a = acts[id]
+                    local ores = resOres(o)
+                    add({ id = id, kind = 1, sys = sysOf(o), ch = chunkOf(o), loc = xyz(prop(o, "Location")), world = worldOf(a),
+                        name = "", type = ores[1] and textOf(ores[1]) or "", loaded = a ~= nil }, safe.objName(o), ores)
+                end
+            end
+        end
+    elseif kind == 2 then
+        for _, o in ipairs(findAll(R.dock)) do
+            if safe.valid(o) then
+                add({ id = prop(o, "ID") or -1, kind = 2, sys = sysOf(o), ch = chunkOf(o), loc = xyz(prop(o, "Location")),
+                    world = worldOf(prop(o, "Actor")), name = textOf(o), type = classOf(o) }, safe.objName(o))
+            end
+        end
+    end
+    return out
+end
+
+local luaScanNoted = false
+-- same contract as MSCore.scan (list of rows); the native cache is replaced by a plain max_age_ms cache here
+local function luaScan(kind, f)
+    local k = SCAN_KINDS[kind]
+    local lk = (k == 1 and f.loaded_only) and 3 or k
+    if not luaScanNoted then luaScanNoted = true; log("scan: native scan off, using the Lua fallback") end
+    local maxAge = math.min(f.max_age_ms or SCAN_MAX_AGE_MS, SCAN_MAX_AGE_MS) / 1000
+    local c = luaScanCache[lk]
+    if not c or os.time() - c.t >= maxAge then
+        c = { t = os.time(), rows = luaRows(lk) }
+        luaScanCache[lk] = c
+    end
+    local want = string.lower(f.type or "")
+    local sys = f.sys or 0
+    local out = {}
+    for _, e in ipairs(c.rows) do
+        local okType = want == ""
+        if not okType then
+            for _, n in ipairs(e.names) do
+                if n == want then okType = true break end
+            end
+        end
+        if okType and (sys <= 0 or e.row.sys == sys) then out[#out + 1] = e.row end
+    end
+    return out
+end
+
+-- world objects of one kind: kind = "ship" | "asteroid" | "station". f (optional): max_age_ms (default 5000, capped at 5000 natively and in luaScan),
+-- type (case-insensitive match on row type, oname or any ore name; "" = no filter), sys (solar system id; 0 = all),
+-- loaded_only (asteroid: only rock actors in the world). Returns a list of rows (see scanRow), or nil, reason.
+-- When the native scan is off (fault this session) the rows come from luaScan instead; the list shape is the same.
+function MSCore.scan(kind, f)
+    local k = SCAN_KINDS[kind]
+    if k == nil then return nil, "unknown kind" end
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.scan then return nil, "native scan missing" end
+    f = f or {}
+    local text, ok = N.scan(k, f.max_age_ms or SCAN_MAX_AGE_MS, f.type or "", f.sys or 0, f.loaded_only and 1 or 0)
+    if ok == false then return luaScan(kind, f) end
+    local out = {}
+    for line in string.gmatch(text or "", "[^\n]+") do
+        local row = scanRow(line)
+        if row then out[#out + 1] = row end
+    end
+    return out
+end
+
+-- chunk hold: a 3x3x3 cube of chunks around ch (raw {X,Y,Z}) stays loaded for owner (integer). Returns ok, err.
+-- ok is true for a new set and for an unchanged cube. Each owner holds one cube; a new call moves it.
+MSCore.chunks = {}
+function MSCore.chunks.hold(owner, sys, ch) return call("chunk_hold", owner, sys, ch.X, ch.Y, ch.Z) end
+-- drops owner's cube (ok = true also when it had none)
+function MSCore.chunks.release(owner) return call("chunk_release", owner) end
 
 ---------------------------------------------------------------- loader: mod update checks (C++ thread does the network, Lua reads rows)
 -- row = {name, installed, remote, state}; state = pending | uptodate | update | skipped:min_native | error:<msg>

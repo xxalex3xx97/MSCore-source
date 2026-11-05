@@ -29,11 +29,13 @@ using namespace RC::Unreal;
 #include "msc_orders.hpp"
 #include "msc_warp.hpp"
 #include "msc_pin.hpp"
+#include "msc_chunks.hpp"
+#include "msc_scan.hpp"
 #include "msc_loader.hpp"
 
 namespace
 {
-    constexpr const char* kVersion = "0.5.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.6.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -92,6 +94,19 @@ namespace
             { detail = "AddInputCommand/SetShipAutopilot/SkipToOrder missing"; return false; }
             detail = ctrl->GetFunctionByNameInChain(STR("DeleteOrder")) ? "ok" : "warn: DeleteOrder missing (ConfigureShipOrders fallback)";
             return true;
+        }
+        if (name == "scan")
+        {
+            const auto rows = scan_rows(0, 0, std::string(), 0, false);
+            if (rows.empty()) { detail = "SKIP no ships"; return false; }
+            detail = std::to_string(rows.size()) + " ships";
+            return true;
+        }
+        if (name == "chunks")
+        {
+            const bool ok = chunk_ready(why);
+            detail = ok ? std::string("natives found") : narrow(why);
+            return ok;
         }
         if (name == "sectors")
         {
@@ -198,13 +213,18 @@ namespace
         return true;
     }
 
-    // UObject of Lua arg i; nullptr for nil or a non-userdata
-    UObject* lua_obj(const LuaMadeSimple::Lua& lua, int i)
-    {
-        return lua.is_userdata(i) ? lua.get_userdata<LuaType::UObject>(i).get_remote_cpp_object() : nullptr;
-    }
+    // Lua args are CONSUMED IN ORDER: every LuaMadeSimple getter (get_integer, get_float, get_string, get_userdata) removes its
+    // stack slot, so the next arg is always index 1. Read each arg as its own statement, in order. Never use a fixed index
+    // after a getter: the index then points past the top, lua_remove decrements top and the Lua stack is corrupted (crash later).
+    // Type checks (is_number, is_string, is_userdata) do not remove anything, so they may use fixed indexes before any read.
+    int arg_int(const LuaMadeSimple::Lua& lua) { return static_cast<int>(lua.get_integer(1)); }
 
-    int arg_int(const LuaMadeSimple::Lua& lua, int i) { return static_cast<int>(lua.get_integer(i)); }
+    // next arg as a UObject: nullptr for nil or a non-userdata. Always consumes the arg.
+    UObject* arg_obj(const LuaMadeSimple::Lua& lua)
+    {
+        if (!lua.is_userdata(1)) { lua.discard_value(1); return nullptr; }
+        return lua.get_userdata<LuaType::UObject>(1).get_remote_cpp_object();
+    }
 
     // Lua: send_cmd(receiver int, cmd UObject) -> ok, err
     int lua_send_cmd(const LuaMadeSimple::Lua& lua)
@@ -217,12 +237,13 @@ namespace
             else if (!lua.is_userdata(2)) err = STR("cmd is not a UObject");
             else
             {
-                UObject* cmd = lua.get_userdata<LuaType::UObject>(2).get_remote_cpp_object();
+                const int receiver = arg_int(lua);
+                UObject* cmd = arg_obj(lua);
                 if (!alive(cmd)) err = STR("cmd is not alive");
                 else
                 {
                     fix_type_id(cmd);
-                    ok = add_input(static_cast<int>(lua.get_integer(1)), cmd, err);
+                    ok = add_input(receiver, cmd, err);
                 }
             }
         }
@@ -240,9 +261,10 @@ namespace
             if (!nums(lua, 3)) err = STR("view_send needs cid, yaw, pitch numbers");
             else
             {
-                ok = view_send(static_cast<int>(lua.get_integer(1)),
-                               static_cast<int64_t>(lua.get_float(2) * kViewRawPerDeg),
-                               static_cast<int64_t>(lua.get_float(3) * kViewRawPerDeg), err);
+                const int cid = arg_int(lua);
+                const float yaw = lua.get_float(1);
+                const float pitch = lua.get_float(1);
+                ok = view_send(cid, static_cast<int64_t>(yaw * kViewRawPerDeg), static_cast<int64_t>(pitch * kViewRawPerDeg), err);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -257,7 +279,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("throttle needs sid, delta numbers");
-            else ok = send_ship_throttle(arg_int(lua, 1), arg_int(lua, 2), err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int delta = arg_int(lua);
+                ok = send_ship_throttle(sid, delta, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -308,7 +335,12 @@ namespace
         try
         {
             if (!nums(lua, 1) || !lua.is_string(2)) err = STR("new_order needs receiver number, cls string");
-            else ok = new_order(arg_int(lua, 1), widen(std::string(lua.get_string(2))), err);
+            else
+            {
+                const int receiver = arg_int(lua);
+                const std::string cls(lua.get_string(1));
+                ok = new_order(receiver, widen(cls), err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -322,7 +354,15 @@ namespace
         try
         {
             if (!nums(lua, 2) || !lua.is_number(4) || !lua.is_number(5)) err = STR("update_order needs oid, target, cmp, amount numbers");
-            else ok = update_order(arg_int(lua, 1), arg_int(lua, 2), lua_obj(lua, 3), arg_int(lua, 4), arg_int(lua, 5), err);
+            else
+            {
+                const int oid = arg_int(lua);
+                const int target = arg_int(lua);
+                UObject* item = arg_obj(lua);
+                const int cmp = arg_int(lua);
+                const int amount = arg_int(lua);
+                ok = update_order(oid, target, item, cmp, amount, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -336,7 +376,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("delete_order needs sid, oid numbers");
-            else ok = delete_order(arg_int(lua, 1), arg_int(lua, 2), err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int oid = arg_int(lua);
+                ok = delete_order(sid, oid, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -350,7 +395,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("autopilot needs sid, on numbers");
-            else ok = set_autopilot(arg_int(lua, 1), arg_int(lua, 2) != 0, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const bool on = arg_int(lua) != 0;
+                ok = set_autopilot(sid, on, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -365,7 +415,12 @@ namespace
         try
         {
             if (!nums(lua, 2)) err = STR("skip_to needs sid, idx numbers");
-            else ok = skip_to(arg_int(lua, 1), arg_int(lua, 2), before, after, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int idx = arg_int(lua);
+                ok = skip_to(sid, idx, before, after, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         lua.set_bool(ok);
@@ -383,7 +438,16 @@ namespace
         try
         {
             if (!nums(lua, 2) || !lua.is_number(4) || !lua.is_number(5) || !lua.is_number(6)) err = STR("filter_send needs sid, idx, amount, action, remove numbers");
-            else ok = filter_send(arg_int(lua, 1), arg_int(lua, 2), lua_obj(lua, 3), arg_int(lua, 4), arg_int(lua, 5), arg_int(lua, 6) != 0, err);
+            else
+            {
+                const int sid = arg_int(lua);
+                const int idx = arg_int(lua);
+                UObject* item = arg_obj(lua);
+                const int amount = arg_int(lua);
+                const int action = arg_int(lua);
+                const bool remove = arg_int(lua) != 0;
+                ok = filter_send(sid, idx, item, amount, action, remove, err);
+            }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
@@ -400,9 +464,14 @@ namespace
             if (!nums(lua, 10)) err = STR("warp_send needs 10 numbers");
             else
             {
-                const int64_t ch[3] = {lua.get_integer(3), lua.get_integer(4), lua.get_integer(5)};
-                const int64_t arr[3] = {lua.get_integer(6), lua.get_integer(7), lua.get_integer(8)};
-                ok = warp_send(arg_int(lua, 1), arg_int(lua, 2), ch, arr, lua.get_integer(9) != 0, err, lua.get_integer(10) != 0);
+                const int sid = arg_int(lua);
+                const int sys = arg_int(lua);
+                int64_t ch[3], arr[3];
+                for (int i = 0; i < 3; ++i) ch[i] = lua.get_integer(1);
+                for (int i = 0; i < 3; ++i) arr[i] = lua.get_integer(1);
+                const bool wrap = lua.get_integer(1) != 0;
+                const bool set_target = lua.get_integer(1) != 0;
+                ok = warp_send(sid, sys, ch, arr, wrap, err, set_target);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -440,6 +509,84 @@ namespace
         lua.set_bool(ok);
         lua.set_string(detail);
         return 2;
+    }
+
+    // one scan row as a text line: id|kind|sys|loaded|docked|piloted|dock_id|hull|max_hull|order_idx|order_dock|chX,chY,chZ|locX,locY,locZ|wX,wY,wZ|world_ok|name|type|order
+    // WHY: Lua splits on '|'; name, type and order are cleaned so they cannot add fields.
+    std::string scan_line(const MsScanRow& r)
+    {
+        auto i = [](long long v) { return std::to_string(v); };
+        auto v3 = [&](const long long* a) { return i(a[0]) + "," + i(a[1]) + "," + i(a[2]); };
+        auto d3 = [](const double* a) { return std::to_string(a[0]) + "," + std::to_string(a[1]) + "," + std::to_string(a[2]); };
+        auto txt = [](const wchar_t* w) {
+            std::string s = narrow(std::wstring(w));
+            for (char& c : s) if (c == '|' || c == '\n' || c == '\r') c = ' ';
+            return s;
+        };
+        return i(r.id) + "|" + i(r.kind) + "|" + i(r.sys) + "|" + i(r.loaded) + "|" + i(r.docked) + "|" + i(r.piloted) + "|" + i(r.dock_id) + "|" +
+               i(r.hull) + "|" + i(r.max_hull) + "|" + i(r.order_idx) + "|" + i(r.order_dock) + "|" + v3(r.ch) + "|" + v3(r.loc) + "|" +
+               d3(r.world) + "|" + i(r.world_ok) + "|" + txt(r.name) + "|" + txt(r.type) + "|" + txt(r.order);
+    }
+
+    // Lua: scan(kind, max_age_ms, type, sys, loaded_only) -> string, one scan_line per row, ok. "" when args are wrong or on exception.
+    // ok = true only for a real native scan. ok = false when args are wrong, on exception, or when the native scan is off
+    // (kill switch after a fault): the Lua side then runs its own scan, so an empty "" never passes as a scan result.
+    int lua_scan(const LuaMadeSimple::Lua& lua)
+    {
+        std::string out;
+        bool ok = false;
+        try
+        {
+            if (nums(lua, 2) && lua.is_number(4) && lua.is_number(5) && lua.is_string(3))
+            {
+                const int kind = arg_int(lua);
+                const long long age = lua.get_integer(1);
+                const std::string type(lua.get_string(1));
+                const int sys = arg_int(lua);
+                const bool loaded = arg_int(lua) != 0;
+                const auto rows = scan_rows(kind, age < 0 ? 0 : static_cast<ULONGLONG>(age), type, sys, loaded);
+                for (const MsScanRow& r : rows) out += scan_line(r) + "\n";
+                ok = true;
+            }
+        }
+        catch (...) { out.clear(); ok = false; }
+        lua.set_string(out);
+        lua.set_bool(ok && !g_scan_off);
+        return 2;
+    }
+
+    // Lua: chunk_hold(owner, sys, X, Y, Z) -> ok, err. ok is true for a set (1) and for an unchanged cube (2).
+    int lua_chunk_hold(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 5)) err = STR("chunk_hold needs owner, sys, X, Y, Z numbers");
+            else
+            {
+                const int owner = arg_int(lua);
+                const int sys = arg_int(lua);
+                int64_t c[3];
+                for (int i = 0; i < 3; ++i) c[i] = lua.get_integer(1);
+                ok = chunk_hold(owner, sys, c, err) != 0;
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: chunk_release(owner) -> ok. Drops the owner's cube (no-op without one).
+    int lua_chunk_release(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        try
+        {
+            if (lua.is_number(1)) ok = chunk_hold_release_owner(arg_int(lua));
+        }
+        catch (...) { ok = false; }
+        lua.set_bool(ok);
+        return 1;
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
@@ -535,7 +682,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.5.1");
+        ModVersion = STR("0.6.0");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -545,6 +692,8 @@ public:
     ~MSCoreMod()
     {
         g_loader_stop = true;   // detached worker checks this between network steps
+        try { chunk_hold_release_all(); }
+        catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
     }
 
     auto on_lua_start(LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -568,6 +717,9 @@ public:
         lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
         lua.register_function("MSCoreNative_check", lua_check);
         lua.register_function("MSCoreNative_loader_status", lua_loader_status);
+        lua.register_function("MSCoreNative_scan", lua_scan);
+        lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
+        lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
         Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals MSCoreNative_* registered\n"));
     }
 };
@@ -579,8 +731,8 @@ extern "C"
     MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
-    // MSCore_api: 2 = the set below (mining refuses to load below 2).
-    MSCORE_API int MSCore_api() { return 2; }
+    // MSCore_api: 3 = the set below (mining refuses to load below 3 when it needs scan or chunk hold).
+    MSCORE_API int MSCore_api() { return 3; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -764,4 +916,55 @@ extern "C"
 
     // last map-pinned sector id, 0 = none
     MSCORE_API int MSCore_pinned() { return g_pinned_sector; }
+
+    // scanned rows of kind (0 ship, 1 asteroid, 2 station) that pass type and sys filters: returns the total, or -1 on exception.
+    // out gets min(total, max) rows; out = nullptr or max = 0 counts only. loaded_only: asteroid kind = loaded rock actors only.
+    MSCORE_API int MSCore_scan(int kind, long long max_age_ms, const char* type, int sys, int loaded_only, MsScanRow* out, int max)
+    {
+        try
+        {
+            const auto rows = scan_rows(kind, max_age_ms < 0 ? 0 : static_cast<ULONGLONG>(max_age_ms), type ? std::string(type) : std::string(),
+                                        sys, loaded_only != 0);
+            const int n = static_cast<int>(rows.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
+            return n;
+        }
+        catch (...) { return -1; }
+    }
+
+    // 1 = native scan on, 0 = off for this session (a walk faulted: MSCore_scan returns 0 rows; MSCore.scan uses its Lua fallback).
+    MSCORE_API int MSCore_scan_ok() { return g_scan_off ? 0 : 1; }
+
+    // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
+    MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)
+    {
+        std::wstring e;
+        int r = 0;
+        try
+        {
+            if (!ch3) e = STR("null chunk");
+            else r = chunk_hold(owner, sys, ch3, e);
+        }
+        catch (...) { r = 0; e = STR("exception"); }
+        copy_err(e, err, errlen);
+        return r;
+    }
+
+    // drops the owner's chunk hold. 1 = done (also when there was none), 0 = a native call failed or exception (feature off).
+    MSCORE_API int MSCore_chunk_release(int owner)
+    {
+        try { return chunk_hold_release_owner(owner) ? 1 : 0; }
+        catch (...) { return 0; }
+    }
+
+    // 1 when the chunk-hold natives are found (why gets the reason otherwise). Read-only.
+    MSCORE_API int MSCore_chunk_ready(wchar_t* why, int len)
+    {
+        std::wstring w;
+        int ok = 0;
+        try { ok = chunk_ready(w) ? 1 : 0; }
+        catch (...) { ok = 0; w = STR("exception"); }
+        copy_err(w, why, len);
+        return ok;
+    }
 }

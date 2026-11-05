@@ -107,6 +107,45 @@ namespace
         return STR("");
     }
 
+    // WHAT: calls a getter that returns an int32 into out; false when missing or not an IntProperty return.
+    // WHY: same ProcessEvent route as call_text; the return is read only after the type check.
+    bool call_int(UObject* o, const TCHAR* fname, int32_t& out)
+    {
+        if (!alive(o)) return false;
+        UFunction* fn = o->GetFunctionByNameInChain(fname);
+        FProperty* rp = fn ? fn->GetReturnProperty() : nullptr;
+        if (!rp || !CastField<FIntProperty>(rp)) return false;
+        std::vector<uint8_t> buf(fn->GetParmsSize() + 16, 0);
+        o->ProcessEvent(fn, buf.data());
+        out = *reinterpret_cast<int32_t*>(buf.data() + rp->GetOffset_Internal());
+        return true;
+    }
+
+    // WHAT: calls a getter that returns an FVector-like struct (X, Y, Z as float or double) into out. why says the reason when it returns false.
+    // WHY: actor world positions come from K2_GetActorLocation (float, UE units: 100 uu = 1 m). The caller checks the object first.
+    bool actor_vec_call(UObject* o, const TCHAR* fname, double out[3], std::wstring& why)
+    {
+        UFunction* fn = o->GetFunctionByNameInChain(fname);
+        if (!fn) { why = STR("fn missing"); return false; }
+        FProperty* rp = fn->GetReturnProperty();
+        auto* sp = rp ? CastField<FStructProperty>(rp) : nullptr;
+        if (!sp || !sp->GetStruct()) { why = STR("no struct return"); return false; }
+        std::vector<uint8_t> buf(fn->GetParmsSize() + 16, 0);
+        o->ProcessEvent(fn, buf.data());
+        const uint8_t* base = buf.data() + rp->GetOffset_Internal();
+        static const TCHAR* names[3] = {STR("X"), STR("Y"), STR("Z")};
+        for (int i = 0; i < 3; ++i)
+        {
+            FProperty* f = sp->GetStruct()->FindProperty(FName(names[i], FNAME_Add));
+            if (!f) { why = STR("no X/Y/Z field"); return false; }
+            const uint8_t* d = base + f->GetOffset_Internal();
+            if (CastField<FFloatProperty>(f)) out[i] = *reinterpret_cast<const float*>(d);
+            else if (CastField<FDoubleProperty>(f)) out[i] = *reinterpret_cast<const double*>(d);
+            else { why = STR("not float/double"); return false; }
+        }
+        return true;
+    }
+
     // WHAT: text value of a TextProperty (e.g. DisplayName) read straight from memory; empty when missing or not text.
     // WHY: null text data = unset FText; ToString would dereference null (crash seen on a map-selected SolarSystem).
     std::wstring read_text_prop(UObject* o, const TCHAR* prop)
