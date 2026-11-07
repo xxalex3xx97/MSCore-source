@@ -901,6 +901,7 @@ extern "C"
     MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
+    // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
     // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below.
     MSCORE_API int MSCore_api() { return 4; }
 

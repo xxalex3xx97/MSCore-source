@@ -1,7 +1,12 @@
 # Build MSCore release into build\release\<Version> (local only: no gh, no git, no upload).
 # Outputs: MSCore-<ver>.zip, ue4ss-<ueVer>.zip, MSCoreManager.exe, manifest.txt
-# Reads game files from the installed copy (read-only). Usage: powershell -File scripts\release.ps1 -Version 0.5.0
+# Reads game files from the installed copy (read-only). Usage: powershell -File scripts\release.ps1 -Version 0.7.0
 # Env overrides: MS_GAME_DIR (game root), MS_UE4SS_ROOT (RE-UE4SS source tree, same as build.ps1).
+# MS_UE4SS_ROOT: build.ps1 compiles MSCore.dll into that tree. If the dev probe build shares the default tree
+#   (F:\MSDemoMods\build\RE-UE4SS), set MS_UE4SS_ROOT to an isolated mirror (e.g. F:\mscore-build\RE-UE4SS) first.
+# Dry run: there is no -DryRun switch. The script never publishes, tags, uploads or copies zips anywhere.
+#   It writes only: the RE-UE4SS build tree (build.ps1), build\MSCoreManager.exe (build-manager.ps1),
+#   build\release\<Version>\ (zips, manifest.txt, exe), and a temp dir that is removed at the end. Safe to run.
 param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [string]$Ue4ssVersion = '3.0.1-beta',
@@ -22,6 +27,8 @@ $work  = Join-Path $env:TEMP ('msc_release_' + [guid]::NewGuid().ToString('N'))
 $modFile = Join-Path $root 'mods\MSCore\mscore.mod'
 $modVer = [regex]::Match([IO.File]::ReadAllText($modFile), '(?m)^\s*version\s*=\s*(\S+)').Groups[1].Value
 if ($modVer -ne $Version) { throw "mscore.mod version '$modVer' != -Version '$Version'" }
+Write-Host "note: manifest min_mscore_native=$MinNative (default 0.5.0, kept; pass -MinNative only if a mod needs a newer native)"
+if (-not $env:MS_UE4SS_ROOT) { Write-Warning "MS_UE4SS_ROOT not set: building in the shared tree $re. Set it to an isolated mirror if the dev probe build uses that tree." }
 
 # build (no -Install: game dir untouched)
 $t0 = Get-Date

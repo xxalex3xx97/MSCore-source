@@ -10,7 +10,7 @@ nav_order: 7
 `warp` sends a ship on a teleport warp and lists sectors. `docks` lists docks. `find_item` looks up an item.
 
 {: .warning }
-**Not verified in game:** through MSCore (API 2). `docks` and `find_item` are also not verified through MSCore.
+**Not verified in game:** through MSCore (Lua API 3). `docks` and `find_item` are also not verified through MSCore.
 
 ## warp
 

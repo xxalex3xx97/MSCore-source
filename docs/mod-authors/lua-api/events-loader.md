@@ -13,7 +13,7 @@ nav_order: 4
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `events.on` | `"tick", fn` | id | Runs `fn()` every 250 ms on the game thread. Only `"tick"` is accepted in API 1. Any other name raises an error. |
+| `events.on` | `"tick", fn` | id | Runs `fn()` every 250 ms on the game thread. Only `"tick"` is accepted (Lua API 1 to 3). Any other name raises an error. |
 | `events.off` | `id` | - | Removes the callback. |
 | `events.running` | - | boolean | `true` once the shared loop has started. |
 
@@ -69,5 +69,5 @@ end)
 
 ## Gotchas
 
-- `events.on` only takes `"tick"` in API 1. Other names raise an error.
+- `events.on` only takes `"tick"` (Lua API 1 to 3). Other names raise an error.
 - `loader` never downloads. Use the manager to install an update.
