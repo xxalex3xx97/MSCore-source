@@ -23,7 +23,7 @@ Chunk numbers in use:
 | 97 | BPUnitMesh (and MSCube, dev) | Blueprint Unit table mesh and hidden mesh |
 | 98 | MiningUnitUI | Mining Unit window and UI batch |
 | 99 | ClonedBlock | Cloned block package set (Mining Unit blocks) |
-| 100 | BlueprintUnit | Blueprint Unit block, registry and research |
+| 100 | BlueprintUnit | Blueprint Unit block (registry and research: legacy, see below) |
 | 101 | MSMiningModel | Mining model |
 | 102 | BPUnitUI | **planned**, not built |
 
@@ -53,7 +53,17 @@ Cloning means copying a vanilla package under a new name without changing any by
 - A rename that is not the same length shifts every offset after it. Do not do it by hand.
 - After a rename, stale name-hash bytes are accepted by the game (proven on the Mining Unit clone).
 
-## The one-registry rule
+## Do not ship the registry or research (use MSCore.blocks)
+
+Do not ship `DAT_BuildingBlockRegistry` or `RSC_*` overrides in a mod pak. Two paks with the same asset: the highest chunk wins and replaces the other, so one mod's entries are lost. Register the block from Lua instead:
+
+```lua
+MSCore.blocks.register({ class = "/Game/.../BPO_X.BPO_X_C", research = "RSC_ComputationScience" })
+```
+
+See [Blocks and research]({{ site.baseurl }}{% link mod-authors/lua-api/blocks.md %}). The research step is untested in game.
+
+### Legacy: one-registry rule
 
 `DAT_BuildingBlockRegistry` is **one asset**. The highest chunk that ships it wins, and that copy replaces the rest. So:
 

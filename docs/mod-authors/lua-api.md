@@ -7,7 +7,7 @@ has_children: true
 
 # Lua API
 
-Lua API version: **2**. Module version: **0.7.0**. API 2 adds the `factory`, `inv` and `wbp` modules (`MSCore.factory`, `MSCore.inv`, `MSCore.wbp`). Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
+Lua API version: **3**. Module version: **0.7.0**. API 2 adds the `factory`, `inv` and `wbp` modules (`MSCore.factory`, `MSCore.inv`, `MSCore.wbp`). API 3 adds `blocks` (`MSCore.blocks`). Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
 
 ## Modules at a glance
 
@@ -21,6 +21,7 @@ Lua API version: **2**. Module version: **0.7.0**. API 2 adds the `factory`, `in
 | `orders`, `filters` | Orders and logistic filters (native) | [Orders and filters]({{ site.baseurl }}{% link mod-authors/lua-api/orders-filters.md %}) |
 | `warp`, `docks`, `find_item` | Warp, sectors, docks and item lookup | [Warp and docks]({{ site.baseurl }}{% link mod-authors/lua-api/warp-docks.md %}) |
 | `scan`, `chunks` | World scan of ships, asteroids and stations; keep a chunk cube loaded (native) | [Scan and chunks]({{ site.baseurl }}{% link mod-authors/lua-api/scan.md %}) |
+| `blocks` | Add a block to the building registry and optionally a research unlock, at runtime (no pak; untested) | [Blocks and research]({{ site.baseurl }}{% link mod-authors/lua-api/blocks.md %}) |
 | `native` | Raw wrappers for the native DLL | [Native bridge]({{ site.baseurl }}{% link mod-authors/lua-api/native-bridge.md %}) |
 | `units`, `hacks` | Coordinate helpers; registered workarounds | [Units and hacks]({{ site.baseurl }}{% link mod-authors/lua-api/units-hacks.md %}) |
 
@@ -35,6 +36,7 @@ Lua API version: **2**. Module version: **0.7.0**. API 2 adds the `factory`, `in
 - Set orders, autopilot or logistic filters → `orders`, `filters` ([Orders and filters]({{ site.baseurl }}{% link mod-authors/lua-api/orders-filters.md %})).
 - Warp a ship, list sectors, find a dock or an item → `warp`, `docks`, `find_item` ([Warp and docks]({{ site.baseurl }}{% link mod-authors/lua-api/warp-docks.md %})).
 - Find ships, asteroids or stations and their state, or keep a far chunk loaded → `scan`, `chunks` ([Scan and chunks]({{ site.baseurl }}{% link mod-authors/lua-api/scan.md %})).
+- Add a block to the building list (and research) without shipping the registry pak → `blocks` ([Blocks and research]({{ site.baseurl }}{% link mod-authors/lua-api/blocks.md %})).
 - Call a native export directly from Lua → `native` ([Native bridge]({{ site.baseurl }}{% link mod-authors/lua-api/native-bridge.md %})).
 - Convert raw coordinates to metres, or list workarounds → `units`, `hacks` ([Units and hacks]({{ site.baseurl }}{% link mod-authors/lua-api/units-hacks.md %})).
 

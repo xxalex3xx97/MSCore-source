@@ -1,6 +1,6 @@
--- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v2. Read-only unless a command function is called.
+-- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
-local MSCore = { api = 2, version = "0.7.0", verified_build = 149200896 }
+local MSCore = { api = 3, version = "0.7.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -822,5 +822,6 @@ if MSCore.factory then
 end
 load_optional("mscore_inv", function(mod, M) mod.install(M) end)
 load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
+load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
 
 return MSCore
