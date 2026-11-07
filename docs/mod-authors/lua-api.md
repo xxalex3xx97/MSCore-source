@@ -7,7 +7,7 @@ has_children: true
 
 # Lua API
 
-Lua API version: **3** (separate counter from the native API, which is 4). Module version: **0.7.4**. API 2 adds the `factory`, `inv` and `wbp` modules (`MSCore.factory`, `MSCore.inv`, `MSCore.wbp`). API 3 adds `blocks` (`MSCore.blocks`). Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
+Lua API version: **3** (separate counter from the native API, which is 4). Module version: **0.7.5**. API 2 adds the `factory`, `inv` and `wbp` modules (`MSCore.factory`, `MSCore.inv`, `MSCore.wbp`). API 3 adds `blocks` (`MSCore.blocks`). Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
 
 ## Modules at a glance
 

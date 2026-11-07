@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
-local MSCore = { api = 3, version = "0.7.4", verified_build = 149200896 }
+local MSCore = { api = 3, version = "0.7.5", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -376,7 +376,7 @@ function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes)
     return fnative("set_recipe", machine, recipeObj, amount, cfgBytes or "")
 end
 function factory_native.port(machine, port) return fnative("port_toggle", machine, port) end
-function factory_native.inv_move(prim, sec, slot, action) return fnative("inv_move", prim, sec, slot, action) end
+function factory_native.inv_move(prim, sec, slot, action, receiver) return fnative("inv_move", prim, sec, slot, action, receiver) end
 -- live station Blueprint: blocks, machines (see mscore_factory.lua parse_station) or nil, err
 function factory_native.read_station(stationId)
     local N = MSCore.native

@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.4";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.5";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -723,7 +723,7 @@ namespace
         return lua_result(lua, ok, err);
     }
 
-    // Lua: inv_move(primary, secondary, slot, action) -> ok, err
+    // Lua: inv_move(primary, secondary, slot, action [, receiver]) -> ok, err. receiver = player object id (default 0; the game drops receiver 0).
     int lua_inv_move(const LuaMadeSimple::Lua& lua)
     {
         bool ok = false;
@@ -734,7 +734,8 @@ namespace
             else
             {
                 const int prim = arg_int(lua), sec = arg_int(lua), slot = arg_int(lua), action = arg_int(lua);
-                ok = factory_guard([&] { return inv_move(prim, sec, slot, action, err); }, err);
+                const int receiver = lua.is_number(1) ? arg_int(lua) : 0;   // optional 5th arg (previous four are consumed)
+                ok = factory_guard([&] { return inv_move(prim, sec, slot, action, err, receiver); }, err);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
@@ -788,7 +789,7 @@ namespace
         return 1;
     }
 
-    // Lua: refund_enable(bool) -> status string. true validates and installs the log-only refund/charge probe hooks, false removes them. Default off.
+    // Lua: refund_enable(bool) -> status string. true validates, installs the hooks and turns the PROBE log lines on, false turns them off. Default off.
     int lua_refund_enable(const LuaMadeSimple::Lua& lua)
     {
         std::string st;
@@ -797,8 +798,26 @@ namespace
         return 1;
     }
 
-    // Lua: refund_status() -> status string ("off", "on: ...", or "COMPAT refund failed: <why>").
+    // Lua: refund_status() / redirect_status() -> status string ("off", "on: redirect=.. probe_log=.. groups=..", or "COMPAT refund failed: <why>").
     int lua_refund_status(const LuaMadeSimple::Lua& lua) { lua.set_string(g_ref.status); return 1; }
+
+    // Lua: redirect_enable(bool) -> status string. Turns the refund / charge redirect on or off (default on at start when validation passes).
+    int lua_redirect_enable(const LuaMadeSimple::Lua& lua)
+    {
+        std::string st;
+        try { st = ref_set_redirect(lua_toboolean(lua.get_lua_state(), 1) != 0); } catch (...) { st = "COMPAT refund failed: exception"; }
+        lua.set_string(st);
+        return 1;
+    }
+
+    // Lua: redirect_stats() -> "refund=<n> refund_fallback=<n> charge=<n> skipped=<n> group_made=<n> group_fail=<n> errors=<n>"
+    int lua_redirect_stats(const LuaMadeSimple::Lua& lua)
+    {
+        std::string t;
+        try { t = ref_stats_text(); } catch (...) {}
+        lua.set_string(t);
+        return 1;
+    }
 
     // Lua: refund_log() -> the last 200 probe lines, newline separated.
     int lua_refund_log(const LuaMadeSimple::Lua& lua)
@@ -809,7 +828,7 @@ namespace
         return 1;
     }
 
-    // WHAT: enables the probe when Mods\MSCoreefund_probe.txt exists (once, at MSCore Lua start). The DLL sits in Mods\MSCore\dlls.
+    // WHAT: at MSCore Lua start (once): redirect ON unless Mods\MSCore\refund_redirect_off.txt exists; probe log ON when refund_probe.txt exists. The DLL sits in Mods\MSCore\dlls.
     void refund_file_switch()
     {
         HMODULE hm = nullptr;
@@ -818,9 +837,10 @@ namespace
         std::vector<wchar_t> buf(32768);
         const DWORD n = GetModuleFileNameW(hm, buf.data(), static_cast<DWORD>(buf.size()));
         if (n == 0 || n >= buf.size()) return;
-        const mscl::fs::path f = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path() / L"refund_probe.txt";
+        const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
         std::error_code ec;
-        if (mscl::fs::exists(f, ec)) ref_set(true);
+        if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
+        if (!mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) ref_set_redirect(true);
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
@@ -955,6 +975,9 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
     lua.register_function("MSCoreNative_refund_status", lua_refund_status);
     lua.register_function("MSCoreNative_refund_log", lua_refund_log);
+    lua.register_function("MSCoreNative_redirect_enable", lua_redirect_enable);
+    lua.register_function("MSCoreNative_redirect_status", lua_refund_status);
+    lua.register_function("MSCoreNative_redirect_stats", lua_redirect_stats);
     Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
 }
 
@@ -964,7 +987,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.4");
+        ModVersion = STR("0.7.5");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1294,11 +1317,19 @@ extern "C"
         return export_call([&](std::wstring& e) { return factory_guard([&] { return port_toggle(machine, port, e); }, e); }, err, errlen);
     }
 
-    // InventoryInput at receiver 0. action 2 = quick move.
+    // InventoryInput at receiver 0 (the game DROPS receiver 0: use MSCore_inv_move_to). action 2 = quick move.
     MSCORE_API int MSCore_inv_move(int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen)
     {
         return export_call([&](std::wstring& e) {
             return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e); }, e);
+        }, err, errlen);
+    }
+
+    // InventoryInput at receiver = the player object id (the game applies it there). action 2 = quick move.
+    MSCORE_API int MSCore_inv_move_to(int primary_inv_id, int secondary_inv_id, int slot, int action, int receiver, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e, receiver); }, e);
         }, err, errlen);
     }
 }

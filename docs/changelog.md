@@ -5,6 +5,14 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.5 - Blueprint Unit refund / charge redirect
+- **New (default ON):** when a station holds a Blueprint Unit container (`BP_BPUnitStoreObj_01_C`), deconstruction refunds go into the unit first and overflow into the player inventory (then the game's drop object), and machine build costs are checked against and taken from unit + normal inventory (unit first). Done with two inline detours (machine refund `DisassembleSelf`, build-charge inventory helper) and the game's own `InventoryGroup` object (created once, rooted, members overwritten per use). Fail closed: exe size 149200896, unique patterns, 4 charge call sites, byte-checked constructor; any doubt in a lookup calls the original unchanged. No group available: refund falls back to the unit inventory alone, charge is not redirected.
+- **Switches:** off with the file `Mods/MSCore/refund_redirect_off.txt` or `MSCoreNative_redirect_enable(false)`. Probe log lines stay off by default (`refund_probe.txt` or `MSCoreNative_refund_enable(true)`). New natives: `MSCoreNative_redirect_enable(bool)`, `_redirect_status()`, `_redirect_stats()`. Log lines: `REDIRECT refund ...`, `REDIRECT charge ...` (first 20, then every 25th), `COMPAT refund ...`.
+- **New:** `inv_move` takes an optional receiver (the player object id; Lua 5th argument, C export `MSCore_inv_move_to`). `MSCore_inv_move` still sends receiver 0, which the game silently drops (it never moved anything).
+- **Changed:** the 0.7.4 probe hooks now replace the functions and call the original through a trampoline (they were pre-hooks).
+- **Known limitation: co-op.** The decision uses sim state only, but the game is lockstep: a client without the hook would put refund/charge in different inventories and desync. Every player needs the same MSCore version with the redirect on, and the pak with `BP_BPUnitStoreObj_01_C` is mandatory. Client_ValidateDeterminism behaviour is unknown. Designer (blueprint) and teardown paths are untested.
+- **Not yet run in game.** Verified only by the fake-function harness (`scripts/test-refund.ps1`) and the build.
+
 ## 0.7.4 - Refund probe (log only)
 - **New:** `MSCoreNative_refund_enable(bool)`, `_status()`, `_log()` (also `Mods/MSCore/refund_probe.txt` switches it on at start). Installs two inline detours (machine refund `DisassembleSelf`, build-charge inventory helper) that only LOG what a refund / charge redirect would do, then run the original unchanged. Default OFF. Fail closed: exe size 149200896, unique patterns, exactly 4 charge call sites, else nothing is installed and `COMPAT refund ...` is logged.
 - **Not yet run in game.**

@@ -211,14 +211,14 @@ namespace
         return send_typed(machine, cmd, kTypePort, err);
     }
 
-    // WHAT: InventoryInput{PrimaryInventoryID, SecondaryInventoryID, SlotIndex, Action}, receiver 0. action 2 = quick move (caller's choice).
-    bool inv_move(int prim, int sec, int slot, int action, std::wstring& err)
+    // WHAT: InventoryInput{PrimaryInventoryID, SecondaryInventoryID, SlotIndex, Action} sent to `receiver` (default 0 = the world, which the game DROPS; pass the player object id). action 2 = quick move.
+    bool inv_move(int prim, int sec, int slot, int action, std::wstring& err, int receiver = 0)
     {
         UObject* cmd = make_input(STR("InventoryInput"), err);
         if (!cmd) return false;
         if (!set_num_prop(cmd, STR("PrimaryInventoryID"), prim) || !set_num_prop(cmd, STR("SecondaryInventoryID"), sec)
             || !set_num_prop(cmd, STR("SlotIndex"), slot) || !set_num_prop(cmd, STR("Action"), action))
         { err = STR("InventoryInput fields missing"); return false; }
-        return send_typed(0, cmd, kTypeInventory, err);
+        return send_typed(receiver, cmd, kTypeInventory, err);
     }
 }
