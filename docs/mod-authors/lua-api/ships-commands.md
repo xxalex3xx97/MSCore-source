@@ -53,6 +53,9 @@ Thin wrappers over the factory natives. The glue table is `MSCore.factory_native
 | `factory_native.read_inventory` | `invId` | `slots` or `nil, err` | Live Inventory `ItemSlots` (native read). `slots` = `{item,amount,max}` per slot, `item` `""` = empty slot, `max` = `Item.MaxStackSize`. |
 
 {: .warning }
+Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
+
+{: .warning }
 **Not verified in game:** the factory natives and `send_typed`.
 
 ## steer

@@ -55,6 +55,9 @@ Every export, in the order of the groups below. Args are listed without the func
 | `MSCore_inv_move` | `int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput at receiver `0`. **The game silently drops receiver 0**, so this export never moves anything; use `MSCore_inv_move_to`. Kept for ABI compatibility. Type id `12`. | Not verified in game |
 | `MSCore_inv_move_to` | `int primary_inv_id, int secondary_inv_id, int slot, int action, int receiver, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput sent to `receiver` = the **player object id** (the player handler applies it). `PrimaryInventoryID`, `SecondaryInventoryID`, `SlotIndex`, `Action` (u8; `2` = quick move). Added in 0.7.5, native API stays 4 (check with `MSCoreNative_export_ok`). Type id `12`. | Not verified in game |
 
+{: .warning }
+Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
+
 ## API 4: factory commands
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.
