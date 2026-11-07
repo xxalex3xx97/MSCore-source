@@ -48,11 +48,12 @@ local OTHER_BLOCK = obj("BlueprintGeneratedClass /Game/Blueprints/BPO_Other.BPO_
 local cat, RSC, OTH
 local function world(catName)
     cat = { Name = ftext(catName or "Functional Blocks"), Classes = { VAN } }
-    REG = { Categories = categories({ cat }) }
+    REG = obj("BuildingBlockRegistry /Script/Game.BuildingBlockRegistry", { Categories = categories({ cat }) })
     OBJS = { [BPU_PATH] = BPU, [VAN_PATH] = VAN }
     RSC = obj("ResearchTechnology " .. RSC_PATH, { Unlocks = {} })
     OTH = obj("ResearchTechnology " .. OTH_PATH, { Unlocks = { { UnlockType = 7, bHidden = false, Block = OTHER_BLOCK } } })
     RT_LIST = { OTH }
+    OBJS[RSC_PATH] = RSC
     OBJS[OTH_PATH] = OTH
 end
 
