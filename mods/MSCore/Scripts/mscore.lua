@@ -1,6 +1,6 @@
--- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v1. Read-only unless a command function is called.
+-- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v2. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
-local MSCore = { api = 1, version = "0.6.0", verified_build = 149200896 }
+local MSCore = { api = 2, version = "0.7.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -804,5 +804,23 @@ hacks.add({ name = "map_pin_hook", what = "pre-hook on DMSPlayerController.AddIn
     why = "the map pin is the only pinned-sector source the game exposes; the hook only reads memory", verified_build = 149200896 })
 hacks.add({ name = "teleport_warp", what = "warp = AddInputCommand(ShipTeleportInput{bSetTarget, NewLocation, NewQuat W=65536, NewChunkLocation, NewSolarSystem}), wrapped in SetPilotingInput on/off",
     why = "the player's manual warp sends exactly this (probe 2026-10-29); instant, no warp fuel used", verified_build = 149200896 })
+
+-- optional sibling modules (same Scripts dir, found by require). A failed load is logged, never thrown.
+local function load_optional(name, install)
+    local ok, mod = pcall(require, name)
+    if not ok then log(name .. " load FAIL: " .. tostring(mod)) return end
+    local oki, err = pcall(install, mod, MSCore)
+    if not oki then log(name .. " install FAIL: " .. tostring(err)) end
+end
+load_optional("mscore_factory", function(mod, M) mod.install(M) end)
+-- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
+if MSCore.factory then
+    MSCore.factory.native = factory_native
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move" }) do
+        if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
+    end
+end
+load_optional("mscore_inv", function(mod, M) mod.install(M) end)
+load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
 
 return MSCore

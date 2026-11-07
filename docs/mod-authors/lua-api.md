@@ -7,7 +7,7 @@ has_children: true
 
 # Lua API
 
-Lua API version: **1**. Module version: **0.6.0**. Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
+Lua API version: **2**. Module version: **0.7.0**. API 2 adds the `factory`, `inv` and `wbp` modules (`MSCore.factory`, `MSCore.inv`, `MSCore.wbp`). Load it with `require("mscore")` after the path header in the [Quickstart]({{ site.baseurl }}{% link mod-authors/quickstart.md %}).
 
 ## Modules at a glance
 

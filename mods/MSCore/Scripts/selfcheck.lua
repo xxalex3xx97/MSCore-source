@@ -19,7 +19,7 @@ function M.run(MSCore)
     local function yes(cond, detail) return cond and "OK" or "BROKEN", detail end
     local function live(k) return S.live(table.unpack(R[k])) end
 
-    check("core.api", function() return yes(MSCore.api == 1, "api=" .. tostring(MSCore.api) .. " v" .. MSCore.version) end)
+    check("core.api", function() return yes(MSCore.api == 2, "api=" .. tostring(MSCore.api) .. " v" .. MSCore.version) end)
     check("safe.try", function() local ok, r = S.try("selfcheck", function() return 42 end) return yes(ok and r == 42) end)
     check("safe.valid", function() return yes(S.valid(nil) == false and S.valid(5) == false) end)
     check("safe.rd", function() return yes(S.rd(function() return 1 end) == "1" and S.rd(function() return nil end) == "?") end)

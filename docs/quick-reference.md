@@ -20,7 +20,7 @@ MSCore.require(1)
 |---|---|
 | `MSCore.require(n)` | Errors when the installed Lua API is older than `n`. |
 | `MSCore.logger(tag)` | Returns `log, try`. `try(label, f, ...)` returns `ok, result`. |
-| `MSCore.api`, `MSCore.version` | `1` and `"0.6.0"`. |
+| `MSCore.api`, `MSCore.version` | `2` and `"0.7.0"`. |
 | `MSCore.native` | Native wrappers, or `nil` when the DLL is not loaded. |
 
 ## Game objects
@@ -86,7 +86,7 @@ MSCore.require(1)
 | `MSCore.native.version()` | Native version string. |
 | `MSCore.native.check(name)` | Read-only world check. Returns `ok, detail`. |
 | `MSCore.native.pin_ensure()` | Call every tick until it returns `true`. |
-| `MSCore_api()` (C) | Returns `2`. Check before other exports. |
+| `MSCore_api()` (C) | Returns `4`. Check before other exports. |
 | `GetProcAddress(h, "MSCore_add_input")` (C) | Resolve an export from `main.dll`. |
 
 ## Manager buttons
