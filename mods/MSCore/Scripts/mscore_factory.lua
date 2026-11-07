@@ -245,6 +245,18 @@ function M.parse_station(text)
     return blocks, machines
 end
 
+-- parse_inventory(text) -> slots {item, amount, max}. Text from MSCore.native.read_inventory: S\titem\tamount\tmax, item "" = empty slot.
+function M.parse_inventory(text)
+    local slots = {}
+    for _, line in ipairs(split_plain(text or "", "\n")) do
+        local f = split_plain(line, "\t")
+        if f[1] == "S" and #f >= 4 then
+            slots[#slots + 1] = { item = f[2], amount = tonumber(f[3]) or 0, max = tonumber(f[4]) or 1 }
+        end
+    end
+    return slots
+end
+
 ---------------------------------------------------------------- game reads (in game only)
 local function valid(o)
     if o == nil or type(o) ~= "userdata" then return false end

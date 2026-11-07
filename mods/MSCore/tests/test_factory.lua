@@ -120,6 +120,14 @@ check("parse_station: machine 3 cfg nil", sm[3].cfg == nil)
 local eb, em = F.parse_station("")
 check("parse_station: empty text gives two empty tables", #eb == 0 and #em == 0)
 
+-- ===== parse_inventory (native read_inventory text)
+local inv = F.parse_inventory("S\tHullPlate\t482\t100\nS\t\t0\t1\nS\tMagneticCoils\t50\t20\n")
+check("parse_inventory: three slots", #inv == 3)
+check("parse_inventory: slot 1 fields", inv[1].item == "HullPlate" and inv[1].amount == 482 and inv[1].max == 100)
+check("parse_inventory: empty slot item is empty string", inv[2].item == "" and inv[2].amount == 0 and inv[2].max == 1)
+check("parse_inventory: slot 3 fields", inv[3].item == "MagneticCoils" and inv[3].amount == 50 and inv[3].max == 20)
+check("parse_inventory: empty text gives no slots", #F.parse_inventory("") == 0)
+
 -- ===== install hooks
 local MS = {}
 F.install(MS)

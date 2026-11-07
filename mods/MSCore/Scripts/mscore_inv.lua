@@ -29,10 +29,23 @@ local function read_slot(e)
     return { item = item, amount = amount, max = max }
 end
 
+local NATIVE_READ  -- factory_native.read_inventory when MSCore 0.7.3+ is installed (set in install)
+
 -- ItemSlots as slot records, in array order (empty slots included)
+-- Native first: Lua struct reads of ItemSlots are unreliable in UE4SS. Falls back to the Lua read when native is missing or fails.
 function M.slots(inv)
     local out = {}
     if not valid(inv) then return out end
+    if NATIVE_READ then
+        local okId, id = pcall(function() return inv.ID end)
+        local slots = okId and type(id) == "number" and NATIVE_READ(id) or nil
+        if slots then
+            for i, s in ipairs(slots) do
+                out[i] = { item = s.item ~= "" and s.item or nil, amount = s.amount, max = s.max }
+            end
+            return out
+        end
+    end
     local ok, arr = pcall(function() return inv.ItemSlots end)
     if not ok or arr == nil then return out end
     pcall(function()
@@ -132,6 +145,10 @@ function M.moveout_slots(slots, items)
     return picks, short
 end
 
-function M.install(MSCore) MSCore.inv = M; return M end
+function M.install(MSCore)
+    MSCore.inv = M
+    NATIVE_READ = MSCore.factory_native and MSCore.factory_native.read_inventory
+    return M
+end
 
 return M

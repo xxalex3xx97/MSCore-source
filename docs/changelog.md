@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.3 - Native inventory read
+- **New:** `MSCore.native.read_inventory(invId)` and `MSCore.factory_native.read_inventory(invId)`: reads `ItemSlots` of one Inventory in C++ (no Lua struct access). Returns `slots` = `{item, amount, max}` per slot, empty slots included (`item` `""` = empty, `max` = `Item.MaxStackSize`). `MSCore.inv.slots` uses it when present and falls back to the Lua read otherwise. Lua API 3 and native API 4 unchanged.
+- **Not yet run in game.**
+
 ## 0.7.2 - Native station read
 - **New:** `MSCore.native.read_station(stationId)` and `MSCore.factory_native.read_station(stationId)`: reads `Blueprint.Blocks` and `Blueprint.Machines` of one station in C++ (no Lua struct access, which crashes UE4SS). Lua API 3 and native API 4 unchanged.
 - **Not yet run in game.**

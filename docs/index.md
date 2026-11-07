@@ -18,7 +18,7 @@ MSCore is a shared base for mods of the **Main Sequence Demo** game.
 | 2 | Lua helpers | `mscore.lua` | Safe wrappers around the game's objects, UI helpers, a 250 ms tick loop, ship and dock lookups, command helpers for mods. |
 | 3 | Native part | `MSCore.dll` (C++) | Sends ship commands, orders, warp and filter commands. Exports a C API for other native mods. |
 
-Current version: **0.7.2** (Lua API 3, native API 4; separate counters).
+Current version: **0.7.3** (Lua API 3, native API 4; separate counters).
 
 ## Quick links
 

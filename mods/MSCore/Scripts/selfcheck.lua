@@ -73,7 +73,7 @@ function M.run(MSCore)
             local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
             return yes(N.export_ok(n) == true, "GetProcAddress") end)
     end
-    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move", "read_station" }) do
+    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move", "read_station", "read_inventory" }) do
         check("native." .. n, function()
             local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
             return yes(type(N[n]) == "function", "MSCoreNative_" .. n .. " registered") end)

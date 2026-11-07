@@ -1,6 +1,7 @@
 // FILE: cpp/MSCore/msc_station.hpp
 // WHAT: read_station(id): the live Blueprint (Blocks + Machines) of one StationObject as one tab-separated text (native API 4, Lua only).
 //       Lines: B\tclass\tgx\tgy\th\trot   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       read_inventory(id) (0.7.3): the ItemSlots of one Inventory, same style. Lines: S\titem\tamount\tmax
 //       cfg = lowercase hex of SerializedMachineConfig, "" for an empty array, "-" when the field is unreadable.
 //       Trailing _C is stripped from class names.
 // WHY: Lua struct access to Blueprint crashes UE4SS, so the walk is native. Ported from MiningBenchMod mb_bpprobe.hpp
@@ -172,5 +173,48 @@ namespace
         if (!st) { err = STR("no live StationObject with id ") + std::to_wstring(station_id); return false; }
         out.clear();
         return st_read_blocks(st, out, err) && st_read_machines(st, out, err);
+    }
+
+    // WHAT: narrow copy of an object name (names are ASCII). No _C strip, unlike st_short.
+    std::string st_narrow(const std::wstring& s)
+    {
+        std::string out;
+        for (wchar_t c : s) out += static_cast<char>(c);
+        return out;
+    }
+
+    // WHAT: text of the live Inventory with save ID inv_id: one line per ItemSlots entry, empty slots included.
+    //       Lines: S\titem\tamount\tmax   (item = object name of Item, "" for an empty slot; max = Item.MaxStackSize, 1 when unknown).
+    // WHY: Lua struct reads of ItemSlots are unreliable in UE4SS (same as Blueprint). Fields found by name, never by offset.
+    // SAFETY: game thread only, reads only. Item pointer checked by alive() before use.
+    bool read_inventory(int inv_id, std::string& out, std::wstring& err)
+    {
+        UObject* inv = find_by_id(STR("Inventory"), inv_id);
+        if (!inv) { err = STR("no live Inventory with id ") + std::to_wstring(inv_id); return false; }
+        UStruct* ic = inv->GetClassPrivate();
+        FProperty* p = st_field(ic, STR("ItemSlots"));
+        auto* ap = p ? CastField<FArrayProperty>(p) : nullptr;
+        auto* ip = ap ? CastField<FStructProperty>(ap->GetInner()) : nullptr;
+        if (!ip || !ip->GetStruct()) { err = STR("inventory has no readable ItemSlots"); return false; }
+        UStruct* et = ip->GetStruct();
+        const auto* ta = reinterpret_cast<const TArray<uint8_t>*>(reinterpret_cast<const uint8_t*>(inv) + p->GetOffset_Internal());
+        const size_t es = static_cast<size_t>(ap->GetInner()->GetElementSize());
+        out.clear();
+        for (int i = 0; ta->GetData() && i < ta->Num(); ++i)
+        {
+            const uint8_t* e = ta->GetData() + static_cast<size_t>(i) * es;
+            std::string item;
+            int mx = 1, amount = 0;
+            if (UObject* it = st_obj(et, e, STR("Item")); it && alive(it))
+            {
+                item = st_narrow(it->GetName());
+                int ms = 0;
+                if (st_int(it->GetClassPrivate(), reinterpret_cast<const uint8_t*>(it), STR("MaxStackSize"), ms) && ms > 0) mx = ms;
+            }
+            st_int(et, e, STR("Amount"), amount);
+            out += "S\t" + item + "\t" + std::to_string(amount) + "\t" + std::to_string(mx) + "\n";
+            if (out.size() > kMaxStationBytes) { err = STR("inventory too large"); return false; }
+        }
+        return true;
     }
 }
