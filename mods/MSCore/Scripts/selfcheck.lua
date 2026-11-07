@@ -68,7 +68,7 @@ function M.run(MSCore)
         local ok, why = N.send_cmd(1, nil) return yes(ok == false, tostring(why)) end)
     -- API 4 factory exports: C exports resolve by GetProcAddress (export_ok), Lua natives are globals. Sends nothing.
     for _, n in ipairs({ "MSCore_send_typed", "MSCore_find_buildable", "MSCore_build_place", "MSCore_disassemble",
-                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move" }) do
+                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move", "MSCore_inv_move_to" }) do
         check("export." .. n, function()
             local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
             return yes(N.export_ok(n) == true, "GetProcAddress") end)

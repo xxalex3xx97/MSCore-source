@@ -3,6 +3,8 @@
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
 local MSCore = { api = 3, version = "0.7.5", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
+-- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
+local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
     view_send = _G.MSCoreNative_view_send, throttle = _G.MSCoreNative_throttle,
@@ -12,6 +14,8 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
     check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
     scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
+    refund_enable = nat("MSCoreNative_refund_enable"), redirect_enable = nat("MSCoreNative_redirect_enable"),
+    redirect_status = nat("MSCoreNative_redirect_status"), redirect_stats = nat("MSCoreNative_redirect_stats"), refund_log = nat("MSCoreNative_refund_log"),
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
     inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, export_ok = _G.MSCoreNative_export_ok } or nil
