@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.1 - Lua globals for every mod
+- **Fixed:** the `MSCoreNative_*` Lua globals (`MSCore.native`) were only registered for the MSCore Lua mod. They are now registered in every Lua mod's state, so other mods (e.g. BlueprintUnit) can use cmd.send and the factory natives.
+- **Not yet run in game:** untested until a retest with a non-MSCore Lua mod.
+
 ## 0.7.0 - Factory API
 - **New:** Lua API 3: `MSCore.blocks` (`register`, `status`, `debug_dump`). Adds a block to the building registry at runtime, so mods need no `DAT_BuildingBlockRegistry` pak. Research unlock append is opt-in (`MSCore.blocks.allow_research = true`, every player needs the mod). Failed writes are sticky (no retry). Untested in game. Module version stays 0.7.0.
 - **New:** native API 4 (`MSCore_api()` returns 4): typed command send (`MSCore_send_typed`) and factory senders: `find_buildable`, `build_place`, `disassemble`, `set_recipe`, `port_toggle`, `inv_move`. Lua: `cmd.send_typed`, `MSCore.factory_native`.

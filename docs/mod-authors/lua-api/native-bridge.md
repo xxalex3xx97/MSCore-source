@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.7.0"`). |
+| `native.version` | `()` | string | The native version (`"0.7.1"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |

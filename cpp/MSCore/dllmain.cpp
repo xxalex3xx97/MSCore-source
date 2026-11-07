@@ -4,6 +4,7 @@
 #include <cmath>
 #include <atomic>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,7 +38,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -842,13 +843,56 @@ namespace
     }
 }
 
+// WHAT: registers the MSCoreNative_* Lua globals in one Lua state, once per state (guard by lua_State*).
+// WHY: UE4SS fires the unnamed on_lua_start only for the Lua mod named MSCore, so other mods (BlueprintUnit) never got these globals. The named on_lua_start calls this for every started Lua mod.
+static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_name)
+{
+    static std::mutex mu;
+    static std::set<void*> done;
+    {
+        std::lock_guard<std::mutex> g(mu);
+        if (!done.insert(lua.get_lua_state()).second) return;
+    }
+    // table add_pair functions need userdata self; global functions don't. mscore.lua gathers them into MSCore.native
+    lua.register_function("MSCoreNative_version", lua_version);
+    lua.register_function("MSCoreNative_alive", lua_alive);
+    lua.register_function("MSCoreNative_send_cmd", lua_send_cmd);
+    lua.register_function("MSCoreNative_view_send", lua_view_send);
+    lua.register_function("MSCoreNative_throttle", lua_throttle);
+    lua.register_function("MSCoreNative_offsets", lua_offsets);
+    lua.register_function("MSCoreNative_check_offsets", lua_check_offsets);
+    lua.register_function("MSCoreNative_new_order", lua_new_order);
+    lua.register_function("MSCoreNative_update_order", lua_update_order);
+    lua.register_function("MSCoreNative_delete_order", lua_delete_order);
+    lua.register_function("MSCoreNative_autopilot", lua_autopilot);
+    lua.register_function("MSCoreNative_skip_to", lua_skip_to);
+    lua.register_function("MSCoreNative_filter_send", lua_filter_send);
+    lua.register_function("MSCoreNative_warp_send", lua_warp_send);
+    lua.register_function("MSCoreNative_pinned", lua_pinned);
+    lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
+    lua.register_function("MSCoreNative_check", lua_check);
+    lua.register_function("MSCoreNative_loader_status", lua_loader_status);
+    lua.register_function("MSCoreNative_scan", lua_scan);
+    lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
+    lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
+    lua.register_function("MSCoreNative_send_typed", lua_send_typed);
+    lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
+    lua.register_function("MSCoreNative_build_place", lua_build_place);
+    lua.register_function("MSCoreNative_disassemble", lua_disassemble);
+    lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
+    lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
+    lua.register_function("MSCoreNative_inv_move", lua_inv_move);
+    lua.register_function("MSCoreNative_export_ok", lua_export_ok);
+    Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
+}
+
 class MSCoreMod : public RC::CppUserModBase
 {
 public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.0");
+        ModVersion = STR("0.7.1");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -864,37 +908,12 @@ public:
 
     auto on_lua_start(LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
     {
-        // table add_pair functions need userdata self; global functions don't. mscore.lua gathers them into MSCore.native
-        lua.register_function("MSCoreNative_version", lua_version);
-        lua.register_function("MSCoreNative_alive", lua_alive);
-        lua.register_function("MSCoreNative_send_cmd", lua_send_cmd);
-        lua.register_function("MSCoreNative_view_send", lua_view_send);
-        lua.register_function("MSCoreNative_throttle", lua_throttle);
-        lua.register_function("MSCoreNative_offsets", lua_offsets);
-        lua.register_function("MSCoreNative_check_offsets", lua_check_offsets);
-        lua.register_function("MSCoreNative_new_order", lua_new_order);
-        lua.register_function("MSCoreNative_update_order", lua_update_order);
-        lua.register_function("MSCoreNative_delete_order", lua_delete_order);
-        lua.register_function("MSCoreNative_autopilot", lua_autopilot);
-        lua.register_function("MSCoreNative_skip_to", lua_skip_to);
-        lua.register_function("MSCoreNative_filter_send", lua_filter_send);
-        lua.register_function("MSCoreNative_warp_send", lua_warp_send);
-        lua.register_function("MSCoreNative_pinned", lua_pinned);
-        lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
-        lua.register_function("MSCoreNative_check", lua_check);
-        lua.register_function("MSCoreNative_loader_status", lua_loader_status);
-        lua.register_function("MSCoreNative_scan", lua_scan);
-        lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
-        lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
-        lua.register_function("MSCoreNative_send_typed", lua_send_typed);
-        lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
-        lua.register_function("MSCoreNative_build_place", lua_build_place);
-        lua.register_function("MSCoreNative_disassemble", lua_disassemble);
-        lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
-        lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
-        lua.register_function("MSCoreNative_inv_move", lua_inv_move);
-        lua.register_function("MSCoreNative_export_ok", lua_export_ok);
-        Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals MSCoreNative_* registered\n"));
+        register_globals(lua, STR("MSCore"));
+    }
+
+    auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
+    {
+        register_globals(lua, std::wstring(mod_name));
     }
 };
 

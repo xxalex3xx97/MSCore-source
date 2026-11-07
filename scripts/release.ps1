@@ -1,6 +1,6 @@
 # Build MSCore release into build\release\<Version> (local only: no gh, no git, no upload).
 # Outputs: MSCore-<ver>.zip, ue4ss-<ueVer>.zip, MSCoreManager.exe, manifest.txt
-# Reads game files from the installed copy (read-only). Usage: powershell -File scripts\release.ps1 -Version 0.7.0
+# Reads game files from the installed copy (read-only). Usage: powershell -File scripts\release.ps1 -Version 0.7.1
 # Env overrides: MS_GAME_DIR (game root), MS_UE4SS_ROOT (RE-UE4SS source tree, same as build.ps1).
 # MS_UE4SS_ROOT: build.ps1 compiles MSCore.dll into that tree. If the dev probe build shares the default tree
 #   (F:\MSDemoMods\build\RE-UE4SS), set MS_UE4SS_ROOT to an isolated mirror (e.g. F:\mscore-build\RE-UE4SS) first.
