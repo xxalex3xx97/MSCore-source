@@ -15,7 +15,7 @@ Lua API version: **1**. Module version: **0.6.0**. Load it with `require("mscore
 |---|---|---|
 | `MSCore` (core) | API version, `require`, `logger` | [Core]({{ site.baseurl }}{% link mod-authors/lua-api/core.md %}) |
 | `safe`, `resolve` | Check and read game objects; class and path names | [Safe and objects]({{ site.baseurl }}{% link mod-authors/lua-api/safe-objects.md %}) |
-| `ui` | Create and style simple UMG widgets | [UI]({{ site.baseurl }}{% link mod-authors/lua-api/ui.md %}) |
+| `ui`, `wbp` | Create and style simple UMG widgets; open a cooked WBP window with inventory and cost rows | [UI]({{ site.baseurl }}{% link mod-authors/lua-api/ui.md %}) |
 | `events`, `loader` | Shared tick loop; mod update status | [Events and loader]({{ site.baseurl }}{% link mod-authors/lua-api/events-loader.md %}) |
 | `ships`, `cmd`, `steer` | List ships, send commands, aim and throttle | [Ships and commands]({{ site.baseurl }}{% link mod-authors/lua-api/ships-commands.md %}) |
 | `orders`, `filters` | Orders and logistic filters (native) | [Orders and filters]({{ site.baseurl }}{% link mod-authors/lua-api/orders-filters.md %}) |
