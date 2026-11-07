@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.7.3"`). |
+| `native.version` | `()` | string | The native version (`"0.7.4"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |
@@ -36,6 +36,9 @@ nav_order: 8
 | `native.chunk_release` | `(owner)` | boolean | Drops the owner's cube. |
 | `native.read_station` | `(stationId)` | `ok, text` | Raw station text (one `B` or `M` line per block or machine, tab separated). Prefer `factory_native.read_station`. |
 | `native.read_inventory` | `(invId)` | `ok, text` | Raw inventory text (one `S` line per slot: `S	item	amount	max`, `item` empty for an empty slot). Prefer `factory_native.read_inventory`. |
+| `native.refund_enable` | `(bool)` | string | 0.7.4 probe: `true` validates and installs two log-only hooks (machine refund, build charge); `false` removes them. Default off (also on when `Mods/MSCore/refund_probe.txt` exists). Returns the status. Changes no behaviour. |
+| `native.refund_status` | `()` | string | `off`, `on: ...` or `COMPAT refund failed: <why>`. |
+| `native.refund_log` | `()` | string | Last 200 probe lines (`PROBE refund ...`, `PROBE charge ...`, `PROBE other-site ...`). |
 
 ## Example
 

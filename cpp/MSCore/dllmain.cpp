@@ -35,11 +35,12 @@ using namespace RC::Unreal;
 #include "msc_scan.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
+#include "msc_refund.hpp"
 #include "msc_loader.hpp"
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.3";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.4";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -787,6 +788,41 @@ namespace
         return 1;
     }
 
+    // Lua: refund_enable(bool) -> status string. true validates and installs the log-only refund/charge probe hooks, false removes them. Default off.
+    int lua_refund_enable(const LuaMadeSimple::Lua& lua)
+    {
+        std::string st;
+        try { st = ref_set(lua_toboolean(lua.get_lua_state(), 1) != 0); } catch (...) { st = "COMPAT refund failed: exception"; }
+        lua.set_string(st);
+        return 1;
+    }
+
+    // Lua: refund_status() -> status string ("off", "on: ...", or "COMPAT refund failed: <why>").
+    int lua_refund_status(const LuaMadeSimple::Lua& lua) { lua.set_string(g_ref.status); return 1; }
+
+    // Lua: refund_log() -> the last 200 probe lines, newline separated.
+    int lua_refund_log(const LuaMadeSimple::Lua& lua)
+    {
+        std::string t;
+        try { t = ref_log_text(); } catch (...) {}
+        lua.set_string(t);
+        return 1;
+    }
+
+    // WHAT: enables the probe when Mods\MSCoreefund_probe.txt exists (once, at MSCore Lua start). The DLL sits in Mods\MSCore\dlls.
+    void refund_file_switch()
+    {
+        HMODULE hm = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                reinterpret_cast<LPCWSTR>(&kVersion), &hm)) return;
+        std::vector<wchar_t> buf(32768);
+        const DWORD n = GetModuleFileNameW(hm, buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0 || n >= buf.size()) return;
+        const mscl::fs::path f = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path() / L"refund_probe.txt";
+        std::error_code ec;
+        if (mscl::fs::exists(f, ec)) ref_set(true);
+    }
+
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
 
     struct LoaderRow { std::string name, installed, remote, state; };
@@ -916,6 +952,9 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
+    lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
+    lua.register_function("MSCoreNative_refund_status", lua_refund_status);
+    lua.register_function("MSCoreNative_refund_log", lua_refund_log);
     Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
 }
 
@@ -925,7 +964,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.3");
+        ModVersion = STR("0.7.4");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -935,6 +974,7 @@ public:
     ~MSCoreMod()
     {
         g_loader_stop = true;   // detached worker checks this between network steps
+        try { ref_uninstall(); } catch (...) {}
         try { chunk_hold_release_all(); }
         catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
     }
@@ -942,6 +982,7 @@ public:
     auto on_lua_start(LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
     {
         register_globals(lua, STR("MSCore"));
+        try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override

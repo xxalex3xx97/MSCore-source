@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.4 - Refund probe (log only)
+- **New:** `MSCoreNative_refund_enable(bool)`, `_status()`, `_log()` (also `Mods/MSCore/refund_probe.txt` switches it on at start). Installs two inline detours (machine refund `DisassembleSelf`, build-charge inventory helper) that only LOG what a refund / charge redirect would do, then run the original unchanged. Default OFF. Fail closed: exe size 149200896, unique patterns, exactly 4 charge call sites, else nothing is installed and `COMPAT refund ...` is logged.
+- **Not yet run in game.**
+
 ## 0.7.3 - Native inventory read
 - **New:** `MSCore.native.read_inventory(invId)` and `MSCore.factory_native.read_inventory(invId)`: reads `ItemSlots` of one Inventory in C++ (no Lua struct access). Returns `slots` = `{item, amount, max}` per slot, empty slots included (`item` `""` = empty, `max` = `Item.MaxStackSize`). `MSCore.inv.slots` uses it when present and falls back to the Lua read otherwise. Lua API 3 and native API 4 unchanged.
 - **Not yet run in game.**
