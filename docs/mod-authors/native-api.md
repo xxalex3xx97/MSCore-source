@@ -58,6 +58,8 @@ Every export, in the order of the groups below. Args are listed without the func
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.
 
+`read_station` is Lua-only (no C export): `MSCoreNative_read_station`, source `cppMSCoremsc_station.hpp`.
+
 Typed id table (value written at `cmd+0x28`, the int that the flush checks):
 
 | Input class | Type id | Receiver | Fields (offset in the object) | Export |

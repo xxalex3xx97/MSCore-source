@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.7.1"`). |
+| `native.version` | `()` | string | The native version (`"0.7.2"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |
@@ -34,6 +34,7 @@ nav_order: 8
 | `native.scan` | `(kind, max_age_ms, type, sys, loaded_only)` | string | One line per row, `\n` ended. Numbers as in `MSCore_scan`. Use `MSCore.scan` instead; it parses the lines. |
 | `native.chunk_hold` | `(owner, sys, X, Y, Z)` | `ok, err` | Holds the chunk cube for `owner`. `ok` is true for a set and for an unchanged cube. |
 | `native.chunk_release` | `(owner)` | boolean | Drops the owner's cube. |
+| `native.read_station` | `(stationId)` | `ok, text` | Raw station text (one `B` or `M` line per block or machine, tab separated). Prefer `factory_native.read_station`. |
 
 ## Example
 

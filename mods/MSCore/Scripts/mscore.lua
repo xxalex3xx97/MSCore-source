@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
-local MSCore = { api = 3, version = "0.7.1", verified_build = 149200896 }
+local MSCore = { api = 3, version = "0.7.2", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -14,7 +14,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
-    inv_move = _G.MSCoreNative_inv_move, export_ok = _G.MSCoreNative_export_ok } or nil
+    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, export_ok = _G.MSCoreNative_export_ok } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -377,6 +377,16 @@ function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes)
 end
 function factory_native.port(machine, port) return fnative("port_toggle", machine, port) end
 function factory_native.inv_move(prim, sec, slot, action) return fnative("inv_move", prim, sec, slot, action) end
+-- live station Blueprint: blocks, machines (see mscore_factory.lua parse_station) or nil, err
+function factory_native.read_station(stationId)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.read_station then return nil, "native read_station missing (MSCore 0.7.2 DLL needed)" end
+    local ok, text = N.read_station(stationId)
+    if not ok then return nil, text end
+    local F = package.loaded["mscore_factory"] or require("mscore_factory")
+    return F.parse_station(text)
+end
 
 local steer = {}
 MSCore.steer = steer
@@ -832,7 +842,7 @@ load_optional("mscore_factory", function(mod, M) mod.install(M) end)
 -- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
 if MSCore.factory then
     MSCore.factory.native = factory_native
-    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move" }) do
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station" }) do
         if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
     end
 end

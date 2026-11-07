@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.2 - Native station read
+- **New:** `MSCore.native.read_station(stationId)` and `MSCore.factory_native.read_station(stationId)`: reads `Blueprint.Blocks` and `Blueprint.Machines` of one station in C++ (no Lua struct access, which crashes UE4SS). Lua API 3 and native API 4 unchanged.
+- **Not yet run in game.**
+
 ## 0.7.1 - Lua globals for every mod
 - **Fixed:** the `MSCoreNative_*` Lua globals (`MSCore.native`) were only registered for the MSCore Lua mod. They are now registered in every Lua mod's state, so other mods (e.g. BlueprintUnit) can use cmd.send and the factory natives.
 - **Not yet run in game:** untested until a retest with a non-MSCore Lua mod.

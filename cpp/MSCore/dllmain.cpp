@@ -34,11 +34,12 @@ using namespace RC::Unreal;
 #include "msc_chunks.hpp"
 #include "msc_scan.hpp"
 #include "msc_factory.hpp"
+#include "msc_station.hpp"
 #include "msc_loader.hpp"
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.2";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -739,6 +740,21 @@ namespace
         return lua_result(lua, ok, err);
     }
 
+    // Lua: read_station(stationId) -> true, text | false, err   (text format: msc_station.hpp)
+    int lua_read_station(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        std::string out;
+        try {
+            if (!nums(lua, 1)) err = STR("read_station needs a station id number");
+            else { const int id = arg_int(lua); ok = factory_guard([&] { return read_station(id, out, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        lua.set_bool(ok);
+        if (ok) lua.set_string(out); else lua.set_string(narrow(err));
+        return 2;
+    }
+
     // Lua: export_ok(name) -> true when this DLL exports name (GetProcAddress). Read-only, for selfcheck.
     int lua_export_ok(const LuaMadeSimple::Lua& lua)
     {
@@ -882,6 +898,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
     lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
     lua.register_function("MSCoreNative_inv_move", lua_inv_move);
+    lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
     Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
 }
@@ -892,7 +909,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.1");
+        ModVersion = STR("0.7.2");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));

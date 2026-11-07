@@ -109,6 +109,17 @@ check("moveout: a slot is picked once", #picks == 2 and picks[1] == 1 and picks[
 
 check("room: stack a 3/5 + empty + b", I.room_from_slots({ { item = "a", amount = 3 }, { amount = 0 }, { item = "b", amount = 2 } }, "a", 5) == 7)
 
+-- ===== parse_station (native read_station text)
+local sb, sm = F.parse_station("B\tBPO_Station_01\t0\t0\t0\t0\nM\t10\tBP_Belt\t1\t2\t3\t1\t010203\nM\t11\tBP_X\t4\t5\t0\t0\t\nM\t12\tBP_Y\t0\t0\t0\t0\t-\n")
+check("parse_station: one block", #sb == 1 and sb[1].class == "BPO_Station_01")
+check("parse_station: three machines", #sm == 3)
+check("parse_station: machine 1 fields", sm[1].id == 10 and sm[1].x == 1 and sm[1].y == 2 and sm[1].h == 3 and sm[1].rot == 1)
+check("parse_station: machine 1 cfg bytes", sm[1].cfg == "\1\2\3")
+check("parse_station: machine 2 empty cfg", sm[2].cfg == "")
+check("parse_station: machine 3 cfg nil", sm[3].cfg == nil)
+local eb, em = F.parse_station("")
+check("parse_station: empty text gives two empty tables", #eb == 0 and #em == 0)
+
 -- ===== install hooks
 local MS = {}
 F.install(MS)
