@@ -19,6 +19,7 @@
 #include <Unreal/FText.hpp>
 #include <Unreal/Hooks/Hooks.hpp>
 #include <Unreal/CoreUObject/UObject/UnrealType.hpp>
+#include <Unreal/Property/FEnumProperty.hpp>
 
 using namespace RC;
 using namespace RC::Unreal;
