@@ -102,3 +102,7 @@ MSCore.require(1)
 
 {: .note }
 Close the game before install, add, remove or rollback. See [Getting started]({{ site.baseurl }}{% link players/getting-started.md %}).
+
+## Game internals
+
+Commands, inventories, refunds and builds work in ways that surprise mod authors. Read [Game internals]({{ site.baseurl }}{% link mod-authors/game-internals.md %}) before you move items or place machines from a mod.
