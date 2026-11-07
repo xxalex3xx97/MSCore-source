@@ -52,7 +52,8 @@ Every export, in the order of the groups below. Args are listed without the func
 | `MSCore_disassemble` | `int target_id, int mass, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | DisassembleInput at receiver `0`: `TargetId` = `target_id`, `bMassDisassemble` = `mass != 0`. Type id `0x2f`. | Not verified in game |
 | `MSCore_set_recipe` | `int machine, void* recipe, int amount, const uint8_t* cfg, int cfglen, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | SetRecipeInput at receiver = `machine` id (must be > 0): `Recipe`, `Amount`, `Config`. `cfg` must be 0 bytes or 4 bytes (int32 `Config`, little endian). Type id `20`. | Not verified in game |
 | `MSCore_port_toggle` | `int machine, int port, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | MachinePortInput at receiver = `machine` id (must be > 0): `PortIndex` = `port`. Toggles that port. Type id `17`. | Not verified in game |
-| `MSCore_inv_move` | `int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput at receiver `0`: `PrimaryInventoryID`, `SecondaryInventoryID`, `SlotIndex`, `Action` (u8). `action` `2` = quick move. Type id `12`. | Not verified in game |
+| `MSCore_inv_move` | `int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput at receiver `0`. **The game silently drops receiver 0**, so this export never moves anything; use `MSCore_inv_move_to`. Kept for ABI compatibility. Type id `12`. | Not verified in game |
+| `MSCore_inv_move_to` | `int primary_inv_id, int secondary_inv_id, int slot, int action, int receiver, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput sent to `receiver` = the **player object id** (the player handler applies it). `PrimaryInventoryID`, `SecondaryInventoryID`, `SlotIndex`, `Action` (u8; `2` = quick move). Added in 0.7.5, native API stays 4 (check with `MSCoreNative_export_ok`). Type id `12`. | Not verified in game |
 
 {: .warning }
 Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
@@ -61,13 +62,15 @@ Receiver `0` is silently dropped by the game; pass the player object's id as rec
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.
 
+`read_station` and `read_inventory` are Lua-only (no C export): `MSCoreNative_read_station`, `MSCoreNative_read_inventory`, source `cpp\MSCore\msc_station.hpp`.
+
 Typed id table (value written at `cmd+0x28`, the int that the flush checks):
 
 | Input class | Type id | Receiver | Fields (offset in the object) | Export |
 |---|---|---|---|---|
 | `BuildInput` | `0x2e` (46) | `0` | Buildable@0x40, Location, Quat, Chunk, SolarSystemID, AttachTargetID@0x74, GridTransform@0x78, Config, MachineConfigData@0x90 | `MSCore_build_place` |
 | `DisassembleInput` | `0x2f` (47) | `0` | TargetId@0x40, bMassDisassemble@0x44 | `MSCore_disassemble` |
-| `InventoryInput` | `12` | `0` | PrimaryInventoryID@0x40, SecondaryInventoryID@0x44, SlotIndex@0x48, Action(u8)@0x4c | `MSCore_inv_move` |
+| `InventoryInput` | `12` | player object id (`0` is dropped) | PrimaryInventoryID@0x40, SecondaryInventoryID@0x44, SlotIndex@0x48, Action(u8)@0x4c | `MSCore_inv_move` |
 | `SetRecipeInput` | `20` | machine id | Recipe@0x40, Amount@0x48, Config@0x4c | `MSCore_set_recipe` |
 | `MachinePortInput` | `17` | machine id | PortIndex@0x40 | `MSCore_port_toggle` |
 | `SetConfigInput` | `21` | machine id | Config@0x40, Config2@0x44, PlayerObjectID@0x48 | no export yet (use `MSCore_send_typed` with a built object) |
