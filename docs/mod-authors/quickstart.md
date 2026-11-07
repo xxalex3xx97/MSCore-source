@@ -43,7 +43,7 @@ local id = MSCore.events.on("tick", function()  -- every 250 ms, game thread
 end)
 ```
 
-`events.on` only accepts `"tick"` in API 1. `events.off(id)` removes the callback. See [Events and loader]({{ site.baseurl }}{% link mod-authors/lua-api/events-loader.md %}).
+`events.on` only accepts `"tick"` (Lua API 1 to 3). `events.off(id)` removes the callback. See [Events and loader]({{ site.baseurl }}{% link mod-authors/lua-api/events-loader.md %}).
 
 ## 5. Check it runs
 

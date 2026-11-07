@@ -31,8 +31,27 @@ Read-only. The ship list is cached for 5 seconds. Every entry is checked with `s
 | Function | Args | Returns | Notes |
 |---|---|---|---|
 | `cmd.send` | `receiver, cmdObj` | `ok, err` | Sends `cmdObj` to `receiver` (a ship id) with `AddInputCommand`. Applies the type id fix (`shipmove_typeid`). Needs the native DLL. |
+| `cmd.send_typed` | `receiver, cmdObj, typeId` | `ok, err` | Typed send (native API 4). Writes `typeId` at `cmdObj+0x28` when that int is `0`, then `AddInputCommand(receiver, cmdObj)`. Needs the native DLL with `MSCore_api() >= 4`. |
 
 `cmdObj` is a UObject made with `NewObject` or a `CreateInput*` factory. The mining mod uses this path in game.
+
+Type ids for `send_typed`: BuildInput `0x2e`, DisassembleInput `0x2f`, InventoryInput `12`, SetRecipeInput `20`, MachinePortInput `17`, SetConfigInput `21`. Receiver `0` for BuildInput, DisassembleInput and InventoryInput (the world). Machine id for SetRecipeInput, MachinePortInput and SetConfigInput.
+
+## factory_native (API 4)
+
+Thin wrappers over the factory natives. The glue table is `MSCore.factory_native` (not `MSCore.factory`). Needs the native DLL with API 4.
+
+| Function | Args | Returns | Notes |
+|---|---|---|---|
+| `factory_native.find_buildable` | `datName` | Buildable object, or `nil` | Buildable data asset by name, e.g. `"DAT_Refinery"`. |
+| `factory_native.place` | `station, datName, x, y, h, rot, cfgBytes` | `ok, err` | BuildInput at the world (receiver 0). `cfgBytes` = raw bytes as a Lua string, `""` or `nil` for none. |
+| `factory_native.disassemble` | `id, mass` | `ok, err` | DisassembleInput for target `id`. `mass` `0` or `1`. |
+| `factory_native.set_recipe` | `machine, recipeObj, amount, cfgBytes` | `ok, err` | SetRecipeInput on machine `machine`. `cfgBytes` is `""` or 4 bytes (int32 `Config`). |
+| `factory_native.port` | `machine, port` | `ok, err` | MachinePortInput: toggles port `port` of `machine`. |
+| `factory_native.inv_move` | `prim, sec, slot, action` | `ok, err` | InventoryInput (receiver 0). `action` `2` = quick move. |
+
+{: .warning }
+**Not verified in game:** the factory natives and `send_typed`.
 
 ## steer
 

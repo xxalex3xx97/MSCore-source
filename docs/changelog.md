@@ -5,7 +5,13 @@ nav_order: 6
 
 # Changelog
 
-## Unreleased
+## 0.7.0 - Factory API
+- **New:** Lua API 3: `MSCore.blocks` (`register`, `status`, `debug_dump`). Adds a block to the building registry at runtime, so mods need no `DAT_BuildingBlockRegistry` pak. Research unlock append is opt-in (`MSCore.blocks.allow_research = true`, every player needs the mod). Failed writes are sticky (no retry). Untested in game. Module version stays 0.7.0.
+- **New:** native API 4 (`MSCore_api()` returns 4): typed command send (`MSCore_send_typed`) and factory senders: `find_buildable`, `build_place`, `disassemble`, `set_recipe`, `port_toggle`, `inv_move`. Lua: `cmd.send_typed`, `MSCore.factory_native`.
+- **New:** Lua modules (API 2): `MSCore.factory` (footprints, placement check, machine config bytes, recipes; `factory.native` = the native senders), `MSCore.inv` (inventory slots, free space, stack moves), `MSCore.wbp` (UMG window helpers, geometry log).
+- **API numbers:** Lua API (`MSCore.api`, checked by `MSCore.require(n)`) is `3`. Native API (`MSCore_api()`) is `4`. They are separate counters: a Lua bump does not change the native number and the reverse. Module version `0.7.0`.
+- **Docs:** UI window lessons, pak patching guide (`mod-authors/patching-paks.md`), MSCore.wbp API.
+- Not yet run in game: the factory senders, the new Lua modules and the API 4 exports. Lua syntax checked only.
 - **Fixed:** scan cache: a served row's actor and ore pointers are checked by id (a reused address is dropped); cached age is capped at 5000 ms (native and Lua default), so rows are at most 5 s old.
 - **Fixed:** Lua scan fallback matches the native rows: type filter also matches `oname` and ore names, ship `order_dock` / `order` / `order_idx` filled, `piloted` and solar system id read as native.
 - **Fixed:** chunk hold: a cube chunk skipped in the player's zone is added on a later hold / release call once the player has left the zone (was a permanent hole).

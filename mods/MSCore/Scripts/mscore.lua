@@ -1,6 +1,7 @@
--- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v1. Read-only unless a command function is called.
+-- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
-local MSCore = { api = 1, version = "0.6.0", verified_build = 149200896 }
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
+local MSCore = { api = 3, version = "0.7.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 MSCore.native = rawget(_G, "MSCoreNative_version") and {
     version = _G.MSCoreNative_version, alive = _G.MSCoreNative_alive, send_cmd = _G.MSCoreNative_send_cmd,
@@ -10,7 +11,10 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
     warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
     check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
-    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release } or nil
+    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
+    send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
+    disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
+    inv_move = _G.MSCoreNative_inv_move, export_ok = _G.MSCoreNative_export_ok } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -322,6 +326,57 @@ function cmd.send(receiver, cmdObj)
     if not N then return false, NO_NATIVE end
     return N.send_cmd(receiver, cmdObj)
 end
+
+-- typed send (API 4): sets cmdObj's type id at +0x28 when it is 0, then AddInputCommand(receiver, cmdObj).
+-- typeId: BuildInput 0x2e, DisassembleInput 0x2f, InventoryInput 12, SetRecipeInput 20, MachinePortInput 17.
+function cmd.send_typed(receiver, cmdObj, typeId)
+    local N = MSCore.native
+    if not N or not N.send_typed then return false, NO_NATIVE end
+    return N.send_typed(receiver, cmdObj, typeId)
+end
+
+-- factory natives (API 4): thin wrappers over the MSCoreNative_* globals. Other factory helpers live in mscore_factory.lua.
+local factory_native = {}
+MSCore.factory_native = factory_native
+local function fnative(name, ...)
+    local N = MSCore.native
+    if not N then return false, NO_NATIVE end
+    local f = N[name]
+    if not f then return false, "native " .. name .. " missing (MSCore API 4 DLL needed)" end
+    return f(...)
+end
+-- Buildable data asset by name (e.g. "DAT_Refinery"), or nil. Cached per name in Lua; a cached object is reused only while IsValid.
+-- ponytail: the cache lives in this Lua state. Native code must not keep the pointer across level or save loads.
+local buildable_cache = {}
+local CFG_MAX = 64 * 1024 -- cfg bytes cap (matches the native check)
+function factory_native.find_buildable(datName)
+    local N = MSCore.native
+    if not N or not N.find_buildable then return nil end
+    local b = buildable_cache[datName]
+    if b then
+        local okv, alive = pcall(function() return b:IsValid() end)
+        if okv and alive == true then return b end
+        buildable_cache[datName] = nil
+    end
+    b = N.find_buildable(datName)
+    if b then buildable_cache[datName] = b end
+    return b
+end
+-- cfgBytes: SerializedMachineConfig as a Lua string of raw bytes ("" or nil = none)
+function factory_native.place(station, datName, x, y, h, rot, cfgBytes)
+    if cfgBytes and #cfgBytes > CFG_MAX then return false, "cfg larger than 64 KiB" end
+    local b = factory_native.find_buildable(datName)
+    if not b then return false, "no Buildable named " .. tostring(datName) end
+    return fnative("build_place", station, b, x, y, h, rot, cfgBytes or "")
+end
+function factory_native.disassemble(id, mass) return fnative("disassemble", id, mass) end
+-- recipeObj: Recipe asset UObject; cfgBytes: "" or 4 bytes (int32 Config)
+function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes)
+    if cfgBytes and #cfgBytes > CFG_MAX then return false, "cfg larger than 64 KiB" end
+    return fnative("set_recipe", machine, recipeObj, amount, cfgBytes or "")
+end
+function factory_native.port(machine, port) return fnative("port_toggle", machine, port) end
+function factory_native.inv_move(prim, sec, slot, action) return fnative("inv_move", prim, sec, slot, action) end
 
 local steer = {}
 MSCore.steer = steer
@@ -765,5 +820,24 @@ hacks.add({ name = "map_pin_hook", what = "pre-hook on DMSPlayerController.AddIn
     why = "the map pin is the only pinned-sector source the game exposes; the hook only reads memory", verified_build = 149200896 })
 hacks.add({ name = "teleport_warp", what = "warp = AddInputCommand(ShipTeleportInput{bSetTarget, NewLocation, NewQuat W=65536, NewChunkLocation, NewSolarSystem}), wrapped in SetPilotingInput on/off",
     why = "the player's manual warp sends exactly this (probe 2026-10-29); instant, no warp fuel used", verified_build = 149200896 })
+
+-- optional sibling modules (same Scripts dir, found by require). A failed load is logged, never thrown.
+local function load_optional(name, install)
+    local ok, mod = pcall(require, name)
+    if not ok then log(name .. " load FAIL: " .. tostring(mod)) return end
+    local oki, err = pcall(install, mod, MSCore)
+    if not oki then log(name .. " install FAIL: " .. tostring(err)) end
+end
+load_optional("mscore_factory", function(mod, M) mod.install(M) end)
+-- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
+if MSCore.factory then
+    MSCore.factory.native = factory_native
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move" }) do
+        if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
+    end
+end
+load_optional("mscore_inv", function(mod, M) mod.install(M) end)
+load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
+load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
 
 return MSCore

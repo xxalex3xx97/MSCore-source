@@ -19,7 +19,7 @@ function M.run(MSCore)
     local function yes(cond, detail) return cond and "OK" or "BROKEN", detail end
     local function live(k) return S.live(table.unpack(R[k])) end
 
-    check("core.api", function() return yes(MSCore.api == 1, "api=" .. tostring(MSCore.api) .. " v" .. MSCore.version) end)
+    check("core.api", function() return yes(MSCore.api == 3, "api=" .. tostring(MSCore.api) .. " v" .. MSCore.version) end)
     check("safe.try", function() local ok, r = S.try("selfcheck", function() return 42 end) return yes(ok and r == 42) end)
     check("safe.valid", function() return yes(S.valid(nil) == false and S.valid(5) == false) end)
     check("safe.rd", function() return yes(S.rd(function() return 1 end) == "1" and S.rd(function() return nil end) == "?") end)
@@ -66,6 +66,22 @@ function M.run(MSCore)
     check("native.send_cmd guard", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, why = N.send_cmd(1, nil) return yes(ok == false, tostring(why)) end)
+    -- API 4 factory exports: C exports resolve by GetProcAddress (export_ok), Lua natives are globals. Sends nothing.
+    for _, n in ipairs({ "MSCore_send_typed", "MSCore_find_buildable", "MSCore_build_place", "MSCore_disassemble",
+                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move" }) do
+        check("export." .. n, function()
+            local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
+            return yes(N.export_ok(n) == true, "GetProcAddress") end)
+    end
+    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move" }) do
+        check("native." .. n, function()
+            local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
+            return yes(type(N[n]) == "function", "MSCoreNative_" .. n .. " registered") end)
+    end
+    check("factory_native.api", function()
+        local f = MSCore.factory_native
+        return yes(type(f) == "table" and type(f.place) == "function" and type(f.set_recipe) == "function"
+            and type(MSCore.cmd.send_typed) == "function", "place/set_recipe/cmd.send_typed exist; nothing sent") end)
     -- ship checks use the first ship; SKIP when none
     local firstShip = nil
     check("ships.list", function()
@@ -140,6 +156,22 @@ function M.run(MSCore)
         local d = MSCore.docks() if #d == 0 then return "SKIP", "no docks" end
         return yes(#d > 0, #d .. " docks, first id=" .. tostring(d[1].id) .. " " .. d[1].name) end)
     check("hacks", function() return yes(#MSCore.hacks.list() > 0, #MSCore.hacks.list() .. " entries") end)
+    check("blocks.status", function()
+        local B = MSCore.blocks if not B then return "BROKEN", "mscore_blocks not loaded" end
+        local st, keys, bad, pend = B.status(), {}, 0, 0
+        for k in pairs(st) do keys[#keys + 1] = k end
+        table.sort(keys)
+        if #keys == 0 then return "SKIP", "nothing registered" end
+        local parts = {}
+        for _, k in ipairs(keys) do
+            local v = st[k]
+            parts[#parts + 1] = k:match("([^/%.]+)_C$") .. "=" .. v
+            if v:sub(1, 7) == "failed:" then bad = bad + 1 elseif v == "pending" then pend = pend + 1 end
+        end
+        local d = table.concat(parts, " ")
+        if bad > 0 then return "BROKEN", d end
+        if pend > 0 then return "SKIP", d end
+        return yes(true, d) end)
     check("exe size", function()
         local fh = io.open(EXE, "rb") if not fh then return "SKIP", "cannot open " .. EXE end
         local size = fh:seek("end") fh:close()

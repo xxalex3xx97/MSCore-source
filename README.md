@@ -6,7 +6,7 @@ Shared core for Main Sequence Demo UE4SS mods. It has three parts:
 - **Lua library** (`mods\MSCore\Scripts\mscore.lua`): safe UObject access, UMG helpers, a 250 ms tick loop, and read/command wrappers for ships, orders, filters, warp, docks and items.
 - **Mod manager** (`cpp\manager`, `MSCoreManager.exe`): installs, updates, rolls back and removes mods from GitHub releases. Every download is checked against SHA-256 and size.
 
-Used by MiningBenchMod and MSDevMenu. Lua API 1, native API 3, version 0.6.0.
+Used by MiningBenchMod and MSDevMenu. Lua API 3, native API 4 (separate counters), version 0.7.0.
 
 Status: the selfcheck log is the check. Run the game with MSCore installed and read `Mods\MSCore\selfcheck.log`. There is no automated game test suite.
 
@@ -46,7 +46,7 @@ See `docs\` for the mod author guide (Lua API and native API reference).
 - `warp.sectors()`, `docks()`, `find_item(res)`: world lookups in pure Lua.
 - `loader`: `status()`, `updates()`, `on_update(fn)`.
 - `native` (`MSCoreNative_*`): the DLL functions the Lua wrappers call.
-- C exports for native mods: `MSCore_api()` returns 2, plus `MSCore_*` functions (`add_input`, `warp_send`, `sectors`, `find_item`, ...). Structs `MsFilterRow` and `MsSector` are in `cpp\MSCore\msc_api.hpp`.
+- C exports for native mods: `MSCore_api()` returns 4, plus `MSCore_*` functions (`add_input`, `warp_send`, `sectors`, `find_item`, ...). Structs `MsFilterRow` and `MsSector` are in `cpp\MSCore\msc_api.hpp`.
 - `hacks`: registry of every workaround, with the build it was verified on.
 
 ## Mod updates

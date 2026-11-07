@@ -10,7 +10,7 @@ nav_order: 6
 `orders` manages ship orders and autopilot. `filters` sets logistic filter rows. Both need the native DLL, and every function returns `ok, err`.
 
 {: .warning }
-**Not verified in game:** through MSCore (API 2).
+**Not verified in game:** through MSCore (Lua API 3).
 
 ## orders
 
