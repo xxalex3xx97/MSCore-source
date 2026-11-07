@@ -48,7 +48,9 @@ Thin wrappers over the factory natives. The glue table is `MSCore.factory_native
 | `factory_native.disassemble` | `id, mass` | `ok, err` | DisassembleInput for target `id`. `mass` `0` or `1`. |
 | `factory_native.set_recipe` | `machine, recipeObj, amount, cfgBytes` | `ok, err` | SetRecipeInput on machine `machine`. `cfgBytes` is `""` or 4 bytes (int32 `Config`). |
 | `factory_native.port` | `machine, port` | `ok, err` | MachinePortInput: toggles port `port` of `machine`. |
-| `factory_native.inv_move` | `prim, sec, slot, action` | `ok, err` | InventoryInput (receiver 0). `action` `2` = quick move. |
+| `factory_native.inv_move` | `prim, sec, slot, action, receiver` | `ok, err` | InventoryInput sent to `receiver` (the player object id). Without `receiver` it is 0, which the game silently drops. `action` `2` = quick move. |
+| `factory_native.read_station` | `stationId` | `blocks, machines` or `nil, err` | Live station Blueprint (native read, parsed). `blocks` = `{class,gx,gy,h,rot}`; `machines` = `{id,cls,bcls,x,y,h,rot,cfg}`, `cfg` `nil` when unreadable. |
+| `factory_native.read_inventory` | `invId` | `slots` or `nil, err` | Live Inventory `ItemSlots` (native read). `slots` = `{item,amount,max}` per slot, `item` `""` = empty slot, `max` = `Item.MaxStackSize`. |
 
 {: .warning }
 **Not verified in game:** the factory natives and `send_typed`.

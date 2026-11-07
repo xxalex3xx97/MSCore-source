@@ -4,6 +4,7 @@
 #include <cmath>
 #include <atomic>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,11 +34,13 @@ using namespace RC::Unreal;
 #include "msc_chunks.hpp"
 #include "msc_scan.hpp"
 #include "msc_factory.hpp"
+#include "msc_station.hpp"
+#include "msc_refund.hpp"
 #include "msc_loader.hpp"
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.5";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -720,7 +723,7 @@ namespace
         return lua_result(lua, ok, err);
     }
 
-    // Lua: inv_move(primary, secondary, slot, action) -> ok, err
+    // Lua: inv_move(primary, secondary, slot, action [, receiver]) -> ok, err. receiver = player object id (default 0; the game drops receiver 0).
     int lua_inv_move(const LuaMadeSimple::Lua& lua)
     {
         bool ok = false;
@@ -731,11 +734,42 @@ namespace
             else
             {
                 const int prim = arg_int(lua), sec = arg_int(lua), slot = arg_int(lua), action = arg_int(lua);
-                ok = factory_guard([&] { return inv_move(prim, sec, slot, action, err); }, err);
+                const int receiver = lua.is_number(1) ? arg_int(lua) : 0;   // optional 5th arg (previous four are consumed)
+                ok = factory_guard([&] { return inv_move(prim, sec, slot, action, err, receiver); }, err);
             }
         }
         catch (...) { ok = false; err = STR("exception"); }
         return lua_result(lua, ok, err);
+    }
+
+    // Lua: read_station(stationId) -> true, text | false, err   (text format: msc_station.hpp)
+    int lua_read_station(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        std::string out;
+        try {
+            if (!nums(lua, 1)) err = STR("read_station needs a station id number");
+            else { const int id = arg_int(lua); ok = factory_guard([&] { return read_station(id, out, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        lua.set_bool(ok);
+        if (ok) lua.set_string(out); else lua.set_string(narrow(err));
+        return 2;
+    }
+
+    // Lua: read_inventory(invId) -> true, text | false, err   (text format: msc_station.hpp)
+    int lua_read_inventory(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        std::string out;
+        try {
+            if (!nums(lua, 1)) err = STR("read_inventory needs an inventory id number");
+            else { const int id = arg_int(lua); ok = factory_guard([&] { return read_inventory(id, out, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        lua.set_bool(ok);
+        if (ok) lua.set_string(out); else lua.set_string(narrow(err));
+        return 2;
     }
 
     // Lua: export_ok(name) -> true when this DLL exports name (GetProcAddress). Read-only, for selfcheck.
@@ -753,6 +787,60 @@ namespace
         catch (...) { ok = false; }
         lua.set_bool(ok);
         return 1;
+    }
+
+    // Lua: refund_enable(bool) -> status string. true validates, installs the hooks and turns the PROBE log lines on, false turns them off. Default off.
+    int lua_refund_enable(const LuaMadeSimple::Lua& lua)
+    {
+        std::string st;
+        try { st = ref_set(lua_toboolean(lua.get_lua_state(), 1) != 0); } catch (...) { st = "COMPAT refund failed: exception"; }
+        lua.set_string(st);
+        return 1;
+    }
+
+    // Lua: refund_status() / redirect_status() -> status string ("off", "on: redirect=.. probe_log=.. groups=..", or "COMPAT refund failed: <why>").
+    int lua_refund_status(const LuaMadeSimple::Lua& lua) { lua.set_string(g_ref.status); return 1; }
+
+    // Lua: redirect_enable(bool) -> status string. Turns the refund / charge redirect on or off (default on at start when validation passes).
+    int lua_redirect_enable(const LuaMadeSimple::Lua& lua)
+    {
+        std::string st;
+        try { st = ref_set_redirect(lua_toboolean(lua.get_lua_state(), 1) != 0); } catch (...) { st = "COMPAT refund failed: exception"; }
+        lua.set_string(st);
+        return 1;
+    }
+
+    // Lua: redirect_stats() -> "refund=<n> refund_fallback=<n> charge=<n> skipped=<n> group_made=<n> group_fail=<n> errors=<n>"
+    int lua_redirect_stats(const LuaMadeSimple::Lua& lua)
+    {
+        std::string t;
+        try { t = ref_stats_text(); } catch (...) {}
+        lua.set_string(t);
+        return 1;
+    }
+
+    // Lua: refund_log() -> the last 200 probe lines, newline separated.
+    int lua_refund_log(const LuaMadeSimple::Lua& lua)
+    {
+        std::string t;
+        try { t = ref_log_text(); } catch (...) {}
+        lua.set_string(t);
+        return 1;
+    }
+
+    // WHAT: at MSCore Lua start (once): redirect ON unless Mods\MSCore\refund_redirect_off.txt exists; probe log ON when refund_probe.txt exists. The DLL sits in Mods\MSCore\dlls.
+    void refund_file_switch()
+    {
+        HMODULE hm = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                reinterpret_cast<LPCWSTR>(&kVersion), &hm)) return;
+        std::vector<wchar_t> buf(32768);
+        const DWORD n = GetModuleFileNameW(hm, buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0 || n >= buf.size()) return;
+        const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
+        std::error_code ec;
+        if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
+        if (!mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) ref_set_redirect(true);
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
@@ -842,13 +930,64 @@ namespace
     }
 }
 
+// WHAT: registers the MSCoreNative_* Lua globals in one Lua state, once per state (guard by lua_State*).
+// WHY: UE4SS fires the unnamed on_lua_start only for the Lua mod named MSCore, so other mods (BlueprintUnit) never got these globals. The named on_lua_start calls this for every started Lua mod.
+static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_name)
+{
+    static std::mutex mu;
+    static std::set<void*> done;
+    {
+        std::lock_guard<std::mutex> g(mu);
+        if (!done.insert(lua.get_lua_state()).second) return;
+    }
+    // table add_pair functions need userdata self; global functions don't. mscore.lua gathers them into MSCore.native
+    lua.register_function("MSCoreNative_version", lua_version);
+    lua.register_function("MSCoreNative_alive", lua_alive);
+    lua.register_function("MSCoreNative_send_cmd", lua_send_cmd);
+    lua.register_function("MSCoreNative_view_send", lua_view_send);
+    lua.register_function("MSCoreNative_throttle", lua_throttle);
+    lua.register_function("MSCoreNative_offsets", lua_offsets);
+    lua.register_function("MSCoreNative_check_offsets", lua_check_offsets);
+    lua.register_function("MSCoreNative_new_order", lua_new_order);
+    lua.register_function("MSCoreNative_update_order", lua_update_order);
+    lua.register_function("MSCoreNative_delete_order", lua_delete_order);
+    lua.register_function("MSCoreNative_autopilot", lua_autopilot);
+    lua.register_function("MSCoreNative_skip_to", lua_skip_to);
+    lua.register_function("MSCoreNative_filter_send", lua_filter_send);
+    lua.register_function("MSCoreNative_warp_send", lua_warp_send);
+    lua.register_function("MSCoreNative_pinned", lua_pinned);
+    lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
+    lua.register_function("MSCoreNative_check", lua_check);
+    lua.register_function("MSCoreNative_loader_status", lua_loader_status);
+    lua.register_function("MSCoreNative_scan", lua_scan);
+    lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
+    lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
+    lua.register_function("MSCoreNative_send_typed", lua_send_typed);
+    lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
+    lua.register_function("MSCoreNative_build_place", lua_build_place);
+    lua.register_function("MSCoreNative_disassemble", lua_disassemble);
+    lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
+    lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
+    lua.register_function("MSCoreNative_inv_move", lua_inv_move);
+    lua.register_function("MSCoreNative_read_station", lua_read_station);
+    lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
+    lua.register_function("MSCoreNative_export_ok", lua_export_ok);
+    lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
+    lua.register_function("MSCoreNative_refund_status", lua_refund_status);
+    lua.register_function("MSCoreNative_refund_log", lua_refund_log);
+    lua.register_function("MSCoreNative_redirect_enable", lua_redirect_enable);
+    lua.register_function("MSCoreNative_redirect_status", lua_refund_status);
+    lua.register_function("MSCoreNative_redirect_stats", lua_redirect_stats);
+    Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
+}
+
 class MSCoreMod : public RC::CppUserModBase
 {
 public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.0");
+        ModVersion = STR("0.7.5");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -858,43 +997,20 @@ public:
     ~MSCoreMod()
     {
         g_loader_stop = true;   // detached worker checks this between network steps
+        try { ref_uninstall(); } catch (...) {}
         try { chunk_hold_release_all(); }
         catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
     }
 
     auto on_lua_start(LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
     {
-        // table add_pair functions need userdata self; global functions don't. mscore.lua gathers them into MSCore.native
-        lua.register_function("MSCoreNative_version", lua_version);
-        lua.register_function("MSCoreNative_alive", lua_alive);
-        lua.register_function("MSCoreNative_send_cmd", lua_send_cmd);
-        lua.register_function("MSCoreNative_view_send", lua_view_send);
-        lua.register_function("MSCoreNative_throttle", lua_throttle);
-        lua.register_function("MSCoreNative_offsets", lua_offsets);
-        lua.register_function("MSCoreNative_check_offsets", lua_check_offsets);
-        lua.register_function("MSCoreNative_new_order", lua_new_order);
-        lua.register_function("MSCoreNative_update_order", lua_update_order);
-        lua.register_function("MSCoreNative_delete_order", lua_delete_order);
-        lua.register_function("MSCoreNative_autopilot", lua_autopilot);
-        lua.register_function("MSCoreNative_skip_to", lua_skip_to);
-        lua.register_function("MSCoreNative_filter_send", lua_filter_send);
-        lua.register_function("MSCoreNative_warp_send", lua_warp_send);
-        lua.register_function("MSCoreNative_pinned", lua_pinned);
-        lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
-        lua.register_function("MSCoreNative_check", lua_check);
-        lua.register_function("MSCoreNative_loader_status", lua_loader_status);
-        lua.register_function("MSCoreNative_scan", lua_scan);
-        lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
-        lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
-        lua.register_function("MSCoreNative_send_typed", lua_send_typed);
-        lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
-        lua.register_function("MSCoreNative_build_place", lua_build_place);
-        lua.register_function("MSCoreNative_disassemble", lua_disassemble);
-        lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
-        lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
-        lua.register_function("MSCoreNative_inv_move", lua_inv_move);
-        lua.register_function("MSCoreNative_export_ok", lua_export_ok);
-        Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals MSCoreNative_* registered\n"));
+        register_globals(lua, STR("MSCore"));
+        try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
+    }
+
+    auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
+    {
+        register_globals(lua, std::wstring(mod_name));
     }
 };
 
@@ -1201,11 +1317,19 @@ extern "C"
         return export_call([&](std::wstring& e) { return factory_guard([&] { return port_toggle(machine, port, e); }, e); }, err, errlen);
     }
 
-    // InventoryInput at receiver 0. action 2 = quick move.
+    // InventoryInput at receiver 0 (the game DROPS receiver 0: use MSCore_inv_move_to). action 2 = quick move.
     MSCORE_API int MSCore_inv_move(int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen)
     {
         return export_call([&](std::wstring& e) {
             return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e); }, e);
+        }, err, errlen);
+    }
+
+    // InventoryInput at receiver = the player object id (the game applies it there). action 2 = quick move.
+    MSCORE_API int MSCore_inv_move_to(int primary_inv_id, int secondary_inv_id, int slot, int action, int receiver, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e, receiver); }, e);
         }, err, errlen);
     }
 }

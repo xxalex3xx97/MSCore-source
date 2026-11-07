@@ -214,6 +214,49 @@ function M.to_hex(b)
     return table.concat(t, " ")
 end
 
+-- split s on a plain separator; empty fields are kept (gmatch "([^\t]*)" would drop them)
+local function split_plain(s, sep)
+    local out, pos = {}, 1
+    while true do
+        local i = string.find(s, sep, pos, true)
+        if not i then out[#out + 1] = string.sub(s, pos) break end
+        out[#out + 1] = string.sub(s, pos, i - 1)
+        pos = i + #sep
+    end
+    return out
+end
+
+-- parse_station(text) -> blocks, machines. Text from MSCore.native.read_station (format: cpp/MSCore/msc_station.hpp).
+-- B\tclass\tgx\tgy\th\trot ; M\tid\tcls\tx\ty\th\trot\tcfg. cfg "-" -> nil (unreadable), "" -> "" (empty), else raw bytes.
+function M.parse_station(text)
+    local blocks, machines = {}, {}
+    for _, line in ipairs(split_plain(text or "", "\n")) do
+        local f = split_plain(line, "\t")
+        if f[1] == "B" and #f >= 6 then
+            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]) }
+        elseif f[1] == "M" and #f >= 8 then
+            local cfg = f[8]
+            if cfg == "-" then cfg = nil
+            elseif cfg ~= "" then cfg = cfg:gsub("%x%x", function(p) return string.char(tonumber(p, 16)) end) end
+            machines[#machines + 1] = { id = tonumber(f[2]), cls = f[3], bcls = f[3], x = tonumber(f[4]), y = tonumber(f[5]),
+                h = tonumber(f[6]), rot = tonumber(f[7]), cfg = cfg }
+        end
+    end
+    return blocks, machines
+end
+
+-- parse_inventory(text) -> slots {item, amount, max}. Text from MSCore.native.read_inventory: S\titem\tamount\tmax, item "" = empty slot.
+function M.parse_inventory(text)
+    local slots = {}
+    for _, line in ipairs(split_plain(text or "", "\n")) do
+        local f = split_plain(line, "\t")
+        if f[1] == "S" and #f >= 4 then
+            slots[#slots + 1] = { item = f[2], amount = tonumber(f[3]) or 0, max = tonumber(f[4]) or 1 }
+        end
+    end
+    return slots
+end
+
 ---------------------------------------------------------------- game reads (in game only)
 local function valid(o)
     if o == nil or type(o) ~= "userdata" then return false end

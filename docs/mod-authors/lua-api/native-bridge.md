@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.7.0"`). |
+| `native.version` | `()` | string | The native version (`"0.7.5"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |
@@ -34,6 +34,15 @@ nav_order: 8
 | `native.scan` | `(kind, max_age_ms, type, sys, loaded_only)` | string | One line per row, `\n` ended. Numbers as in `MSCore_scan`. Use `MSCore.scan` instead; it parses the lines. |
 | `native.chunk_hold` | `(owner, sys, X, Y, Z)` | `ok, err` | Holds the chunk cube for `owner`. `ok` is true for a set and for an unchanged cube. |
 | `native.chunk_release` | `(owner)` | boolean | Drops the owner's cube. |
+| `native.read_station` | `(stationId)` | `ok, text` | Raw station text (one `B` or `M` line per block or machine, tab separated). Prefer `factory_native.read_station`. |
+| `native.read_inventory` | `(invId)` | `ok, text` | Raw inventory text (one `S` line per slot: `S item amount max`, `item` empty for an empty slot). Prefer `factory_native.read_inventory`. |
+| `native.refund_enable` | `(bool)` | string | Probe log switch: `true` validates, installs the hooks and turns the `PROBE ...` log lines on; `false` turns them off. Default off (also on when `Mods/MSCore/refund_probe.txt` exists). Returns the status. |
+| `native.redirect_enable` | `(bool)` | string | 0.7.5: Blueprint Unit refund / build-charge redirect. **On by default** at MSCore start when the load validation passes; `false` (or the file `Mods/MSCore/refund_redirect_off.txt`) turns it off. Returns the status. |
+| `native.redirect_status` / `native.refund_status` | `()` | string | `off`, `on: redirect=on probe_log=off groups=yes` or `COMPAT refund failed: <why>`. |
+| `native.redirect_stats` | `()` | string | `refund=<n> refund_fallback=<n> charge=<n> skipped=<n> group_made=<n> group_fail=<n> errors=<n>`. |
+| `native.refund_log` | `()` | string | Last 200 log lines (`REDIRECT refund ...`, `REDIRECT charge ...`, `COMPAT ...`, and `PROBE ...` when the probe is on). |
+
+**Known limitation: co-op.** The redirect decides from sim state only, but the game is lockstep: a client without the hook would put refund/charge in different inventories and desync. Every player needs the same MSCore version with the redirect on, and the pak with `BP_BPUnitStoreObj_01_C`. Designer and teardown paths are untested.
 
 ## Example
 
