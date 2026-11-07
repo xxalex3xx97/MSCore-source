@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.7.5 - Refund redirect
+- **New:** refunds and build charges for the Blueprint Unit go to an InventoryGroup of [unit, player] (`msc_refund` detour). On by default; off switch `Mods\MSCore\refund_redirect_off.txt`. Verified in game.
+- **Fixed:** `inv_move` (`MSCore_inv_move`, `factory_native.inv_move`) takes the player object's id as receiver. Receiver `0` was silently dropped by the game.
+- **New:** native `read_inventory` and `read_station` (added across 0.7.1-0.7.4).
+
 ## 0.7.0 - Factory API
 - **New:** Lua API 3: `MSCore.blocks` (`register`, `status`, `debug_dump`). Adds a block to the building registry at runtime, so mods need no `DAT_BuildingBlockRegistry` pak. Research unlock append is opt-in (`MSCore.blocks.allow_research = true`, every player needs the mod). Failed writes are sticky (no retry). Untested in game. Module version stays 0.7.0.
 - **New:** native API 4 (`MSCore_api()` returns 4): typed command send (`MSCore_send_typed`) and factory senders: `find_buildable`, `build_place`, `disassemble`, `set_recipe`, `port_toggle`, `inv_move`. Lua: `cmd.send_typed`, `MSCore.factory_native`.

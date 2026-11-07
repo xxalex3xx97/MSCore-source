@@ -17,6 +17,8 @@ Every claim is tagged:
 
 The notes apply to one build: `MainSequence-Win64-Shipping.exe`, exe size `149200896`, Unreal Engine 5.7. Addresses and offsets appear only in the "Build-specific reference" table at the end of each page. They change with every game update, so check the build first. MSCore compares the exe size at start (see `verified_build`).
 
+Verified against MSCore 0.7.5, game exe size 149200896.
+
 | Page | Read it when |
 |---|---|
 | [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}) | You move items, change inventories, remove machines, or place machines that cost items. |

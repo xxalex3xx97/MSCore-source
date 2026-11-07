@@ -261,7 +261,8 @@ The root class is exactly `SaveableRoot`. Fields in order:
 ### Versions
 
 - OBSERVED: the current save version is **30**. Saving always writes the newest layout.
-- OBSERVED: the loader reads the version and stores it. On the load path seen there is no compare with 30, so a **newer** version is read blindly. UNKNOWN whether `LoadExistingGame` or the `_M` version gates it earlier.
+- OBSERVED: the loader reads the version and stores it. On the load path seen there is no compare with 30, so a **newer** version is read blindly.
+- UNKNOWN: whether `LoadExistingGame` or the `_M` version gates it earlier.
 - OBSERVED: class loaders have `if (version >= N)` branches. Old saves load. Downgrading is impossible.
 - INFERRED: the table of gates.
 

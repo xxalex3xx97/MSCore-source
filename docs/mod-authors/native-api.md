@@ -54,6 +54,9 @@ Every export, in the order of the groups below. Args are listed without the func
 | `MSCore_port_toggle` | `int machine, int port, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | MachinePortInput at receiver = `machine` id (must be > 0): `PortIndex` = `port`. Toggles that port. Type id `17`. | Not verified in game |
 | `MSCore_inv_move` | `int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | InventoryInput at receiver `0`: `PrimaryInventoryID`, `SecondaryInventoryID`, `SlotIndex`, `Action` (u8). `action` `2` = quick move. Type id `12`. | Not verified in game |
 
+{: .warning }
+Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
+
 ## API 4: factory commands
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.

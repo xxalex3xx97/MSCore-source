@@ -26,7 +26,7 @@ Build these notes apply to: `MainSequence-Win64-Shipping.exe`, exe size `1492008
 Do not change inventories or properties directly from a mod (`Inventory:AddItems`, `RemoveItems`, property writes). Those run only on your machine. Other peers do not run them, so the checksums differ and the session desyncs. Use commands.
 
 {: .warning }
-`MSCore_inv_move` and `MSCore.factory_native.inv_move` send the command with receiver `0`. Tests show that does nothing. Use `AddInventoryInteraction` from Lua until the export takes a receiver.
+`MSCore_inv_move` and `MSCore.factory_native.inv_move` send the command with receiver `0`. OBSERVED: that does nothing. Fixed in MSCore 0.7.5, where the export takes the player object's id as receiver. On older versions use `AddInventoryInteraction` from Lua.
 
 ## 2. Inventories and stacks
 
@@ -61,6 +61,7 @@ Do not change inventories or properties directly from a mod (`Inventory:AddItems
 - OBSERVED: the refund is the machine's build cost **plus the contents** of the machine (container items, one item per belt). It goes into the **sender's own inventory**. What does not fit is collected into **one drop object** at the machine.
 - OBSERVED: `bMass` only matters for conveyor belts, where it removes the connected chain.
 - OBSERVED: there is no creative-mode check on a refund.
+- OBSERVED: MSCore 0.7.5 (`msc_refund` detour) redirects refunds and build charges to an `InventoryGroup` of [unit, player]. Verified in game. Off switch: `Mods\MSCore\refund_redirect_off.txt`.
 - INFERRED: the refund target is read once at the start of the refund function. A native hook can replace it.
 - UNKNOWN: whether a refund into another inventory is safe in co-op. A peer without the same change would put the items somewhere else.
 
@@ -110,7 +111,7 @@ Do not change inventories or properties directly from a mod (`Inventory:AddItems
 ## Unknown
 
 - Whether a stack held in the inventory cursor survives a save and load.
-- Whether a refund can be redirected natively, and whether that is safe in co-op.
+- Whether a refund into another inventory is safe in co-op.
 - Port order for five machine classes (section 6).
 - What the game writes for an underground's exit config.
 - Why struct reads crash in UE4SS Lua, and why the station snapshot lags.

@@ -51,6 +51,9 @@ Thin wrappers over the factory natives. The glue table is `MSCore.factory_native
 | `factory_native.inv_move` | `prim, sec, slot, action` | `ok, err` | InventoryInput (receiver 0). `action` `2` = quick move. |
 
 {: .warning }
+Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
+
+{: .warning }
 **Not verified in game:** the factory natives and `send_typed`.
 
 ## steer
