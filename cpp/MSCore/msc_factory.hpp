@@ -21,6 +21,7 @@ namespace
     constexpr int32_t kTypePort = 17;           // MachinePortInput
     constexpr int32_t kTypeSetRecipe = 20;      // SetRecipeInput
     constexpr int64_t kIdentityQuatW = 65536;   // PNum fixed point 1.0
+    constexpr int kMaxCfgBytes = 64 * 1024;     // cap for MachineConfigData bytes (Lua and export paths)
 
     // TArray<uint8> layout: {ptr, num, max}
     struct RawArr { uint8_t* data; int32_t num; int32_t max; };
@@ -68,7 +69,7 @@ namespace
         return true;
     }
 
-    // WHAT: writes a dotted path inside a struct at base (e.g. GridTransform.GridLocation.X, Quat.W). Leaf = plain int/int64, or a PNum struct with Value.
+    // WHAT: writes a dotted path inside a struct at base (e.g. GridTransform.GridLocation.X, Quat.W). Leaf = int/int64/byte/enum(size 1)/float/double, or a PNum struct with Value.
     // WHY: GridTransform and Quat are nested, so one level (msc_ue wr_fields) is not enough.
     bool wr_path(UStruct* st, uint8_t* base, const std::wstring& path, int64_t val)
     {
@@ -91,6 +92,9 @@ namespace
         }
         if (CastField<FInt64Property>(t)) *reinterpret_cast<int64_t*>(d) = val;
         else if (CastField<FIntProperty>(t)) *reinterpret_cast<int32_t*>(d) = static_cast<int32_t>(val);
+        else if (t->GetSize() == 1 && (CastField<FByteProperty>(t) || CastField<FEnumProperty>(t))) *d = static_cast<uint8_t>(val);
+        else if (CastField<FFloatProperty>(t)) *reinterpret_cast<float*>(d) = static_cast<float>(val);
+        else if (CastField<FDoubleProperty>(t)) *reinterpret_cast<double*>(d) = static_cast<double>(val);
         else return false;
         return true;
     }
@@ -152,15 +156,22 @@ namespace
     bool build_place(int station, UObject* bdat, int x, int y, int h, int rot, const std::string& cfg, std::wstring& err)
     {
         if (!alive(bdat)) { err = STR("Buildable not alive"); return false; }
+        if (cfg.size() > static_cast<size_t>(kMaxCfgBytes)) { err = STR("cfg larger than 64 KiB"); return false; }
         UObject* cmd = make_input(STR("BuildInput"), err);
         if (!cmd) return false;
         uint8_t* base = reinterpret_cast<uint8_t*>(cmd);
         UStruct* st = cmd->GetClassPrivate();
-        if (!set_obj_prop(cmd, STR("Buildable"), bdat) || !set_num_prop(cmd, STR("AttachTargetID"), station)
-            || !wr_path(st, base, STR("GridTransform.GridLocation.X"), x) || !wr_path(st, base, STR("GridTransform.GridLocation.Y"), y)
-            || !wr_path(st, base, STR("GridTransform.Height"), h) || !wr_path(st, base, STR("GridTransform.GridRotation"), rot)
-            || !wr_path(st, base, STR("Quat.W"), kIdentityQuatW) || !set_bytes_prop(cmd, STR("MachineConfigData"), cfg))
-        { err = STR("BuildInput fields missing"); return false; }
+        // names the first field that failed (err = "BuildInput field missing: <path>")
+        auto need = [&](bool ok, const TCHAR* field) { if (!ok) err = STR("BuildInput field missing: ") + std::wstring(field); return ok; };
+        if (!need(set_obj_prop(cmd, STR("Buildable"), bdat), STR("Buildable"))
+            || !need(set_num_prop(cmd, STR("AttachTargetID"), station), STR("AttachTargetID"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.X"), x), STR("GridTransform.GridLocation.X"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.Y"), y), STR("GridTransform.GridLocation.Y"))
+            || !need(wr_path(st, base, STR("GridTransform.Height"), h), STR("GridTransform.Height"))
+            || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation"))
+            || !need(wr_path(st, base, STR("Quat.W"), kIdentityQuatW), STR("Quat.W"))
+            || !need(set_bytes_prop(cmd, STR("MachineConfigData"), cfg), STR("MachineConfigData")))
+            return false;
         return send_typed(0, cmd, kTypeBuild, err);
     }
 

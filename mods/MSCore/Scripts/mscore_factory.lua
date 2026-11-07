@@ -221,25 +221,47 @@ local function valid(o)
     return ok and v == true
 end
 
+-- cache: {list, index}. Built by one FindAllOf; reused while every entry is still valid. An empty result is not cached (recipes may load later).
+-- ponytail: a stale cache is only seen when an entry dies; a recipe that appears later is missed until then. Clear with M.recipes_reset().
+local rcache
+
 -- every Recipe object: {name = asset FName, obj = object}. crafter/inputs/outputs not read (fields UNK).
 function M.recipes()
-    local out = {}
+    if rcache then
+        local fresh = true
+        for _, r in ipairs(rcache.list) do
+            if not valid(r.obj) then fresh = false break end
+        end
+        if fresh then return rcache.list end
+    end
+    local out, index = {}, {}
     local ok, all = pcall(FindAllOf, "Recipe")
-    if not ok or not all then return out end
-    for _, o in ipairs(all) do
-        if valid(o) then
-            local okn, n = pcall(function() return o:GetFName():ToString() end)
-            if okn and n then out[#out + 1] = { name = n, obj = o } end
+    if ok and all then
+        for _, o in ipairs(all) do
+            if valid(o) then
+                local okn, n = pcall(function() return o:GetFName():ToString() end)
+                if okn and n then
+                    local r = { name = n, obj = o }
+                    out[#out + 1] = r
+                    if not index[n] then index[n] = r end
+                end
+            end
         end
     end
+    rcache = nil
+    if #out > 0 then rcache = { list = out, index = index } end
     return out
 end
 
+function M.recipes_reset() rcache = nil end
+
+-- O(1) on a cache hit with a live entry. A miss (or dead entry) rebuilds through recipes().
 function M.recipe_by_name(name)
-    for _, r in ipairs(M.recipes()) do
-        if r.name == name then return r end
-    end
-    return nil
+    local hit = rcache and rcache.index[name]
+    if hit and valid(hit.obj) then return hit end
+    M.recipes()
+    local r = rcache and rcache.index[name]
+    return r or nil
 end
 
 function M.install(MSCore) MSCore.factory = M; return M end

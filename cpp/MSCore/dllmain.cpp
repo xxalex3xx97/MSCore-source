@@ -627,7 +627,11 @@ namespace
         try
         {
             const std::string name = arg_bytes(lua);
-            if (!name.empty()) seh_run([&] { o = find_buildable(name); });
+            if (!name.empty() && !seh_run([&] { o = find_buildable(name); }))
+            {
+                o = nullptr;
+                msc_log(STR("[MSCore] find_buildable: native fault looking up ") + mscl::to_wide(name) + STR(" (nil returned)"));
+            }
         }
         catch (...) { o = nullptr; }
         if (!alive(o)) { lua.set_nil(); return 1; }
@@ -1156,17 +1160,22 @@ extern "C"
         UObject* o = nullptr;
         try
         {
-            if (!seh_run([&] { o = find_buildable(dat_name); })) return nullptr;
+            if (!seh_run([&] { o = find_buildable(dat_name); }))
+            {
+                msc_log(STR("[MSCore] MSCore_find_buildable: native fault looking up ") + mscl::to_wide(dat_name) + STR(" (NULL returned)"));
+                return nullptr;
+            }
         }
         catch (...) { return nullptr; }
         return o;
     }
 
-    // BuildInput at receiver 0. bdat = MSCore_find_buildable result. cfg = SerializedMachineConfig bytes (cfg may be NULL when cfglen = 0).
+    // BuildInput at receiver 0. bdat = MSCore_find_buildable result. cfg = SerializedMachineConfig bytes (cfg may be NULL when cfglen = 0). cfglen > 64 KiB is refused.
     MSCORE_API int MSCore_build_place(int station, void* buildable, int x, int y, int height, int rot,
                                       const uint8_t* cfg, int cfglen, wchar_t* err, int errlen)
     {
         return export_call([&](std::wstring& e) {
+            if (cfglen > kMaxCfgBytes) { e = STR("cfg larger than 64 KiB"); return false; }
             return factory_guard([&] { return build_place(station, static_cast<UObject*>(buildable), x, y, height, rot, bytes_of(cfg, cfglen), e); }, e);
         }, err, errlen);
     }
@@ -1181,6 +1190,7 @@ extern "C"
     MSCORE_API int MSCore_set_recipe(int machine, void* recipe, int amount, const uint8_t* cfg, int cfglen, wchar_t* err, int errlen)
     {
         return export_call([&](std::wstring& e) {
+            if (cfglen > kMaxCfgBytes) { e = STR("cfg larger than 64 KiB"); return false; }
             return factory_guard([&] { return set_recipe(machine, static_cast<UObject*>(recipe), amount, bytes_of(cfg, cfglen), e); }, e);
         }, err, errlen);
     }

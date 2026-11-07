@@ -1,15 +1,19 @@
--- mscore_blocks: adds blocks to the game's BuildingBlockRegistry and research unlocks at runtime (no pak).
+-- mscore_blocks: adds blocks to the game's BuildingBlockRegistry and (opt-in) research unlocks at runtime (no pak).
 -- Mods must not ship DAT_BuildingBlockRegistry or RSC_* overrides: two paks with the same asset lose to each other.
 -- API: M.register{class='/Game/.../BPO_X.BPO_X_C', research='RSC_ComputationScience' or full path (optional),
 --                  category='Functional Blocks' (default)} -> true | nil, err   (same class twice: ignored, true)
+--      M.allow_research = false (default). Set true before register() to let research= append. See docs blocks.md.
 --      M.status() -> {[class] = 'pending' | 'block' | 'block+research' | 'failed:<why>'}
 --      M.debug_dump()   console only, bound nowhere: registry categories and the first Unlocks element fields (probes)
---      M.install(MSCore) -> MSCore.blocks = M; starts one 250 ms tick step (once)
+--      M.install(MSCore) -> MSCore.blocks = M. Defines the API only. The 250 ms tick starts on the first successful register().
 -- Timing: retried every tick until every class is found and appended, then re-checked every 20th tick (5 s).
--- The block and research steps are independent: a research failure keeps the block append.
--- UNPROVEN in game: research append (UnlockType copy, ResearchState recompute). Every game call goes through pcall.
+-- Failure is sticky: a write (append) that throws or does not grow the array by exactly one marks that part dead.
+--   A dead part is never written again (no retry, no repeat log). The block and research parts are independent.
+-- UNPROVEN in game: TArray append on the registry, research append (UnlockType copy, ResearchState recompute).
+--   Verify with M.debug_dump() and one trial append in a dev build before relying on it. Every game call goes through pcall.
 
 local M = {}
+M.allow_research = false
 local TAG = "[MSCore.blocks] "
 local function L(m) print(TAG .. m .. "\n") end
 local function valid(o)
@@ -69,25 +73,35 @@ local function has_full(arr, n, full)
     return false
 end
 
--- the block step: returns "ok" or "failed:<why>"
+-- the block step: returns "ok" or "failed:<why>". A write that fails sets s.bdead (never retried).
 local function block_step(s, reg, cls)
     local full = fullname(cls)
     if not full then return "failed:class name" end
     local cat = find_category(reg, s.category)
-    if not cat then return "failed:no category" end
+    if not valid(cat) then return "failed:no category" end
     local arr = rd(cat, "Classes")
     local n = count(arr)
     if n == nil then return "failed:no Classes array" end
     if has_full(arr, n, full) then return "ok" end
+    -- single write. Not retried: any result other than exactly n+1 is final.
     local okw = pcall(function() arr[n + 1] = cls end)
-    if not okw or count(arr) ~= n + 1 then return "failed:append, native arr_push fallback needed" end
-    return "ok"
+    local n2 = count(arr)
+    if okw and n2 == n + 1 then return "ok" end
+    s.bdead = true
+    if not okw then return "failed:append threw (array may have grown)" end
+    return "failed:append (count " .. tostring(n2) .. ", expected " .. tostring(n + 1) .. ")"
 end
 
--- UnlockType of an existing unlock that has a Block set (copied; vanilla value for "unlocks a block")
+-- UnlockType of an existing unlock that has a Block set (copied; vanilla value for "unlocks a block").
+-- Negative result is cached: search again only every 12 calls, 5 searches at most, then give up (logs once).
 local enum_cache
+local enum_calls, enum_next, enum_tries, enum_gaveup = 0, 0, 0, false
 local function unlock_enum()
     if enum_cache ~= nil then return enum_cache end
+    if enum_gaveup then return nil end
+    enum_calls = enum_calls + 1
+    if enum_calls < enum_next then return nil end
+    enum_tries = enum_tries + 1
     for _, rt in ipairs(find_all("ResearchTechnology")) do
         local u = rd(rt, "Unlocks")
         local n = count(u) or 0
@@ -99,6 +113,12 @@ local function unlock_enum()
             end
         end
     end
+    if enum_tries >= 5 then
+        enum_gaveup = true
+        L("UnlockType source not found after 5 tries: research append gives up until reload")
+        return nil
+    end
+    enum_next = enum_calls + 12
     return nil
 end
 
@@ -110,7 +130,7 @@ local function has_block(u, n, full)
     return false
 end
 
--- the research step: returns "ok", "pending" (research asset not loaded) or "failed:<why>"
+-- the research step: returns "ok", "pending" (research asset not loaded) or "failed:<why>". A failed write sets s.rdead.
 local function research_step(s, cls)
     local full = fullname(cls)
     if not full then return "failed:class name" end
@@ -123,12 +143,16 @@ local function research_step(s, cls)
     local en = unlock_enum()
     if en == nil then return "failed:research enum unknown (need P2)" end
     local okw = pcall(function() u[n + 1] = { UnlockType = en, bHidden = false, Block = cls } end)
-    if not okw or count(u) ~= n + 1 then return "failed:research append" end
-    return "ok"
+    local n2 = count(u)
+    if okw and n2 == n + 1 then return "ok" end
+    s.rdead = true
+    if not okw then return "failed:research append threw (array may have grown)" end
+    return "failed:research append (count " .. tostring(n2) .. ", expected " .. tostring(n + 1) .. ")"
 end
 
 local specs, order = {}, {}
-local tickN, anyPending, installed = 0, false, false
+local tickN, anyPending, ticking = 0, false, false
+local MS -- set by install()
 
 local function status_of(s)
     if s.b and s.b:sub(1, 7) == "failed:" then return s.b end
@@ -138,21 +162,30 @@ local function status_of(s)
     return "block"
 end
 
+local function research_on(s) return s.research ~= nil and M.allow_research == true end
+
 local function pass_one(s, reg)
+    local rwant = research_on(s)
+    if s.research and not M.allow_research and not s.rnote then
+        s.rnote = true
+        L(s.class .. " research append disabled (set MSCore.blocks.allow_research=true; every player needs the mod)")
+    end
+    if not rwant then s.r = nil end
+    if s.bdead and (not rwant or s.rdead) then return end -- everything final: no reads, no writes
     local cls = reg and find_class(s) or nil
     if not valid(cls) then
-        s.b = "pending"
-        s.r = s.research and "pending" or nil
+        if not s.bdead then s.b = "pending" end
+        if rwant and not s.rdead then s.r = "pending" end
         if reg and tickN >= 40 and not s.waited then s.waited = true; L("waiting for class " .. s.class) end
         return
     end
-    local okb, rb = pcall(block_step, s, reg, cls)
-    s.b = okb and rb or ("failed:" .. tostring(rb))
-    if s.research then
+    if not s.bdead then
+        local okb, rb = pcall(block_step, s, reg, cls)
+        s.b = okb and rb or ("failed:" .. tostring(rb))
+    end
+    if rwant and not s.rdead then
         local okr, rr = pcall(research_step, s, cls)
         s.r = okr and rr or ("failed:" .. tostring(rr))
-    else
-        s.r = nil
     end
 end
 
@@ -170,6 +203,15 @@ local function step()
     end
 end
 
+-- starts the one tick handler. false when MSCore.events is missing (install not run).
+local function ensure_tick()
+    if ticking then return true end
+    if not (MS and MS.events and MS.events.on) then return false end
+    ticking = true
+    MS.events.on("tick", function() pcall(step) end)
+    return true
+end
+
 function M.register(opts)
     if type(opts) ~= "table" then return nil, "register: opts must be a table" end
     local class = opts.class
@@ -181,6 +223,7 @@ function M.register(opts)
     local category = opts.category or "Functional Blocks"
     if type(category) ~= "string" then return nil, "register: category must be a string" end
     if specs[class] then return true end
+    if not ensure_tick() then return nil, "register: MSCore.events missing, tick not started (call install first)" end
     local pkg, name = class:match("^(.-)%.([^%.]+)$")
     local s = { class = class, pkg = pkg, name = name, research = research, category = category }
     specs[class] = s
@@ -225,11 +268,8 @@ function M.debug_dump()
 end
 
 function M.install(MSCore)
+    MS = MSCore
     MSCore.blocks = M
-    if installed then return M end
-    if not (MSCore.events and MSCore.events.on) then L("no MSCore.events: tick not started") return M end
-    installed = true
-    MSCore.events.on("tick", function() pcall(step) end)
     return M
 end
 

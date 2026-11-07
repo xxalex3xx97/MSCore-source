@@ -345,21 +345,36 @@ local function fnative(name, ...)
     if not f then return false, "native " .. name .. " missing (MSCore API 4 DLL needed)" end
     return f(...)
 end
--- Buildable data asset by name (e.g. "DAT_Refinery"), or nil
+-- Buildable data asset by name (e.g. "DAT_Refinery"), or nil. Cached per name in Lua; a cached object is reused only while IsValid.
+-- ponytail: the cache lives in this Lua state. Native code must not keep the pointer across level or save loads.
+local buildable_cache = {}
+local CFG_MAX = 64 * 1024 -- cfg bytes cap (matches the native check)
 function factory_native.find_buildable(datName)
     local N = MSCore.native
     if not N or not N.find_buildable then return nil end
-    return N.find_buildable(datName)
+    local b = buildable_cache[datName]
+    if b then
+        local okv, alive = pcall(function() return b:IsValid() end)
+        if okv and alive == true then return b end
+        buildable_cache[datName] = nil
+    end
+    b = N.find_buildable(datName)
+    if b then buildable_cache[datName] = b end
+    return b
 end
 -- cfgBytes: SerializedMachineConfig as a Lua string of raw bytes ("" or nil = none)
 function factory_native.place(station, datName, x, y, h, rot, cfgBytes)
+    if cfgBytes and #cfgBytes > CFG_MAX then return false, "cfg larger than 64 KiB" end
     local b = factory_native.find_buildable(datName)
     if not b then return false, "no Buildable named " .. tostring(datName) end
     return fnative("build_place", station, b, x, y, h, rot, cfgBytes or "")
 end
 function factory_native.disassemble(id, mass) return fnative("disassemble", id, mass) end
 -- recipeObj: Recipe asset UObject; cfgBytes: "" or 4 bytes (int32 Config)
-function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes) return fnative("set_recipe", machine, recipeObj, amount, cfgBytes or "") end
+function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes)
+    if cfgBytes and #cfgBytes > CFG_MAX then return false, "cfg larger than 64 KiB" end
+    return fnative("set_recipe", machine, recipeObj, amount, cfgBytes or "")
+end
 function factory_native.port(machine, port) return fnative("port_toggle", machine, port) end
 function factory_native.inv_move(prim, sec, slot, action) return fnative("inv_move", prim, sec, slot, action) end
 

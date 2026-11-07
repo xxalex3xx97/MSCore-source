@@ -74,7 +74,11 @@ Notes:
 - `MSCore_send_typed` is the generic route. Build the object yourself (NewObject or StaticConstructObject of the input class), set its fields, then send it with the type id.
 - The factory exports build their object with StaticConstructObject, so the type id is written by hand. That is why `MSCore_send_typed` writes it when `cmd+0x28` is `0`.
 - A receiver of `0` is the world. Never put a station id there for a build.
-- Each factory export returns `0` with `err` set when a field is missing, the class is missing, or a native call faults (`native fault`).
+- Each factory export returns `0` with `err` set when a field is missing, the class is missing, or a native call faults (`native fault`). A missing field is named in `err` (`BuildInput field missing: <path>`).
+- `cfglen` above 64 KiB (65536 bytes) is refused with an error (`cfg larger than 64 KiB`).
+- Native exports must be called from the game thread (ProcessEvent/FindAllOf are not thread-safe).
+- `MSCore_find_buildable` returns a pointer into the live game objects. Do not cache it across level or save loads in native code. Look it up again each time. (The Lua wrapper `MSCore.factory_native.find_buildable` caches per name and re-checks `IsValid`.)
+- A native fault inside `MSCore_find_buildable` returns `NULL` and logs a line.
 - Not verified in game: all the factory exports above.
 
 {: .warning }
