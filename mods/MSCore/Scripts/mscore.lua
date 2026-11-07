@@ -10,7 +10,10 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
     warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
     check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
-    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release } or nil
+    scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
+    send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
+    disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
+    inv_move = _G.MSCoreNative_inv_move, export_ok = _G.MSCoreNative_export_ok } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -322,6 +325,42 @@ function cmd.send(receiver, cmdObj)
     if not N then return false, NO_NATIVE end
     return N.send_cmd(receiver, cmdObj)
 end
+
+-- typed send (API 4): sets cmdObj's type id at +0x28 when it is 0, then AddInputCommand(receiver, cmdObj).
+-- typeId: BuildInput 0x2e, DisassembleInput 0x2f, InventoryInput 12, SetRecipeInput 20, MachinePortInput 17.
+function cmd.send_typed(receiver, cmdObj, typeId)
+    local N = MSCore.native
+    if not N or not N.send_typed then return false, NO_NATIVE end
+    return N.send_typed(receiver, cmdObj, typeId)
+end
+
+-- factory natives (API 4): thin wrappers over the MSCoreNative_* globals. Other factory helpers live in mscore_factory.lua.
+local factory_native = {}
+MSCore.factory_native = factory_native
+local function fnative(name, ...)
+    local N = MSCore.native
+    if not N then return false, NO_NATIVE end
+    local f = N[name]
+    if not f then return false, "native " .. name .. " missing (MSCore API 4 DLL needed)" end
+    return f(...)
+end
+-- Buildable data asset by name (e.g. "DAT_Refinery"), or nil
+function factory_native.find_buildable(datName)
+    local N = MSCore.native
+    if not N or not N.find_buildable then return nil end
+    return N.find_buildable(datName)
+end
+-- cfgBytes: SerializedMachineConfig as a Lua string of raw bytes ("" or nil = none)
+function factory_native.place(station, datName, x, y, h, rot, cfgBytes)
+    local b = factory_native.find_buildable(datName)
+    if not b then return false, "no Buildable named " .. tostring(datName) end
+    return fnative("build_place", station, b, x, y, h, rot, cfgBytes or "")
+end
+function factory_native.disassemble(id, mass) return fnative("disassemble", id, mass) end
+-- recipeObj: Recipe asset UObject; cfgBytes: "" or 4 bytes (int32 Config)
+function factory_native.set_recipe(machine, recipeObj, amount, cfgBytes) return fnative("set_recipe", machine, recipeObj, amount, cfgBytes or "") end
+function factory_native.port(machine, port) return fnative("port_toggle", machine, port) end
+function factory_native.inv_move(prim, sec, slot, action) return fnative("inv_move", prim, sec, slot, action) end
 
 local steer = {}
 MSCore.steer = steer

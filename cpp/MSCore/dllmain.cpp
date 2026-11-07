@@ -31,6 +31,7 @@ using namespace RC::Unreal;
 #include "msc_pin.hpp"
 #include "msc_chunks.hpp"
 #include "msc_scan.hpp"
+#include "msc_factory.hpp"
 #include "msc_loader.hpp"
 
 namespace
@@ -589,6 +590,166 @@ namespace
         return 1;
     }
 
+    // ---------------- factory natives (API 4): args consumed in order, see arg_int / arg_obj ----------------
+
+    // next arg as bytes: "" for nil or a non-string. Always consumes the arg.
+    std::string arg_bytes(const LuaMadeSimple::Lua& lua)
+    {
+        if (!lua.is_string(1)) { lua.discard_value(1); return std::string(); }
+        return std::string(lua.get_string(1));
+    }
+
+    // Lua: send_typed(receiver, cmd UObject, typeId) -> ok, err
+    int lua_send_typed(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!lua.is_number(1) || !lua.is_userdata(2) || !lua.is_number(3)) err = STR("send_typed needs receiver, cmd, typeId");
+            else
+            {
+                const int receiver = arg_int(lua);
+                UObject* cmd = arg_obj(lua);
+                const int type_id = arg_int(lua);
+                ok = factory_guard([&] { return send_typed(receiver, cmd, type_id, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: find_buildable(name) -> Buildable UObject, or nil
+    int lua_find_buildable(const LuaMadeSimple::Lua& lua)
+    {
+        UObject* o = nullptr;
+        try
+        {
+            const std::string name = arg_bytes(lua);
+            if (!name.empty()) seh_run([&] { o = find_buildable(name); });
+        }
+        catch (...) { o = nullptr; }
+        if (!alive(o)) { lua.set_nil(); return 1; }
+        LuaType::auto_construct_object(lua, o);
+        return 1;
+    }
+
+    // Lua: build_place(station, buildable UObject, x, y, h, rot, cfgBytes) -> ok, err
+    int lua_build_place(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!lua.is_number(1) || !lua.is_userdata(2) || !lua.is_number(3) || !lua.is_number(4) || !lua.is_number(5) || !lua.is_number(6))
+                err = STR("build_place needs station, buildable, x, y, h, rot");
+            else
+            {
+                const int station = arg_int(lua);
+                UObject* bdat = arg_obj(lua);
+                const int x = arg_int(lua), y = arg_int(lua), h = arg_int(lua), rot = arg_int(lua);
+                const std::string cfg = arg_bytes(lua);
+                ok = factory_guard([&] { return build_place(station, bdat, x, y, h, rot, cfg, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: disassemble(targetId, mass) -> ok, err
+    int lua_disassemble(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 2)) err = STR("disassemble needs target, mass numbers");
+            else
+            {
+                const int target = arg_int(lua);
+                const int mass = arg_int(lua);
+                ok = factory_guard([&] { return disassemble(target, mass, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: set_recipe(machine, recipe UObject, amount, cfgBytes) -> ok, err
+    int lua_set_recipe(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!lua.is_number(1) || !lua.is_userdata(2) || !lua.is_number(3)) err = STR("set_recipe needs machine, recipe, amount");
+            else
+            {
+                const int machine = arg_int(lua);
+                UObject* recipe = arg_obj(lua);
+                const int amount = arg_int(lua);
+                const std::string cfg = arg_bytes(lua);
+                ok = factory_guard([&] { return set_recipe(machine, recipe, amount, cfg, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: port_toggle(machine, port) -> ok, err
+    int lua_port_toggle(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 2)) err = STR("port_toggle needs machine, port numbers");
+            else
+            {
+                const int machine = arg_int(lua);
+                const int port = arg_int(lua);
+                ok = factory_guard([&] { return port_toggle(machine, port, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: inv_move(primary, secondary, slot, action) -> ok, err
+    int lua_inv_move(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 4)) err = STR("inv_move needs primary, secondary, slot, action numbers");
+            else
+            {
+                const int prim = arg_int(lua), sec = arg_int(lua), slot = arg_int(lua), action = arg_int(lua);
+                ok = factory_guard([&] { return inv_move(prim, sec, slot, action, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: export_ok(name) -> true when this DLL exports name (GetProcAddress). Read-only, for selfcheck.
+    int lua_export_ok(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        try
+        {
+            const std::string name = arg_bytes(lua);
+            HMODULE hm = nullptr;
+            if (!name.empty() && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                    reinterpret_cast<LPCWSTR>(&kVersion), &hm) && hm)
+                ok = GetProcAddress(hm, name.c_str()) != nullptr;
+        }
+        catch (...) { ok = false; }
+        lua.set_bool(ok);
+        return 1;
+    }
+
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
 
     struct LoaderRow { std::string name, installed, remote, state; };
@@ -720,6 +881,14 @@ public:
         lua.register_function("MSCoreNative_scan", lua_scan);
         lua.register_function("MSCoreNative_chunk_hold", lua_chunk_hold);
         lua.register_function("MSCoreNative_chunk_release", lua_chunk_release);
+        lua.register_function("MSCoreNative_send_typed", lua_send_typed);
+        lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
+        lua.register_function("MSCoreNative_build_place", lua_build_place);
+        lua.register_function("MSCoreNative_disassemble", lua_disassemble);
+        lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
+        lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
+        lua.register_function("MSCoreNative_inv_move", lua_inv_move);
+        lua.register_function("MSCoreNative_export_ok", lua_export_ok);
         Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals MSCoreNative_* registered\n"));
     }
 };
@@ -731,8 +900,8 @@ extern "C"
     MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
-    // MSCore_api: 3 = the set below (mining refuses to load below 3 when it needs scan or chunk hold).
-    MSCORE_API int MSCore_api() { return 3; }
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below.
+    MSCORE_API int MSCore_api() { return 4; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -966,5 +1135,65 @@ extern "C"
         catch (...) { ok = 0; w = STR("exception"); }
         copy_err(w, why, len);
         return ok;
+    }
+
+    // ---- API 4: factory commands (msc_factory.hpp). Type ids: BuildInput 0x2e, DisassembleInput 0x2f, InventoryInput 12, SetRecipeInput 20, MachinePortInput 17. ----
+
+    // sends cmd (live input command UObject) to receiver with type id type_id (written at +0x28 when that int is 0). 1 ok, 0 fail.
+    MSCORE_API int MSCore_send_typed(int receiver, void* cmd, int type_id, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return send_typed(receiver, static_cast<UObject*>(cmd), type_id, e); }, e);
+        }, err, errlen);
+    }
+
+    // Buildable data asset by name (e.g. DAT_Refinery). NULL when none. No error text: check the name.
+    MSCORE_API void* MSCore_find_buildable(const char* dat_name)
+    {
+        if (!dat_name) return nullptr;
+        UObject* o = nullptr;
+        try
+        {
+            if (!seh_run([&] { o = find_buildable(dat_name); })) return nullptr;
+        }
+        catch (...) { return nullptr; }
+        return o;
+    }
+
+    // BuildInput at receiver 0. bdat = MSCore_find_buildable result. cfg = SerializedMachineConfig bytes (cfg may be NULL when cfglen = 0).
+    MSCORE_API int MSCore_build_place(int station, void* buildable, int x, int y, int height, int rot,
+                                      const uint8_t* cfg, int cfglen, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return build_place(station, static_cast<UObject*>(buildable), x, y, height, rot, bytes_of(cfg, cfglen), e); }, e);
+        }, err, errlen);
+    }
+
+    // DisassembleInput at receiver 0. mass != 0 = bMassDisassemble.
+    MSCORE_API int MSCore_disassemble(int target_id, int mass, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return factory_guard([&] { return disassemble(target_id, mass, e); }, e); }, err, errlen);
+    }
+
+    // SetRecipeInput at receiver = machine. cfg = 0 or 4 bytes (int32 Config, little endian). recipe = Recipe asset UObject.
+    MSCORE_API int MSCore_set_recipe(int machine, void* recipe, int amount, const uint8_t* cfg, int cfglen, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return set_recipe(machine, static_cast<UObject*>(recipe), amount, bytes_of(cfg, cfglen), e); }, e);
+        }, err, errlen);
+    }
+
+    // MachinePortInput at receiver = machine: toggles port index port.
+    MSCORE_API int MSCore_port_toggle(int machine, int port, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return factory_guard([&] { return port_toggle(machine, port, e); }, e); }, err, errlen);
+    }
+
+    // InventoryInput at receiver 0. action 2 = quick move.
+    MSCORE_API int MSCore_inv_move(int primary_inv_id, int secondary_inv_id, int slot, int action, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e); }, e);
+        }, err, errlen);
     }
 }

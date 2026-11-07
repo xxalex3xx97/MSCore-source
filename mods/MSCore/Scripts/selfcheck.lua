@@ -66,6 +66,22 @@ function M.run(MSCore)
     check("native.send_cmd guard", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, why = N.send_cmd(1, nil) return yes(ok == false, tostring(why)) end)
+    -- API 4 factory exports: C exports resolve by GetProcAddress (export_ok), Lua natives are globals. Sends nothing.
+    for _, n in ipairs({ "MSCore_send_typed", "MSCore_find_buildable", "MSCore_build_place", "MSCore_disassemble",
+                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move" }) do
+        check("export." .. n, function()
+            local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
+            return yes(N.export_ok(n) == true, "GetProcAddress") end)
+    end
+    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move" }) do
+        check("native." .. n, function()
+            local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
+            return yes(type(N[n]) == "function", "MSCoreNative_" .. n .. " registered") end)
+    end
+    check("factory_native.api", function()
+        local f = MSCore.factory_native
+        return yes(type(f) == "table" and type(f.place) == "function" and type(f.set_recipe) == "function"
+            and type(MSCore.cmd.send_typed) == "function", "place/set_recipe/cmd.send_typed exist; nothing sent") end)
     -- ship checks use the first ship; SKIP when none
     local firstShip = nil
     check("ships.list", function()
