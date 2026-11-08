@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
-local MSCore = { api = 3, version = "0.7.6", verified_build = 149200896 }
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 5).
+local MSCore = { api = 3, version = "0.8.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
 local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
@@ -18,7 +18,8 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     redirect_status = nat("MSCoreNative_redirect_status"), redirect_stats = nat("MSCoreNative_redirect_stats"), refund_log = nat("MSCoreNative_refund_log"),
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
-    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok } or nil
+    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok,
+    add_block = _G.MSCoreNative_add_block, remove_block = _G.MSCoreNative_remove_block, pending =_G.MSCoreNative_pending, read_block_class = _G.MSCoreNative_read_block_class } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -137,11 +138,25 @@ local function sf(path) local o = StaticFindObject(path) if o and o:IsValid() th
 function ui.mk(cls, outer) return StaticConstructObject(sf(R.umg .. cls), outer, 0, 0, 0, nil, false, false, nil) end
 function ui.setText(tb, s) tb:SetText(FText(s)) end
 
-local BTN, hookIds = {}, nil
--- WHY: the click hook fires for EVERY widget in the game; callers that drop their UI call ui.clearClicks() so the button map does not grow and the hook is removed (re-registered on the next onClick).
+local BTN, hookIds, hookOff, hookGen = {}, nil, nil, 0
+-- WHY: the click hook fires for EVERY widget in the game; callers that drop their UI call ui.clearClicks() so the button map does not grow and the hook is removed.
+-- The removal is deferred (100 ms timer, then the game-thread queue) and a reopen cancels it: unregistering right away while the hook can still be running, then
+-- re-registering on the next open, crashed the game (UE4SS lua_getiuservalue access violation in a later tick). Same pattern as MiningUnitUI.
+local function hookRemove(gen)
+    if gen == hookGen and hookOff and hookIds then
+        local ids = hookIds
+        hookIds, hookOff = nil, nil
+        pcall(UnregisterHook, R.clickHook, ids[1], ids[2])
+    end
+end
 function ui.clearClicks()
     BTN = {}
-    if hookIds then pcall(UnregisterHook, R.clickHook, hookIds[1], hookIds[2]); hookIds = nil end
+    if hookIds and not hookOff then
+        hookOff = true
+        hookGen = hookGen + 1   -- an older timer (close, reopen, close within 100 ms) must not remove the hook early
+        local gen = hookGen
+        pcall(ExecuteWithDelay, 100, function() pcall(ExecuteInGameThread, function() hookRemove(gen) end) end)
+    end
 end
 function ui.onClick(btn, fn)
     if not hookIds then
@@ -152,7 +167,13 @@ function ui.onClick(btn, fn)
         end)
         if s then hookIds = { pre, post } end
     end
-    BTN[btn:GetFullName()] = fn
+    hookOff = nil   -- UI in use again: keep the hook registered
+    hookGen = hookGen + 1
+    -- crash 2026-11-08 (UE4SS XMulticastDelegateProperty Add -> FWeakObjectPtr access violation): never bind a button the engine no longer knows
+    local okv, valid = pcall(function() return btn ~= nil and btn:IsValid() end)
+    if not okv or not valid then print("[MSCore] ui.onClick: skipped an invalid button\n") return end
+    local name = btn:GetFullName()
+    BTN[name] = fn
     btn.OnClicked:Add(btn, FName("ForceLayoutPrepass"))
 end
 
@@ -410,6 +431,46 @@ function factory_native.inv_split(invId, src, amount, dst)
     local ok, err = N.inv_split(invId, src, amount, dst)
     if ok then return true end
     return nil, err or "inv_split failed"
+end
+
+-- 0.8.0 station build: add one station block. classPath = full class path from a read_station B line; x, y, h, rot = grid. true, or nil + err.
+function factory_native.add_block(station, classPath, x, y, h, rot)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.add_block then return nil, "native add_block missing (MSCore 0.8.0 DLL needed)" end
+    local ok, err = N.add_block(station, classPath, x, y, h, rot)
+    if ok then return true end
+    return nil, err or "add_block failed"
+end
+-- 0.8.0 station build: remove one station block (same args as add_block). true, or nil + err.
+function factory_native.remove_block(station, classPath, x, y, h, rot)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.remove_block then return nil, "native remove_block missing (MSCore 0.8.0 DLL needed)" end
+    local ok, err = N.remove_block(station, classPath, x, y, h, rot)
+    if ok then return true end
+    return nil, err or "remove_block failed"
+end
+-- 0.8.0: pending blueprint of a station. apply/reset = booleans; primary/player inventory ids (> 0 when apply); editing = block id or 0. true, or nil + err.
+function factory_native.pending(station, apply, reset, primary, player, editing)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.pending then return nil, "native pending missing (MSCore 0.8.0 DLL needed)" end
+    local ok, err = N.pending(station, apply and 1 or 0, reset and 1 or 0, primary, player, editing)
+    if ok then return true end
+    return nil, err or "pending failed"
+end
+-- 0.8.0: class defaults of a BuildingBlockObject class path: {station, ship, machines, min={x,y,z}, max={x,y,z}, cost={{item, amount}}} or nil, err
+function factory_native.read_block_class(classPath)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.read_block_class then return nil, "native read_block_class missing (MSCore 0.8.0 DLL needed)" end
+    local ok, text = N.read_block_class(classPath)
+    if not ok then return nil, text end
+    local F = package.loaded["mscore_factory"]
+    if not F then local okr, m = pcall(require, "mscore_factory"); F = okr and m or nil end
+    if not F then return nil, "mscore_factory not loaded" end
+    return F.parse_block_class(text)
 end
 
 local steer = {}
@@ -866,7 +927,7 @@ load_optional("mscore_factory", function(mod, M) mod.install(M) end)
 -- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
 if MSCore.factory then
     MSCore.factory.native = factory_native
-    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_inventory", "inv_split" }) do
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
         if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
     end
 end

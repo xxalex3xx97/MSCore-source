@@ -254,13 +254,14 @@ local function split_plain(s, sep)
 end
 
 -- parse_station(text) -> blocks, machines. Text from MSCore.native.read_station (format: cpp/MSCore/msc_station.hpp).
--- B\tclass\tgx\tgy\th\trot ; M\tid\tcls\tx\ty\th\trot\tcfg. cfg "-" -> nil (unreadable), "" -> "" (empty), else raw bytes.
+-- B\tclass\tgx\tgy\th\trot[\tclassPath] ; M\tid\tcls\tx\ty\th\trot\tcfg. cfg "-" -> nil (unreadable), "" -> "" (empty), else raw bytes.
+-- path = full class path (0.8.0 7th column), nil on an older 6-column line.
 function M.parse_station(text)
     local blocks, machines = {}, {}
     for _, line in ipairs(split_plain(text or "", "\n")) do
         local f = split_plain(line, "\t")
         if f[1] == "B" and #f >= 6 then
-            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]) }
+            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]), path = f[7] }
         elseif f[1] == "M" and #f >= 8 then
             local cfg = f[8]
             if cfg == "-" then cfg = nil
@@ -270,6 +271,25 @@ function M.parse_station(text)
         end
     end
     return blocks, machines
+end
+
+-- parse_block_class(text) -> {station, ship, machines, min={x,y,z}, max={x,y,z}, cost={{item, amount}}} or nil, err. Text from MSCore.native.read_block_class (K and I lines, msc_station.hpp).
+function M.parse_block_class(text)
+    local info = { cost = {} }
+    for _, line in ipairs(split_plain(text or "", "\n")) do
+        local f = split_plain(line, "\t")
+        if f[1] == "K" and #f >= 10 then
+            info.station = f[2] == "1"
+            info.ship = f[3] == "1"
+            info.machines = tonumber(f[4]) or 0
+            info.min = { x = tonumber(f[5]), y = tonumber(f[6]), z = tonumber(f[7]) }
+            info.max = { x = tonumber(f[8]), y = tonumber(f[9]), z = tonumber(f[10]) }
+        elseif f[1] == "I" and #f >= 3 then
+            info.cost[#info.cost + 1] = { item = f[2], amount = tonumber(f[3]) or 0 }
+        end
+    end
+    if not info.min then return nil, "no block class text" end
+    return info
 end
 
 -- parse_inventory(text) -> slots {item, amount, max}. Text from MSCore.native.read_inventory: S\titem\tamount\tmax, item "" = empty slot.

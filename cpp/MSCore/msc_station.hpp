@@ -1,6 +1,7 @@
 // FILE: cpp/MSCore/msc_station.hpp
 // WHAT: read_station(id): the live Blueprint (Blocks + Machines) of one StationObject as one tab-separated text (native API 4, Lua only).
-//       Lines: B\tclass\tgx\tgy\th\trot   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       Lines: B\tclass\tgx\tgy\th\trot\tclassPath   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       read_block_class(path) (0.8.0): class defaults of one BuildingBlockObject class. Lines: K\t... then I\titem\tamount per ItemCost entry.
 //       read_inventory(id) (0.7.3): the ItemSlots of one Inventory, same style. Lines: S\titem\tamount\tmax
 //       inv_split(inv, src, n, dst) (0.7.6): local move between two slots of one Inventory (RVA-bound game functions, see below).
 //       cfg = lowercase hex of SerializedMachineConfig, "" for an empty array, "-" when the field is unreadable.
@@ -108,12 +109,12 @@ namespace
         for (int i = 0; ta->GetData() && i < ta->Num(); ++i)
         {
             const uint8_t* e = ta->GetData() + static_cast<size_t>(i) * es;
-            std::string cls;
-            if (UObject* k = st_obj(et, e, STR("Class"))) cls = st_short(k->GetName());
+            std::string cls, path;
+            if (UObject* k = st_obj(et, e, STR("Class"))) { cls = st_short(k->GetName()); for (wchar_t c : k->GetPathName()) path += static_cast<char>(c); }
             int gx = 0, gy = 0, h = 0, rot = 0;
             UStruct* tst = nullptr;
             if (const uint8_t* t = st_struct(et, e, STR("Transform"), tst)) st_transform(tst, t, gx, gy, h, rot);
-            out += "B\t" + cls + "\t" + std::to_string(gx) + "\t" + std::to_string(gy) + "\t" + std::to_string(h) + "\t" + std::to_string(rot) + "\n";
+            out += "B\t" + cls + "\t" + std::to_string(gx) + "\t" + std::to_string(gy) + "\t" + std::to_string(h) + "\t" + std::to_string(rot) + "\t" + path + "\n";
             if (out.size() > kMaxStationBytes) { err = STR("station too large"); return false; }
         }
         return true;
@@ -215,6 +216,71 @@ namespace
             st_int(et, e, STR("Amount"), amount);
             out += "S\t" + item + "\t" + std::to_string(amount) + "\t" + std::to_string(mx) + "\n";
             if (out.size() > kMaxStationBytes) { err = STR("inventory too large"); return false; }
+        }
+        return true;
+    }
+
+    // WHAT: PNum leaf `name` (struct with int Value) of st/base into v. false when missing.
+    bool st_pnum(UStruct* st, const uint8_t* base, const TCHAR* name, int& v)
+    {
+        UStruct* ps = nullptr;
+        const uint8_t* p = st_struct(st, base, name, ps);
+        return p && st_int(ps, p, STR("Value"), v);
+    }
+
+    // WHAT: vector of PNum {X, Y, Z} `name` of st/base into v[0..2]. false when missing.
+    bool st_vec(UStruct* st, const uint8_t* base, const TCHAR* name, int v[3])
+    {
+        UStruct* vs = nullptr;
+        const uint8_t* p = st_struct(st, base, name, vs);
+        return p && st_pnum(vs, p, STR("X"), v[0]) && st_pnum(vs, p, STR("Y"), v[1]) && st_pnum(vs, p, STR("Z"), v[2]);
+    }
+
+    // WHAT: text of the class defaults (CDO) of the BuildingBlockObject class at class_path. false + err when not a block class or unreadable.
+    //       Lines: K\tstation\tship\tmachines\tminX\tminY\tminZ\tmaxX\tmaxY\tmaxZ  (station/ship = bStationBlock/bShipBlock 0|1,
+    //       machines = DefaultMachines count, bounds = BlockBounds raw PNum values, 65536 = 1.0)
+    //       then I\titem\tamount per ItemCost entry (item = object name, "" when unreadable).
+    // WHY: block info for the Blueprint Unit station build (class check, cost, bounds). Reflection only, no offsets. Read-only.
+    // ASSUMPTION: BlockBounds is {min, max} of PNum {X, Y, Z} (BPProbe 2026-11-06). Any other shape fails with err.
+    bool read_block_class(const std::string& class_path, std::string& out, std::wstring& err)
+    {
+        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(UClass::StaticClass(), nullptr, widen(class_path).c_str());   // type-filtered: a path to a non-class object is not found
+        UClass* bbo = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.BuildingBlockObject"));
+        if (!alive(c) || !alive(bbo) || c->GetName().rfind(STR("Default__"), 0) == 0 || !c->IsChildOf(bbo)) { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
+        UObject* cdo = c->GetClassDefaultObject();
+        if (!alive(cdo)) { err = STR("no class defaults for ") + widen(class_path); return false; }
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(cdo);
+        UStruct* ds = cdo->GetClassPrivate();
+        bool station = false, ship = false;
+        if (!get_bool_prop(cdo, STR("bStationBlock"), station) || !get_bool_prop(cdo, STR("bShipBlock"), ship))
+        { err = STR("bStationBlock/bShipBlock not readable"); return false; }
+        UStruct* bs = nullptr;
+        const uint8_t* bp = st_struct(ds, b, STR("BlockBounds"), bs);
+        int mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
+        if (!bp || !st_vec(bs, bp, STR("min"), mn) || !st_vec(bs, bp, STR("max"), mx)) { err = STR("BlockBounds not readable"); return false; }
+        FProperty* dmp = st_field(ds, STR("DefaultMachines"));
+        if (!dmp || !CastField<FArrayProperty>(dmp)) { err = STR("DefaultMachines not readable"); return false; }
+        const int machines = reinterpret_cast<const TArray<uint8_t>*>(b + dmp->GetOffset_Internal())->Num();
+        FProperty* icp = st_field(ds, STR("ItemCost"));
+        auto* ica = icp ? CastField<FArrayProperty>(icp) : nullptr;
+        auto* ici = ica ? CastField<FStructProperty>(ica->GetInner()) : nullptr;
+        if (!ici || !ici->GetStruct()) { err = STR("ItemCost not readable"); return false; }
+        UStruct* ist = ici->GetStruct();
+        const auto* cta = reinterpret_cast<const TArray<uint8_t>*>(b + icp->GetOffset_Internal());
+        const size_t ies = static_cast<size_t>(ica->GetInner()->GetElementSize());
+        out = "K\t" + std::to_string(station ? 1 : 0) + "\t" + std::to_string(ship ? 1 : 0) + "\t" + std::to_string(machines);
+        for (int v : mn) out += "\t" + std::to_string(v);
+        for (int v : mx) out += "\t" + std::to_string(v);
+        out += "\n";
+        for (int i = 0; cta->GetData() && i < cta->Num(); ++i)
+        {
+            const uint8_t* e = cta->GetData() + static_cast<size_t>(i) * ies;
+            std::string item;
+            if (UObject* it = st_obj(ist, e, STR("Item")); it && alive(it)) item = st_narrow(it->GetName());
+            int amount = 0;
+            st_int(ist, e, STR("Amount"), amount);
+            out += "I\t" + item + "\t" + std::to_string(amount) + "\n";
+            if (out.size() > kMaxStationBytes) { err = STR("block class text too large"); return false; }
         }
         return true;
     }
