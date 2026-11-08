@@ -80,6 +80,8 @@ def main():
     a = ap.parse_args()
     cat = json.loads(Path(a.catalog).read_text(encoding="utf-8"))
     mach, blk = probe_tables(Path(a.probe).read_text(encoding="utf-8", errors="replace"))
+    # live-data fix (2026-11-08): Dock_2 fills a 64x64 pitch slot (Main_Base (2).json shipyard row), probe value 14x30 was a guess
+    blk["BPO_Dock_2"] = (30, 30, False)
     cross_check(cat, mach, blk)
     block = lua_block(mach, blk)
     if a.splice:
