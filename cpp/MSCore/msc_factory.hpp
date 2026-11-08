@@ -192,7 +192,7 @@ namespace
     bool add_block(int station, const std::string& class_path, int x, int y, int h, int rot, std::wstring& err)
     {
         if (station <= 0) { err = STR("station id must be > 0"); return false; }
-        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widen(class_path).c_str());
+        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(UClass::StaticClass(), nullptr, widen(class_path).c_str());   // type-filtered: a path to a non-class object is not found
         UClass* bbo = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.BuildingBlockObject"));
         if (!alive(c) || !alive(bbo) || c->GetName().rfind(STR("Default__"), 0) == 0 || !c->IsChildOf(bbo))
         { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
@@ -218,6 +218,7 @@ namespace
     {
         if (station <= 0) { err = STR("station id must be > 0"); return false; }
         if (editing < 0) { err = STR("editing block id must be >= 0"); return false; }
+        if (apply == reset) { err = STR("pending needs exactly one of apply or reset"); return false; }
         if (apply && (primary <= 0 || player <= 0)) { err = STR("apply needs primary and player inventory ids > 0"); return false; }
         UObject* cmd = make_input(STR("PendingBlueprintInput"), err);
         if (!cmd) return false;

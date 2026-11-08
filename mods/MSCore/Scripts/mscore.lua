@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 4).
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 5).
 local MSCore = { api = 3, version = "0.8.0", verified_build = 149200896 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
@@ -438,7 +438,9 @@ function factory_native.read_block_class(classPath)
     if not N.read_block_class then return nil, "native read_block_class missing (MSCore 0.8.0 DLL needed)" end
     local ok, text = N.read_block_class(classPath)
     if not ok then return nil, text end
-    local F = package.loaded["mscore_factory"] or require("mscore_factory")
+    local F = package.loaded["mscore_factory"]
+    if not F then local okr, m = pcall(require, "mscore_factory"); F = okr and m or nil end
+    if not F then return nil, "mscore_factory not loaded" end
     return F.parse_block_class(text)
 end
 

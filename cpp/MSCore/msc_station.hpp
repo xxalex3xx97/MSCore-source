@@ -244,9 +244,9 @@ namespace
     // ASSUMPTION: BlockBounds is {min, max} of PNum {X, Y, Z} (BPProbe 2026-11-06). Any other shape fails with err.
     bool read_block_class(const std::string& class_path, std::string& out, std::wstring& err)
     {
-        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widen(class_path).c_str());
+        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(UClass::StaticClass(), nullptr, widen(class_path).c_str());   // type-filtered: a path to a non-class object is not found
         UClass* bbo = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.BuildingBlockObject"));
-        if (!alive(c) || !alive(bbo) || !c->IsChildOf(bbo)) { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
+        if (!alive(c) || !alive(bbo) || c->GetName().rfind(STR("Default__"), 0) == 0 || !c->IsChildOf(bbo)) { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
         UObject* cdo = c->GetClassDefaultObject();
         if (!alive(cdo)) { err = STR("no class defaults for ") + widen(class_path); return false; }
         const uint8_t* b = reinterpret_cast<const uint8_t*>(cdo);
