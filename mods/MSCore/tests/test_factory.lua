@@ -236,8 +236,19 @@ do
         check("pending: booleans reach the native as 1/0", p1 == true and seen[2] == 1 and seen[3] == 0 and seen[4] == 3)
         local bi2 = MSC2.factory_native.read_block_class("/Game/X.X_C")
         check("read_block_class: native text is parsed", bi2 ~= nil and bi2.station == true and bi2.machines == 0)
+        local r1, rw1 = MSC2.factory_native.remove_block(1, "/Game/X.X_C", 0, 0, 0, 0)
+        check("remove_block: missing native gives nil, 'missing' text", r1 == nil and tostring(rw1):find("missing", 1, true) ~= nil)
+        _G.MSCoreNative_remove_block = function() return false, "refused" end
+        local MSC3 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r2, rw2 = MSC3.factory_native.remove_block(1, "/Game/X.X_C", 0, 0, 0, 0)
+        check("remove_block: native refusal is passed through", r2 == nil and rw2 == "refused")
+        local rseen
+        _G.MSCoreNative_remove_block = function(...) rseen = { ... } return true end
+        local r3 = MSC3.factory_native.remove_block(7, "/Game/Y.Y_C", 3, 4, 5, 2)
+        check("remove_block: true passes through, args in order", r3 == true and rseen[1] == 7 and rseen[2] == "/Game/Y.Y_C" and rseen[3] == 3 and rseen[4] == 4 and rseen[5] == 5 and rseen[6] == 2)
     end)
     _G.MSCoreNative_version = nil
+    _G.MSCoreNative_remove_block = nil
     _G.MSCoreNative_add_block = nil
     _G.MSCoreNative_pending = nil
     _G.MSCoreNative_read_block_class = nil

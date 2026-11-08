@@ -19,7 +19,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
     inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok,
-    add_block = _G.MSCoreNative_add_block, pending = _G.MSCoreNative_pending, read_block_class = _G.MSCoreNative_read_block_class } or nil
+    add_block = _G.MSCoreNative_add_block, remove_block = _G.MSCoreNative_remove_block, pending =_G.MSCoreNative_pending, read_block_class = _G.MSCoreNative_read_block_class } or nil
 
 function MSCore.require(n)
     if type(n) ~= "number" or n > MSCore.api then
@@ -435,6 +435,15 @@ function factory_native.add_block(station, classPath, x, y, h, rot)
     local ok, err = N.add_block(station, classPath, x, y, h, rot)
     if ok then return true end
     return nil, err or "add_block failed"
+end
+-- 0.8.0 station build: remove one station block (same args as add_block). true, or nil + err.
+function factory_native.remove_block(station, classPath, x, y, h, rot)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.remove_block then return nil, "native remove_block missing (MSCore 0.8.0 DLL needed)" end
+    local ok, err = N.remove_block(station, classPath, x, y, h, rot)
+    if ok then return true end
+    return nil, err or "remove_block failed"
 end
 -- 0.8.0: pending blueprint of a station. apply/reset = booleans; primary/player inventory ids (> 0 when apply); editing = block id or 0. true, or nil + err.
 function factory_native.pending(station, apply, reset, primary, player, editing)
@@ -912,7 +921,7 @@ load_optional("mscore_factory", function(mod, M) mod.install(M) end)
 -- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
 if MSCore.factory then
     MSCore.factory.native = factory_native
-    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_inventory", "inv_split", "add_block", "pending", "read_block_class" }) do
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
         if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
     end
 end

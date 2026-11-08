@@ -691,6 +691,27 @@ namespace
         return lua_result(lua, ok, err);
     }
 
+    // Lua: remove_block(station, classPath, x, y, h, rot) -> ok, err
+    int lua_remove_block(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!lua.is_number(1) || lua_type(lua.get_lua_state(), 2) != LUA_TSTRING || !lua.is_number(3) || !lua.is_number(4) || !lua.is_number(5) || !lua.is_number(6))
+                err = STR("remove_block needs station, classPath, x, y, h, rot");
+            else
+            {
+                const int station = arg_int(lua);
+                const std::string path = arg_bytes(lua);
+                const int x = arg_int(lua), y = arg_int(lua), h = arg_int(lua), rot = arg_int(lua);
+                ok = factory_guard([&] { return remove_block(station, path, x, y, h, rot, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
     // Lua: pending(station, apply 0|1, reset 0|1, primary, player, editing) -> ok, err
     int lua_pending(const LuaMadeSimple::Lua& lua)
     {
@@ -1045,6 +1066,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
     lua.register_function("MSCoreNative_build_place", lua_build_place);
     lua.register_function("MSCoreNative_add_block", lua_add_block);
+    lua.register_function("MSCoreNative_remove_block", lua_remove_block);
     lua.register_function("MSCoreNative_pending", lua_pending);
     lua.register_function("MSCoreNative_read_block_class", lua_read_block_class);
     lua.register_function("MSCoreNative_disassemble", lua_disassemble);

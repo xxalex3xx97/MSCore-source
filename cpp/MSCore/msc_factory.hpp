@@ -19,6 +19,7 @@ namespace
     constexpr int32_t kTypeDisassemble = 0x2f;  // DisassembleInput
     constexpr int32_t kTypeAddBlock = 30;       // AddBlockInput (API 5)
     constexpr int32_t kTypePending = 33;        // PendingBlueprintInput (API 5)
+    constexpr int32_t kTypeRemoveBlock = 31;    // RemoveBlockInput (API 5)
     constexpr int32_t kTypeInventory = 12;      // InventoryInput
     constexpr int32_t kTypePort = 17;           // MachinePortInput
     constexpr int32_t kTypeSetRecipe = 20;      // SetRecipeInput
@@ -209,6 +210,30 @@ namespace
             || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation")))
             return false;
         return send_typed(0, cmd, kTypeAddBlock, err);
+    }
+
+    // WHAT: RemoveBlockInput for one station block: Class = the BuildingBlockObject class at class_path, AttachTargetID = station, GridTransform. Receiver 0, type id 31.
+    // WHY: station build (BPU): removes a live block that is in the way of a JSON block. Handler drops the first Pending entry matching Class + GridTransform (ID not compared).
+    bool remove_block(int station, const std::string& class_path, int x, int y, int h, int rot, std::wstring& err)
+    {
+        if (station <= 0) { err = STR("station id must be > 0"); return false; }
+        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(UClass::StaticClass(), nullptr, widen(class_path).c_str());   // type-filtered: a path to a non-class object is not found
+        UClass* bbo = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.BuildingBlockObject"));
+        if (!alive(c) || !alive(bbo) || c->GetName().rfind(STR("Default__"), 0) == 0 || !c->IsChildOf(bbo))
+        { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
+        UObject* cmd = make_input(STR("RemoveBlockInput"), err);
+        if (!cmd) return false;
+        uint8_t* base = reinterpret_cast<uint8_t*>(cmd);
+        UStruct* st = cmd->GetClassPrivate();
+        auto need = [&](bool ok, const TCHAR* field) { if (!ok) err = STR("RemoveBlockInput field missing: ") + std::wstring(field); return ok; };
+        if (!need(set_class_prop(cmd, STR("Class"), c), STR("Class"))
+            || !need(set_num_prop(cmd, STR("AttachTargetID"), station), STR("AttachTargetID"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.X"), x), STR("GridTransform.GridLocation.X"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.Y"), y), STR("GridTransform.GridLocation.Y"))
+            || !need(wr_path(st, base, STR("GridTransform.Height"), h), STR("GridTransform.Height"))
+            || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation")))
+            return false;
+        return send_typed(0, cmd, kTypeRemoveBlock, err);
     }
 
     // WHAT: PendingBlueprintInput{bReset, bApply, PrimaryInventoryID, PlayerInventoryID, EditingFromBlockID, AttachTargetID = station}, receiver 0, type id 33.
