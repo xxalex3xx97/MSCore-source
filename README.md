@@ -6,7 +6,7 @@ Shared core for Main Sequence Demo UE4SS mods. It has three parts:
 - **Lua library** (`mods\MSCore\Scripts\mscore.lua`): safe UObject access, UMG helpers, a 250 ms tick loop, and read/command wrappers for ships, orders, filters, warp, docks and items.
 - **Mod manager** (`cpp\manager`, `MSCoreManager.exe`): installs, updates, rolls back and removes mods from GitHub releases. Every download is checked against SHA-256 and size.
 
-Used by MiningBenchMod and MSDevMenu. Lua API 3, native API 4 (separate counters), version 0.7.6.
+Used by MiningBenchMod and MSDevMenu. Lua API 3, native API 5 (separate counters), version 0.8.1.
 
 Status: the selfcheck log is the check. Run the game with MSCore installed and read `Mods\MSCore\selfcheck.log`. There is no automated game test suite.
 

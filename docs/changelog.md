@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.1 - Refund redirect only on demand
+- **Fixed:** manual deconstruction refunds went into the Blueprint Unit instead of the player. The redirect was on at MSCore start since 0.7.5.
+- **Changed:** redirect off by default. Opt-in file `Mods/MSCore/refund_redirect_on.txt` restores the old always-on behaviour (not used if `refund_redirect_off.txt` exists). Mods that need the redirect call `MSCoreNative_redirect_enable(true)` and must turn it off again with `(false)`. Blueprint Unit does this around its own builds.
+- Native API stays 5, Lua API 3.
+
 ## 0.7.6 - Local inventory split, camera block, Dock_2 floor
 - **New:** `MSCore_inv_split(inv_id, src_slot, amount, dst_slot, err, errlen)` (C export) and `MSCoreNative_inv_split(invId, src, amount, dst)` (Lua, returns `true` or `false, err`), `MSCore.native.inv_split`, `MSCore.factory_native.inv_split`. Moves `amount` items from slot `src` to the EMPTY slot `dst` of the same Inventory. Slots are 0-based. `amount` must be at most the stack cap (`MaxStackSize`, or 1 when `MaxStackSize` is 1, times the inventory multiplier). If the destination refuses, the items go back to the source.
 - **How:** the game's `RemoveAtSlot` and `AddAtSlot` are called by RVA (0x421c730, 0x4216060). The 40 entry bytes of each are compared first; any difference turns the feature off (`native inv_split` error text). The source and destination are re-read after each call (the remove return value is not trusted).

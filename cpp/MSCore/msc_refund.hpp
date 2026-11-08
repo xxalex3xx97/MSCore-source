@@ -1,5 +1,5 @@
 // FILE: cpp/MSCore/msc_refund.hpp
-// WHAT: Blueprint Unit refund / build-charge REDIRECT (0.7.5, default ON) plus the 0.7.4 log probe (default OFF). Two hand rolled inline detours:
+// WHAT: Blueprint Unit refund / build-charge REDIRECT (0.7.5; default OFF since 0.8.1) plus the 0.7.4 log probe (default OFF). Two hand rolled inline detours:
 //       (a) DisassembleSelf (machine refund; rcx machine, rdx player)  (b) the build-charge inventory helper (rcx player; the stub also
 //       passes rdi = caller BuildCommand* and the return address). Each hook CALLS the original through the trampoline.
 //       REFUND: when the machine's station (frame) holds a Blueprint Unit container (BP_BPUnitStoreObj_01_C), [player+0x288] is swapped for the
@@ -18,8 +18,9 @@
 // Co-op (future work): decision uses sim state only (frame, container class, ids). The game is lockstep: a client without the hook would put
 //         refund/charge in different inventories => desync. Client_ValidateDeterminism behaviour is unknown. Needs every player on the same MSCore
 //         version with the redirect on. Fail closed on ambiguity. The pak with BP_BPUnitStoreObj_01_C is mandatory. Designer/teardown paths are untested.
-// SWITCHES: redirect is ON at MSCore start when validation passes; OFF with file Mods\MSCore\refund_redirect_off.txt or Lua
-//         MSCoreNative_redirect_enable(false). Probe logging: file Mods\MSCore\refund_probe.txt or MSCoreNative_refund_enable(true).
+// SWITCHES: redirect is OFF at MSCore start. It turns ON at start only with file Mods\MSCore\refund_redirect_on.txt (and no
+//         refund_redirect_off.txt) when validation passes. Blueprint Unit calls MSCoreNative_redirect_enable(true) around its own builds and
+//         (false) after. Lua MSCoreNative_redirect_enable(false) turns it off. refund_redirect_off.txt is not checked at runtime. Probe logging: file Mods\MSCore\refund_probe.txt or MSCoreNative_refund_enable(true).
 // LOG LINES (also in a 200 line ring buffer, Lua MSCoreNative_refund_log()):
 //   REDIRECT refund machine=<id> unit_inv=<id> mode=<group|fallback> n=<count>      (first 20, then every 25th; leftover is not cheaply readable)
 //   REDIRECT charge site=<0..3> station=<id> unit_inv=<id> n=<count>                (same rate limit)
@@ -720,7 +721,7 @@ namespace
         return g_ref.status;
     }
 
-    // WHAT: redirect switch (MSCoreNative_redirect_enable; default on at start). Returns the status string.
+    // WHAT: redirect switch (MSCoreNative_redirect_enable; default off at start). Returns the status string.
     std::string ref_set_redirect(bool on)
     {
         if (on)

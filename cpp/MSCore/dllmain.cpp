@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -901,7 +901,7 @@ namespace
     // Lua: refund_status() / redirect_status() -> status string ("off", "on: redirect=.. probe_log=.. groups=..", or "COMPAT refund failed: <why>").
     int lua_refund_status(const LuaMadeSimple::Lua& lua) { lua.set_string(g_ref.status); return 1; }
 
-    // Lua: redirect_enable(bool) -> status string. Turns the refund / charge redirect on or off (default on at start when validation passes).
+    // Lua: redirect_enable(bool) -> status string. Turns the refund / charge redirect on or off. Default OFF; Blueprint Unit turns it on only while it builds.
     int lua_redirect_enable(const LuaMadeSimple::Lua& lua)
     {
         std::string st;
@@ -928,7 +928,9 @@ namespace
         return 1;
     }
 
-    // WHAT: at MSCore Lua start (once): redirect ON unless Mods\MSCore\refund_redirect_off.txt exists; probe log ON when refund_probe.txt exists. The DLL sits in Mods\MSCore\dlls.
+    // WHAT: at MSCore Lua start (once): redirect ON only when Mods\MSCore\refund_redirect_on.txt exists (opt-in, old always-on behaviour) and
+    //       refund_redirect_off.txt does not; probe log ON when refund_probe.txt exists. The DLL sits in Mods\MSCore\dlls.
+    // WHY: 0.7.5-0.8.0 turned the redirect on at start, so manual deconstruction refunds went into the Blueprint Unit instead of the player.
     void refund_file_switch()
     {
         HMODULE hm = nullptr;
@@ -940,7 +942,7 @@ namespace
         const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
         std::error_code ec;
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
-        if (!mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) ref_set_redirect(true);
+        if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) ref_set_redirect(true);
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
@@ -1092,7 +1094,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.0");
+        ModVersion = STR("0.8.1");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
