@@ -78,6 +78,10 @@ Do not change inventories or properties directly from a mod (`Inventory:AddItems
 - OBSERVED: the cost is the net of added minus removed blocks, charged through an `InventoryGroup` of the primary and player inventory. Costs are taken from the primary first. Refunds go to the primary first. If both are full the leftover refund is lost, with no drop object.
 - OBSERVED: the game does not check what the two ids are. They must be real inventory ids.
 - OBSERVED: `Blueprint.Machines` on a station is a snapshot. After you place or remove machines it takes about 20 to 30 seconds to show the change.
+- OBSERVED (MSCore 0.8.0 natives): block-only station edits go through `AddBlockInput` (type id `30`), `RemoveBlockInput` (`31`) and `PendingBlueprintInput` (`33`), each sent to the station as receiver. See [Native C API]({{ site.baseurl }}{% link mod-authors/native-api.md %}#api-5-station-block-commands).
+- Blueprint Unit Station Build (MSCore 0.8.0) uses one apply: `pending(reset)`, `remove_block` for each block in the way, `add_block` for each block of the JSON, then `pending(apply)`. The game nets the cost (removes refund, adds charge, Primary = unit inventory first).
+- OBSERVED: block bounds (`read_block_class`, raw / 65536) are 4x the grid unit horizontally and 2x vertically (probe 2026-11-08). Each box is kept slightly under its size, so an inclusive overlap check does not touch the neighbour.
+- Verified in game 2026-11-08: a 1x1 station placed where a Shipyard side stood, through Blueprint Unit (the side was removed first).
 
 ## 6. Machine configs
 

@@ -46,7 +46,7 @@ See `docs\` for the mod author guide (Lua API and native API reference).
 - `warp.sectors()`, `docks()`, `find_item(res)`: world lookups in pure Lua.
 - `loader`: `status()`, `updates()`, `on_update(fn)`.
 - `native` (`MSCoreNative_*`): the DLL functions the Lua wrappers call.
-- C exports for native mods: `MSCore_api()` returns 4, plus `MSCore_*` functions (`add_input`, `warp_send`, `sectors`, `find_item`, ...). Structs `MsFilterRow` and `MsSector` are in `cpp\MSCore\msc_api.hpp`.
+- C exports for native mods: `MSCore_api()` returns 5 (0.8.0 station block natives are Lua only), plus `MSCore_*` functions (`add_input`, `warp_send`, `sectors`, `find_item`, ...). Structs `MsFilterRow` and `MsSector` are in `cpp\MSCore\msc_api.hpp`.
 - `hacks`: registry of every workaround, with the build it was verified on.
 
 ## Mod updates
