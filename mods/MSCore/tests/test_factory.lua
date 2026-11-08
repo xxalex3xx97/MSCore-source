@@ -183,18 +183,22 @@ do
         if type(k) == "string" and not k:match("^MSCore") then return function() end end
         return nil
     end })
-    _G.MSCoreNative_version = function() return "stub" end
-    -- mscore.lua copies the natives when it loads, so each case loads it again
-    local MSC = dofile(dir .. "/../Scripts/mscore.lua")
-    local ok1, why1 = MSC.factory_native.inv_split(1, 0, 1, 2)
-    check("inv_split: missing native gives nil, 'missing' text", ok1 == nil and tostring(why1):find("missing", 1, true) ~= nil)
-    _G.MSCoreNative_inv_split = function(id, s, n, d) return true, nil end
-    local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
-    local ok2, why2 = MSC2.factory_native.inv_split(1, 0, 1, 2)
-    check("inv_split: present native is called", ok2 == true and why2 == nil)
+    -- _G metatable is restored on every path (pass or error in the section)
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        -- mscore.lua copies the natives when it loads, so each case loads it again
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local ok1, why1 = MSC.factory_native.inv_split(1, 0, 1, 2)
+        check("inv_split: missing native gives nil, 'missing' text", ok1 == nil and tostring(why1):find("missing", 1, true) ~= nil)
+        _G.MSCoreNative_inv_split = function(id, s, n, d) return true, nil end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local ok2, why2 = MSC2.factory_native.inv_split(1, 0, 1, 2)
+        check("inv_split: present native is called", ok2 == true and why2 == nil)
+    end)
     _G.MSCoreNative_version = nil
     _G.MSCoreNative_inv_split = nil
     setmetatable(_G, nil)
+    if not sec_ok then check("inv_split section ran without error: " .. tostring(sec_err), false) end
 end
 
 print(string.format("%d passed, %d failed", pass, fail))

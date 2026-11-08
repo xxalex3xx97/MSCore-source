@@ -402,12 +402,14 @@ function factory_native.read_inventory(invId)
     return F.parse_inventory(text)
 end
 -- 0.7.6: move `amount` items from slot src to empty slot dst of one Inventory (0-based slots, same inventory, n <= stack cap).
--- Local edit, not a game command: co-op clients do not see it. Returns true, or false + err.
+-- Local edit, not a game command: co-op clients do not see it. Returns true, or nil + err (native false, err is normalised).
 function factory_native.inv_split(invId, src, amount, dst)
     local N = MSCore.native
     if not N then return nil, NO_NATIVE end
     if not N.inv_split then return nil, "native inv_split missing (MSCore 0.7.6 DLL needed)" end
-    return N.inv_split(invId, src, amount, dst)
+    local ok, err = N.inv_split(invId, src, amount, dst)
+    if ok then return true end
+    return nil, err or "inv_split failed"
 end
 
 local steer = {}

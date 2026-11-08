@@ -37,7 +37,10 @@ function M._cie_acquire(h, p)
   local alive = 0
   for k in pairs(c.holders) do if live(k.wbp) then alive = alive + 1 else c.holders[k] = nil end end   -- window destroyed without close (death/load): drop it
   -- re-read prev only for a new controller: a dead holder may have left CIE=false, re-reading would lose the real prev (stays frozen)
-  if alive == 0 and c.pc ~= p then local s, v = pcall(function() return p.CharacterInputEnabled end); c.prev = (s and v == true) end
+  if alive == 0 and c.pc ~= p then
+    local s, v = pcall(function() return p.CharacterInputEnabled end)
+    if s and type(v) == "boolean" then c.prev = v else c.prev = nil end   -- nil = unreadable (unknown): release restores true
+  end
   c.pc = p
   c.holders[h] = true
   if not pcall(function() p:AllowCharacterInput(false) end) then try("CIE prop", function() p.CharacterInputEnabled = false end) end
@@ -47,7 +50,7 @@ function M._cie_release(h, p)
   if not c.holders[h] then return end
   c.holders[h] = nil
   for k in pairs(c.holders) do if live(k.wbp) then return end c.holders[k] = nil end   -- another live window still open: keep blocked
-  if c.prev and live(p) then
+  if c.prev ~= false and live(p) then   -- restore unless the value was read as false (unknown = restore)
     if not pcall(function() p:AllowCharacterInput(true) end) then try("CIE prop restore", function() p.CharacterInputEnabled = true end) end
   end
   c.prev, c.pc = nil, nil

@@ -13,6 +13,11 @@ nav_order: 6
 - **factory:** Dock_2 floor is 30x30; a footprint across touching floors validates against the union of the padded floors.
 - **Fixed:** binary config bytes with NUL were truncated to the first byte; machine configs/recipes/ports now reach the game.
 - **Unverified in game:** not run in game yet. Lua tests: ``mods\MSCore\tests\test_factory.lua`` (inv_split native missing / present). No Lua test covers the NUL fix (Lua tests cannot call the DLL); `arg_bytes` checked by code read only.
+- **Removed:** Ctrl+F9 steer test hotkey (dev only).
+- **Known limits:**
+  - `inv_split` is a LOCAL edit: co-op desync is accepted for single-player restore. Do not use it in multiplayer.
+  - Stale CIE holder: a WBP window destroyed without close (death/load) is dropped from the holder list only on the next open/close. If that controller differs from the one now in use, its CharacterInputEnabled is not restored by this code (fix not in 0.7.6).
+  - Dock_2 floor override lives in `scripts/gen_factory_tables.py` (user-verified, kept).
 - Native API stays 4, Lua API stays 3.
 
 ## 0.7.5 - Blueprint Unit refund / charge redirect

@@ -36,7 +36,7 @@ nav_order: 8
 | `native.chunk_release` | `(owner)` | boolean | Drops the owner's cube. |
 | `native.read_station` | `(stationId)` | `ok, text` | Raw station text (one `B` or `M` line per block or machine, tab separated). Prefer `factory_native.read_station`. |
 | `native.read_inventory` | `(invId)` | `ok, text` | Raw inventory text (one `S` line per slot: `S item amount max`, `item` empty for an empty slot). Prefer `factory_native.read_inventory`. |
-| `native.inv_split` | `(invId, src, amount, dst)` | `ok, err` | 0.7.6: move `amount` items from slot `src` to empty slot `dst` of the same Inventory. Slots are 0-based. Prefer `factory_native.inv_split`. |
+| `native.inv_split` | `(invId, src, amount, dst)` | `true` or `false, err` | 0.7.6: move `amount` items from slot `src` to empty slot `dst` of the same Inventory. Slots are 0-based. Local edit, not a game command (co-op desync, single-player only). Prefer `factory_native.inv_split`, which returns `true` or `nil, err`. |
 | `native.refund_enable` | `(bool)` | string | Probe log switch: `true` validates, installs the hooks and turns the `PROBE ...` log lines on; `false` turns them off. Default off (also on when `Mods/MSCore/refund_probe.txt` exists). Returns the status. |
 | `native.redirect_enable` | `(bool)` | string | 0.7.5: Blueprint Unit refund / build-charge redirect. **On by default** at MSCore start when the load validation passes; `false` (or the file `Mods/MSCore/refund_redirect_off.txt`) turns it off. Returns the status. |
 | `native.redirect_status` / `native.refund_status` | `()` | string | `off`, `on: redirect=on probe_log=off groups=yes` or `COMPAT refund failed: <why>`. |

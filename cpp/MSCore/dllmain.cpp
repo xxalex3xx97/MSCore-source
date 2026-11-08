@@ -600,7 +600,8 @@ namespace
     // WHY: lua.get_string() goes through lua_tostring + strlen, so binary data stopped at the first NUL. Copy by length.
     std::string arg_bytes(const LuaMadeSimple::Lua& lua)
     {
-        if (!lua.is_string(1)) { lua.discard_value(1); return std::string(); }
+        // lua_type, not lua_tolstring alone: a number would be converted in place and accepted as bytes
+        if (lua_type(lua.get_lua_state(), 1) != LUA_TSTRING) { lua.discard_value(1); return std::string(); }
         size_t n = 0;
         const char* p = lua_tolstring(lua.get_lua_state(), 1, &n);
         std::string s(p ? p : "", n);

@@ -316,7 +316,9 @@ namespace
         int ms = 0;
         if (!st_int(static_cast<UObject*>(it)->GetClassPrivate(), static_cast<const uint8_t*>(it), STR("MaxStackSize"), ms)) { err = STR("split: item has no MaxStackSize"); return false; }
         const int32_t mult = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(inv) + SPLIT_MULT_OFF);
+        if (mult < 1 || mult > 10000000) { err = STR("split: inventory multiplier out of range"); return false; }   // raw RE read: refuse garbage
         const int64_t cap = ms == 1 ? 1 : static_cast<int64_t>(ms) * mult;
+        if (cap > INT32_MAX) { err = STR("split: stack cap out of range"); return false; }
         if (n > cap) { err = STR("split: amount above the stack cap"); return false; }
 
         SplitStack t{ it, n, 0 };
@@ -329,7 +331,18 @@ namespace
 
         t = SplitStack{ it, n, 0 };
         const int left = reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, dst);
-        if (left > 0) { t = SplitStack{ it, left, 0 }; reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, src); }
+        if (left > 0)
+        {
+            t = SplitStack{ it, left, 0 };
+            reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, src);
+            void* bi = nullptr;
+            int32_t ba = 0;
+            if (!split_now(inv, src, bi, ba, err)) return false;
+            const int32_t back = cnt - (n - left);   // src must hold the original minus the part dst accepted
+            const int32_t have = bi ? ba : 0;
+            if (have < back) { err = STR("split: items lost (") + std::to_wstring(back - have) + STR(")"); return false; }
+            if (bi != it || have != back) { err = STR("split: put back changed the source slot"); return false; }
+        }
         void* di = nullptr;
         int32_t da = 0;
         if (!split_now(inv, dst, di, da, err)) return false;
