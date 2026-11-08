@@ -169,11 +169,9 @@ function ui.onClick(btn, fn)
     hookOff = nil   -- UI in use again: keep the hook registered
     -- crash 2026-11-08 (UE4SS XMulticastDelegateProperty Add -> FWeakObjectPtr access violation): never bind a button the engine no longer knows
     local okv, valid = pcall(function() return btn ~= nil and btn:IsValid() end)
-    if not okv or not valid then print("[MSCore] ui.onClick: skipped an invalid button
-") return end
+    if not okv or not valid then print("[MSCore] ui.onClick: skipped an invalid button\n") return end
     local name = btn:GetFullName()
-    print("[MSCore] ui.onClick bind " .. tostring(name) .. "
-")   -- probe: the last line before a crash names the button
+    print("[MSCore] ui.onClick bind " .. tostring(name) .. "\n")   -- probe: the last line before a crash names the button
     BTN[name] = fn
     btn.OnClicked:Add(btn, FName("ForceLayoutPrepass"))
 end
