@@ -11,7 +11,7 @@ nav_order: 6
 - **Not a game command.** It edits the inventory locally, so co-op clients do not see it. Co-op desync is accepted for this version.
 - **wbp:** while a WBP window is open the camera look is blocked (controller AllowCharacterInput(false) / CharacterInputEnabled); close restores the previous value. Window code: mscore_wbp.lua.
 - **factory:** Dock_2 floor is 30x30; a footprint across touching floors validates against the union of the padded floors.
-- **Unverified in game:** not run in game yet. Lua tests: ``mods\MSCore	ests	est_factory.lua`` (inv_split native missing / present).
+- **Unverified in game:** not run in game yet. Lua tests: ``mods\MSCore\tests\test_factory.lua`` (inv_split native missing / present).
 - Native API stays 4, Lua API stays 3.
 
 ## 0.7.5 - Blueprint Unit refund / charge redirect
