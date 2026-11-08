@@ -20,7 +20,7 @@ MSCore.require(1)
 |---|---|
 | `MSCore.require(n)` | Errors when the installed Lua API is older than `n`. |
 | `MSCore.logger(tag)` | Returns `log, try`. `try(label, f, ...)` returns `ok, result`. |
-| `MSCore.api`, `MSCore.version` | `3` and `"0.8.0"`. |
+| `MSCore.api`, `MSCore.version` | `3` and `"0.8.1"`. |
 | `MSCore.native` | Native wrappers, or `nil` when the DLL is not loaded. |
 
 ## Game objects

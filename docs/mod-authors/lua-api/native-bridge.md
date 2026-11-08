@@ -13,7 +13,7 @@ nav_order: 8
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `native.version` | `()` | string | The native version (`"0.8.0"`). |
+| `native.version` | `()` | string | The native version (`"0.8.1"`). |
 | `native.alive` | `(obj)` | boolean | `false` for `nil`, numbers and dead objects. |
 | `native.send_cmd` | `(receiver, cmd)` | `ok, err` | Sends a command. |
 | `native.view_send` | `(cid, yawDeg, pitchDeg)` | `ok, err` | Sets the view offset. |
@@ -42,7 +42,7 @@ nav_order: 8
 | `native.pending` | `(station, apply, reset, primary, player, editing)` | `ok, err` | 0.8.0: PendingBlueprintInput (type id `33`). `apply` and `reset` are `0` or `1`, exactly one set. `apply` needs `primary` and `player` > 0. `editing` is a block id or `0`. Prefer `factory_native.pending`. |
 | `native.read_block_class` | `(classPath)` | `ok, text` | 0.8.0: class defaults of one BuildingBlockObject class (`K` line, then one `I` line per cost item). Prefer `factory_native.read_block_class`. |
 | `native.refund_enable` | `(bool)` | string | Probe log switch: `true` validates, installs the hooks and turns the `PROBE ...` log lines on; `false` turns them off. Default off (also on when `Mods/MSCore/refund_probe.txt` exists). Returns the status. |
-| `native.redirect_enable` | `(bool)` | string | 0.7.5: Blueprint Unit refund / build-charge redirect. **On by default** at MSCore start when the load validation passes; `false` (or the file `Mods/MSCore/refund_redirect_off.txt`) turns it off. Returns the status. |
+| `native.redirect_enable` | `(bool)` | string | 0.7.5 (default OFF since 0.8.1): Blueprint Unit refund / build-charge redirect. Off at MSCore start; `true` turns it on, `false` turns it off. Blueprint Unit calls `true` only while it builds. At start it is on only with the file `Mods/MSCore/refund_redirect_on.txt` (and not `refund_redirect_off.txt`). Returns the status. |
 | `native.redirect_status` / `native.refund_status` | `()` | string | `off`, `on: redirect=on probe_log=off groups=yes` or `COMPAT refund failed: <why>`. |
 | `native.redirect_stats` | `()` | string | `refund=<n> refund_fallback=<n> charge=<n> skipped=<n> group_made=<n> group_fail=<n> errors=<n>`. |
 | `native.refund_log` | `()` | string | Last 200 log lines (`REDIRECT refund ...`, `REDIRECT charge ...`, `COMPAT ...`, and `PROBE ...` when the probe is on). |
