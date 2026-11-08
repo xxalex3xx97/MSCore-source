@@ -188,7 +188,7 @@ namespace
         return send_typed(0, cmd, kTypeBuild, err);
     }
 
-    // WHAT: AddBlockInput for one station block: Class = the BuildingBlockObject class at class_path, AttachTargetID = station, GridTransform. Receiver 0, type id 30.
+    // WHAT: AddBlockInput for one station block: Class = the BuildingBlockObject class at class_path, GridTransform. Receiver = the station, type id 30 (no AttachTargetID field: BPProbe 2026-11-06).
     // WHY: station blocks (BPU 0.8.0). Same field route as build_place. class_path is the full class path from a B line (read_station).
     bool add_block(int station, const std::string& class_path, int x, int y, int h, int rot, std::wstring& err)
     {
@@ -203,16 +203,15 @@ namespace
         UStruct* st = cmd->GetClassPrivate();
         auto need = [&](bool ok, const TCHAR* field) { if (!ok) err = STR("AddBlockInput field missing: ") + std::wstring(field); return ok; };
         if (!need(set_class_prop(cmd, STR("Class"), c), STR("Class"))
-            || !need(set_num_prop(cmd, STR("AttachTargetID"), station), STR("AttachTargetID"))
             || !need(wr_path(st, base, STR("GridTransform.GridLocation.X"), x), STR("GridTransform.GridLocation.X"))
             || !need(wr_path(st, base, STR("GridTransform.GridLocation.Y"), y), STR("GridTransform.GridLocation.Y"))
             || !need(wr_path(st, base, STR("GridTransform.Height"), h), STR("GridTransform.Height"))
             || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation")))
             return false;
-        return send_typed(0, cmd, kTypeAddBlock, err);
+        return send_typed(station, cmd, kTypeAddBlock, err);   // receiver = the station (BuildingFrame), like the Designer (BPProbe: InReceiverID = frame id)
     }
 
-    // WHAT: RemoveBlockInput for one station block: Class = the BuildingBlockObject class at class_path, AttachTargetID = station, GridTransform. Receiver 0, type id 31.
+    // WHAT: RemoveBlockInput for one station block: Class = the BuildingBlockObject class at class_path, GridTransform. Receiver = the station, type id 31.
     // WHY: station build (BPU): removes a live block that is in the way of a JSON block. Handler drops the first Pending entry matching Class + GridTransform (ID not compared).
     bool remove_block(int station, const std::string& class_path, int x, int y, int h, int rot, std::wstring& err)
     {
@@ -227,16 +226,15 @@ namespace
         UStruct* st = cmd->GetClassPrivate();
         auto need = [&](bool ok, const TCHAR* field) { if (!ok) err = STR("RemoveBlockInput field missing: ") + std::wstring(field); return ok; };
         if (!need(set_class_prop(cmd, STR("Class"), c), STR("Class"))
-            || !need(set_num_prop(cmd, STR("AttachTargetID"), station), STR("AttachTargetID"))
             || !need(wr_path(st, base, STR("GridTransform.GridLocation.X"), x), STR("GridTransform.GridLocation.X"))
             || !need(wr_path(st, base, STR("GridTransform.GridLocation.Y"), y), STR("GridTransform.GridLocation.Y"))
             || !need(wr_path(st, base, STR("GridTransform.Height"), h), STR("GridTransform.Height"))
             || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation")))
             return false;
-        return send_typed(0, cmd, kTypeRemoveBlock, err);
+        return send_typed(station, cmd, kTypeRemoveBlock, err);
     }
 
-    // WHAT: PendingBlueprintInput{bReset, bApply, PrimaryInventoryID, PlayerInventoryID, EditingFromBlockID, AttachTargetID = station}, receiver 0, type id 33.
+    // WHAT: PendingBlueprintInput{bReset, bApply, PrimaryInventoryID, PlayerInventoryID, EditingFromBlockID}, receiver = the station, type id 33.
     // WHY: reset clears the station's pending blueprint, apply commits it (BPU sends reset, add_block each, apply). Apply needs both inventory ids > 0: never send 0 to Pending.
     //      editing 0 = no block being edited.
     bool pending(int station, bool apply, bool reset, int primary, int player, int editing, std::wstring& err)
@@ -249,9 +247,9 @@ namespace
         if (!cmd) return false;
         if (!set_bool_prop(cmd, STR("bApply"), apply) || !set_bool_prop(cmd, STR("bReset"), reset)
             || !set_num_prop(cmd, STR("PrimaryInventoryID"), primary) || !set_num_prop(cmd, STR("PlayerInventoryID"), player)
-            || !set_num_prop(cmd, STR("EditingFromBlockID"), editing) || !set_num_prop(cmd, STR("AttachTargetID"), station))
+            || !set_num_prop(cmd, STR("EditingFromBlockID"), editing))
         { err = STR("PendingBlueprintInput fields missing"); return false; }
-        return send_typed(0, cmd, kTypePending, err);
+        return send_typed(station, cmd, kTypePending, err);
     }
 
     // WHAT: DisassembleInput{TargetId = target, bMassDisassemble = mass != 0}, receiver 0.
