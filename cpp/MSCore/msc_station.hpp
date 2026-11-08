@@ -270,7 +270,8 @@ namespace
         auto* ta = reinterpret_cast<TArray<uint8_t>*>(reinterpret_cast<uint8_t*>(inv) + SPLIT_SLOTS_OFF);
         data = ta->GetData();
         num = ta->Num();
-        return data != nullptr;
+        if (!data) { err = STR("inventory has no slot array"); return false; }
+        return true;
     }
 
     // WHAT: item and amount of one slot, read fresh from the Inventory (the array may move after a game call).
@@ -330,24 +331,25 @@ namespace
         if (want == 0 ? ni != nullptr : (ni != it || na != want)) { err = STR("split: source slot did not change"); return false; }
 
         t = SplitStack{ it, n, 0 };
-        const int left = reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, dst);
-        if (left > 0)
-        {
-            t = SplitStack{ it, left, 0 };
-            reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, src);
-            void* bi = nullptr;
-            int32_t ba = 0;
-            if (!split_now(inv, src, bi, ba, err)) return false;
-            const int32_t back = cnt - (n - left);   // src must hold the original minus the part dst accepted
-            const int32_t have = bi ? ba : 0;
-            if (have < back) { err = STR("split: items lost (") + std::to_wstring(back - have) + STR(")"); return false; }
-            if (bi != it || have != back) { err = STR("split: put back changed the source slot"); return false; }
-        }
+        reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, dst);   // return value ignored: dst is re-read
         void* di = nullptr;
         int32_t da = 0;
         if (!split_now(inv, dst, di, da, err)) return false;
-        if (di != it || da != n - left) { err = STR("split: destination slot did not change"); return false; }
-        if (left > 0) { err = STR("split: destination full, put back"); return false; }
-        return true;
+        if ((di && di != it) || (di && da > n)) { err = STR("split: destination slot did not change"); return false; }
+        const int32_t accepted = di ? da : 0;   // what dst really holds now
+        const int32_t left = n - accepted;
+        if (left == 0) return true;
+        // dst did not take all n: put the rest back into src, then verify src (never silent loss)
+        t = SplitStack{ it, left, 0 };
+        reinterpret_cast<SplitAtSlotFn>(add)(inv, &t, src);
+        void* bi = nullptr;
+        int32_t ba = 0;
+        if (!split_now(inv, src, bi, ba, err)) return false;
+        const int32_t back = cnt - accepted;   // src must hold the original minus the part dst accepted
+        const int32_t have = bi ? ba : 0;
+        if (have < back) { err = STR("split: items lost (") + std::to_wstring(back - have) + STR(")"); return false; }
+        if (bi != it || have != back) { err = STR("split: put back changed the source slot"); return false; }
+        err = STR("split: destination full, put back");
+        return false;
     }
 }

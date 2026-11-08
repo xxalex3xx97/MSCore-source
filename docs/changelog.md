@@ -18,6 +18,9 @@ nav_order: 6
   - `inv_split` is a LOCAL edit: co-op desync is accepted for single-player restore. Do not use it in multiplayer.
   - Stale CIE holder: a WBP window destroyed without close (death/load) is dropped from the holder list only on the next open/close. If that controller differs from the one now in use, its CharacterInputEnabled is not restored by this code (fix not in 0.7.6).
   - Dock_2 floor override lives in `scripts/gen_factory_tables.py` (user-verified, kept).
+  - The RemoveAtSlot/AddAtSlot entry-byte check (RVA compare) runs inside the SEH guard: a read fault there is caught and the feature stays off.
+  - The stack multiplier is read raw at Inventory+0xB0 and only range-checked (1 to 10,000,000). It is correct on the verified build; a different exe would need a new check.
+  - `validate_place` padding union intentionally accepts small gaps between padded floors.
 - Native API stays 4, Lua API stays 3.
 
 ## 0.7.5 - Blueprint Unit refund / charge redirect

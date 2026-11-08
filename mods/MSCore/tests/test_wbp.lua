@@ -101,5 +101,20 @@ check("6 fallback property blocks", pc6.CharacterInputEnabled == false)
 M._cie_release(h6, pc6)
 check("6 fallback property restores true", pc6.CharacterInputEnabled == true)
 
+-- (7) same controller arriving as a different wrapper with the same identity: must NOT re-read prev
+reset()
+local pc7 = mkpc(true)
+pc7.GetAddress = function() return 0x1234 end
+local w7 = setmetatable({ GetAddress = function() return 0x1234 end, IsValid = function() return true end,
+    AllowCharacterInput = function(_, b) pc7.CharacterInputEnabled = b end },
+  { __index = function(_, k) if k == "CharacterInputEnabled" then return pc7.CharacterInputEnabled end end })
+local hS7, hN7 = mkh(), mkh()
+M._cie_acquire(hS7, pc7)                 -- prev = true, CIE = false
+hS7.wbp.ok = false                       -- stale holder (destroyed without close)
+M._cie_acquire(hN7, w7)                  -- same identity, other wrapper: prev stays true (re-read would give false)
+check("7 same identity: prev kept", M._cie.prev == true)
+M._cie_release(hN7, w7)
+check("7 same identity: release restores true", pc7.CharacterInputEnabled == true)
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

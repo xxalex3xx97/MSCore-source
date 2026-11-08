@@ -32,16 +32,25 @@ local COST_GREEN = { R = 0.1, G = 0.6, B = 0.2, A = 1 }
 M.Z = 1          -- window Z. Must stay below 2: the game's WBP_CursorItemStack (AddToViewport 2) draws over us during drag.
 M._opens = 0     -- open counter: input is restored on close only if no window opened since
 M._cie = { holders = {}, prev = nil, pc = nil }   -- CharacterInputEnabled block: IA_Mouse look is gated on it (rea-window-camera-drag.md)
+-- stable identity of a controller: the same UObject can arrive as different Lua wrappers (table/userdata)
+local function cie_id(p)
+  local s, v = pcall(function() return p:GetAddress() end)
+  if s and v ~= nil then return tostring(v) end
+  s, v = pcall(function() return p:GetFullName() end)
+  if s and v ~= nil then return tostring(v) end
+  return tostring(p)
+end
 function M._cie_acquire(h, p)
   local c = M._cie
+  local id = cie_id(p)
   local alive = 0
   for k in pairs(c.holders) do if live(k.wbp) then alive = alive + 1 else c.holders[k] = nil end end   -- window destroyed without close (death/load): drop it
   -- re-read prev only for a new controller: a dead holder may have left CIE=false, re-reading would lose the real prev (stays frozen)
-  if alive == 0 and c.pc ~= p then
+  if alive == 0 and c.pc ~= id then
     local s, v = pcall(function() return p.CharacterInputEnabled end)
     if s and type(v) == "boolean" then c.prev = v else c.prev = nil end   -- nil = unreadable (unknown): release restores true
   end
-  c.pc = p
+  c.pc = id
   c.holders[h] = true
   if not pcall(function() p:AllowCharacterInput(false) end) then try("CIE prop", function() p.CharacterInputEnabled = false end) end
 end
