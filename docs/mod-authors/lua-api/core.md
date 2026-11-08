@@ -14,7 +14,7 @@ Top-level `MSCore` fields, `MSCore.require` and `MSCore.logger`.
 | Field | Type | Notes |
 |---|---|---|
 | `MSCore.api` | number | `3` |
-| `MSCore.version` | string | `"0.7.6"` |
+| `MSCore.version` | string | `"0.8.0"` |
 | `MSCore.verified_build` | number | `149200896`, the game exe size MSCore was verified with. |
 | `MSCore.native` | table or `nil` | Wrappers for the `MSCoreNative_*` globals. `nil` when the DLL is not loaded. |
 

@@ -5,6 +5,20 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.0 - Station block natives
+- **New (Lua only, no C export):** `MSCoreNative_add_block(station, classPath, gx, gy, h, rot)` (returns `ok, err`, AddBlockInput, type id `30`), `MSCoreNative_remove_block(...)` (same args, RemoveBlockInput, type id `31`), `MSCoreNative_pending(station, apply, reset, primaryInvId, playerInvId, editingId)` (PendingBlueprintInput, type id `33`; `apply` and `reset` are `0` or `1`, exactly one of them set; `apply` needs both inventory ids > 0), `MSCoreNative_read_block_class(classPath)` (returns `true, text` or `false, err`). Wrappers: `MSCore.factory_native.add_block`, `remove_block`, `pending`, `read_block_class`. `read_block_class` is parsed to `{station, ship, machines, min, max, cost}`.
+- **How:** the commands go to the station as receiver. These three have no AttachTargetID field (BPProbe 2026-11-06). `remove_block` removes the first pending entry that matches class, X, Y, Height and Rotation (the block ID is not compared). Class lookup is type-filtered (UClass) and `Default__` objects are refused.
+- **Flow (Blueprint Unit Station Build):** one apply: `pending(reset)`, `remove_block` for each block in the way, `add_block` for each JSON block, then `pending(apply)`. The game nets the costs: removes refund, adds charge, Primary (the unit inventory first).
+- **read_station:** `B` lines have an optional 7th column with the full class path. The 6-column form still parses (`path` is `nil`).
+- **BlockBounds (probe 2026-11-08):** the bounds from `read_block_class` are raw, divide by `65536`. They are 4x the grid unit horizontally and 2x vertically (Station_01 spans 16, but its blocks sit 4 apart). The game keeps each box slightly under its size, so inclusive overlap checks do not touch.
+- **Fixed:** `ui.clearClicks` / `ui.onClick`. The hook removal is deferred 100 ms and a reopen cancels it (generation counter). Invalid buttons are skipped. This was the dev menu crash when the inventory panel was reopened.
+- **Verified in game (2026-11-08):** a 1x1 station placed where a Shipyard side stood, through Blueprint Unit (the side was removed first).
+- **Unverified in game:** the rest of the station build flow and the 0.8.0 `read_station` / `read_block_class` text. The dev menu crash fix is not confirmed yet. Lua tests: `mods\MSCore\tests\test_factory.lua` (`parse_block_class`, and the add_block / pending / remove_block / read_block_class wrappers with fake natives). The Lua tests cannot call the DLL.
+- **Known limits:**
+  - `pending` refuses `apply` with an inventory id of `0` or less. Never send `0` to Pending.
+  - Blocks only. Machines are not part of this flow.
+- Native API is 5 (`MSCore_api()` returns `5`, the new natives are Lua only). Lua API stays 3. Module version `0.8.0`.
+
 ## 0.7.6 - Local inventory split, camera block, Dock_2 floor
 - **New:** `MSCore_inv_split(inv_id, src_slot, amount, dst_slot, err, errlen)` (C export) and `MSCoreNative_inv_split(invId, src, amount, dst)` (Lua, returns `true` or `false, err`), `MSCore.native.inv_split`, `MSCore.factory_native.inv_split`. Moves `amount` items from slot `src` to the EMPTY slot `dst` of the same Inventory. Slots are 0-based. `amount` must be at most the stack cap (`MaxStackSize`, or 1 when `MaxStackSize` is 1, times the inventory multiplier). If the destination refuses, the items go back to the source.
 - **How:** the game's `RemoveAtSlot` and `AddAtSlot` are called by RVA (0x421c730, 0x4216060). The 40 entry bytes of each are compared first; any difference turns the feature off (`native inv_split` error text). The source and destination are re-read after each call (the remove return value is not trusted).
