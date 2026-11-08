@@ -597,10 +597,15 @@ namespace
     // ---------------- factory natives (API 4): args consumed in order, see arg_int / arg_obj ----------------
 
     // next arg as bytes: "" for nil or a non-string. Always consumes the arg.
+    // WHY: lua.get_string() goes through lua_tostring + strlen, so binary data stopped at the first NUL. Copy by length.
     std::string arg_bytes(const LuaMadeSimple::Lua& lua)
     {
         if (!lua.is_string(1)) { lua.discard_value(1); return std::string(); }
-        return std::string(lua.get_string(1));
+        size_t n = 0;
+        const char* p = lua_tolstring(lua.get_lua_state(), 1, &n);
+        std::string s(p ? p : "", n);
+        lua.discard_value(1);
+        return s;
     }
 
     // Lua: send_typed(receiver, cmd UObject, typeId) -> ok, err
