@@ -138,11 +138,24 @@ local function sf(path) local o = StaticFindObject(path) if o and o:IsValid() th
 function ui.mk(cls, outer) return StaticConstructObject(sf(R.umg .. cls), outer, 0, 0, 0, nil, false, false, nil) end
 function ui.setText(tb, s) tb:SetText(FText(s)) end
 
-local BTN, hookIds = {}, nil
--- WHY: the click hook fires for EVERY widget in the game; callers that drop their UI call ui.clearClicks() so the button map does not grow and the hook is removed (re-registered on the next onClick).
+local BTN, hookIds, hookOff = {}, nil, nil
+-- WHY: the click hook fires for EVERY widget in the game; callers that drop their UI call ui.clearClicks() so the button map does not grow and the hook is removed.
+-- The removal is deferred (100 ms timer, then the game-thread queue) and a reopen cancels it: unregistering right away while the hook can still be running, then
+-- re-registering on the next open, crashed the game (UE4SS lua_getiuservalue access violation in a later tick). Same pattern as MiningUnitUI.
+local function hookRemove()
+    if hookOff and hookIds then
+        local ids = hookIds
+        hookIds, hookOff = nil, nil
+        pcall(UnregisterHook, R.clickHook, ids[1], ids[2])
+    end
+    hookOff = nil
+end
 function ui.clearClicks()
     BTN = {}
-    if hookIds then pcall(UnregisterHook, R.clickHook, hookIds[1], hookIds[2]); hookIds = nil end
+    if hookIds and not hookOff then
+        hookOff = true
+        pcall(ExecuteWithDelay, 100, function() pcall(ExecuteInGameThread, hookRemove) end)
+    end
 end
 function ui.onClick(btn, fn)
     if not hookIds then
@@ -153,6 +166,7 @@ function ui.onClick(btn, fn)
         end)
         if s then hookIds = { pre, post } end
     end
+    hookOff = nil   -- UI in use again: keep the hook registered
     BTN[btn:GetFullName()] = fn
     btn.OnClicked:Add(btn, FName("ForceLayoutPrepass"))
 end
