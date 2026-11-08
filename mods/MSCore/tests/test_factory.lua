@@ -119,6 +119,18 @@ check("parse_station: machine 2 empty cfg", sm[2].cfg == "")
 check("parse_station: machine 3 cfg nil", sm[3].cfg == nil)
 local eb, em = F.parse_station("")
 check("parse_station: empty text gives two empty tables", #eb == 0 and #em == 0)
+-- 0.8.0: 7th column = class path (6-column lines still parse, path nil)
+local sb7 = F.parse_station("B\tBPO_Station_01\t0\t0\t0\t0\t/Game/BPO_Station_01.BPO_Station_01_C\nB\tBPO_Old\t1\t1\t0\t2\n")
+check("parse_station: 7th column is the class path", sb7[1].path == "/Game/BPO_Station_01.BPO_Station_01_C")
+check("parse_station: 6-column block has no path", #sb7 == 2 and sb7[2].path == nil and sb7[2].rot == 2)
+
+-- ===== parse_block_class (0.8.0 native read_block_class text)
+local bi = F.parse_block_class("K\t1\t0\t2\t-524088\t-524088\t-262144\t524188\t524088\t655360\nI\tDAT_Iron\t5\nI\tDAT_Gear\t2\n")
+check("parse_block_class: flags and machine count", bi.station == true and bi.ship == false and bi.machines == 2)
+check("parse_block_class: bounds min and max", bi.min.x == -524088 and bi.min.z == -262144 and bi.max.z == 655360)
+check("parse_block_class: cost list", #bi.cost == 2 and bi.cost[1].item == "DAT_Iron" and bi.cost[2].amount == 2)
+local bn, bnerr = F.parse_block_class("")
+check("parse_block_class: empty text gives nil, err", bn == nil and bnerr ~= nil)
 
 -- ===== parse_inventory (native read_inventory text)
 local inv = F.parse_inventory("S\tHullPlate\t482\t100\nS\t\t0\t1\nS\tMagneticCoils\t50\t20\n")
@@ -199,6 +211,38 @@ do
     _G.MSCoreNative_inv_split = nil
     setmetatable(_G, nil)
     if not sec_ok then check("inv_split section ran without error: " .. tostring(sec_err), false) end
+end
+
+-- ===== factory_native add_block / pending / read_block_class (0.8.0): fake natives, same stub setup as inv_split
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local a1, w1 = MSC.factory_native.add_block(1, "/Game/X.X_C", 0, 0, 0, 0)
+        check("add_block: missing native gives nil, 'missing' text", a1 == nil and tostring(w1):find("missing", 1, true) ~= nil)
+        _G.MSCoreNative_add_block = function() return false, "refused" end
+        _G.MSCoreNative_pending = function() return true end
+        _G.MSCoreNative_read_block_class = function() return true, "K\t1\t0\t0\t0\t0\t0\t0\t0\t0\n" end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local a2, w2 = MSC2.factory_native.add_block(1, "/Game/X.X_C", 0, 0, 0, 0)
+        check("add_block: native refusal is passed through", a2 == nil and w2 == "refused")
+        local seen
+        _G.MSCoreNative_pending = function(...) seen = { ... } return true end
+        local p1 = MSC2.factory_native.pending(1, true, false, 3, 4, 0)
+        check("pending: booleans reach the native as 1/0", p1 == true and seen[2] == 1 and seen[3] == 0 and seen[4] == 3)
+        local bi2 = MSC2.factory_native.read_block_class("/Game/X.X_C")
+        check("read_block_class: native text is parsed", bi2 ~= nil and bi2.station == true and bi2.machines == 0)
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_add_block = nil
+    _G.MSCoreNative_pending = nil
+    _G.MSCoreNative_read_block_class = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("add_block section ran without error: " .. tostring(sec_err), false) end
 end
 
 print(string.format("%d passed, %d failed", pass, fail))

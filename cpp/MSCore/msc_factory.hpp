@@ -1,6 +1,6 @@
 // FILE: cpp/MSCore/msc_factory.hpp
 // WHAT: factory blueprint commands (API 4): typed send, Buildable lookup by name, BuildInput (place), DisassembleInput, SetRecipeInput,
-//       MachinePortInput (port toggle), InventoryInput (move between inventories).
+//       MachinePortInput (port toggle), InventoryInput (move between inventories), AddBlockInput + PendingBlueprintInput (API 5, station build).
 // WHY: ported from MiningBenchMod mb_bpprobe.hpp (bp_send_fn, bp_setpath, bp_place_fn), proven in game. Fields are set by property name.
 //      Offsets and type ids: vault main-sequence rea-placement.md, rea-machine-config.md s4/s5.
 // DEPENDS ON: msc_cmd.hpp (alive, seh_run, first_of, add_input, kTypeIdOffset), msc_ue.hpp (widen, set_bool_prop).
@@ -17,6 +17,8 @@ namespace
     // type ids written at cmd+0x28 (flush drops a command whose id is 0)
     constexpr int32_t kTypeBuild = 0x2e;        // BuildInput
     constexpr int32_t kTypeDisassemble = 0x2f;  // DisassembleInput
+    constexpr int32_t kTypeAddBlock = 30;       // AddBlockInput (API 5)
+    constexpr int32_t kTypePending = 33;        // PendingBlueprintInput (API 5)
     constexpr int32_t kTypeInventory = 12;      // InventoryInput
     constexpr int32_t kTypePort = 17;           // MachinePortInput
     constexpr int32_t kTypeSetRecipe = 20;      // SetRecipeInput
@@ -66,6 +68,16 @@ namespace
         auto* pv = o->GetValuePtrByPropertyNameInChain<UObject*>(name);
         if (!pv) return false;
         *pv = v;
+        return true;
+    }
+
+    // WHAT: writes a class pointer into ClassProperty (or ObjectProperty) `name` of obj. false when missing or another type.
+    bool set_class_prop(UObject* o, const TCHAR* name, UClass* c)
+    {
+        if (set_obj_prop(o, name, c)) return true;
+        FProperty* p = o ? o->GetPropertyByNameInChain(name) : nullptr;
+        if (!p || !CastField<FClassProperty>(p)) return false;
+        *o->GetValuePtrByPropertyNameInChain<UObject*>(name) = c;
         return true;
     }
 
@@ -173,6 +185,47 @@ namespace
             || !need(set_bytes_prop(cmd, STR("MachineConfigData"), cfg), STR("MachineConfigData")))
             return false;
         return send_typed(0, cmd, kTypeBuild, err);
+    }
+
+    // WHAT: AddBlockInput for one station block: Class = the BuildingBlockObject class at class_path, AttachTargetID = station, GridTransform. Receiver 0, type id 30.
+    // WHY: station blocks (BPU 0.8.0). Same field route as build_place. class_path is the full class path from a B line (read_station).
+    bool add_block(int station, const std::string& class_path, int x, int y, int h, int rot, std::wstring& err)
+    {
+        if (station <= 0) { err = STR("station id must be > 0"); return false; }
+        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, widen(class_path).c_str());
+        UClass* bbo = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.BuildingBlockObject"));
+        if (!alive(c) || !alive(bbo) || c->GetName().rfind(STR("Default__"), 0) == 0 || !c->IsChildOf(bbo))
+        { err = STR("not a BuildingBlockObject class: ") + widen(class_path); return false; }
+        UObject* cmd = make_input(STR("AddBlockInput"), err);
+        if (!cmd) return false;
+        uint8_t* base = reinterpret_cast<uint8_t*>(cmd);
+        UStruct* st = cmd->GetClassPrivate();
+        auto need = [&](bool ok, const TCHAR* field) { if (!ok) err = STR("AddBlockInput field missing: ") + std::wstring(field); return ok; };
+        if (!need(set_class_prop(cmd, STR("Class"), c), STR("Class"))
+            || !need(set_num_prop(cmd, STR("AttachTargetID"), station), STR("AttachTargetID"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.X"), x), STR("GridTransform.GridLocation.X"))
+            || !need(wr_path(st, base, STR("GridTransform.GridLocation.Y"), y), STR("GridTransform.GridLocation.Y"))
+            || !need(wr_path(st, base, STR("GridTransform.Height"), h), STR("GridTransform.Height"))
+            || !need(wr_path(st, base, STR("GridTransform.GridRotation"), rot), STR("GridTransform.GridRotation")))
+            return false;
+        return send_typed(0, cmd, kTypeAddBlock, err);
+    }
+
+    // WHAT: PendingBlueprintInput{bReset, bApply, PrimaryInventoryID, PlayerInventoryID, EditingFromBlockID, AttachTargetID = station}, receiver 0, type id 33.
+    // WHY: reset clears the station's pending blueprint, apply commits it (BPU sends reset, add_block each, apply). Apply needs both inventory ids > 0: never send 0 to Pending.
+    //      editing 0 = no block being edited.
+    bool pending(int station, bool apply, bool reset, int primary, int player, int editing, std::wstring& err)
+    {
+        if (station <= 0) { err = STR("station id must be > 0"); return false; }
+        if (editing < 0) { err = STR("editing block id must be >= 0"); return false; }
+        if (apply && (primary <= 0 || player <= 0)) { err = STR("apply needs primary and player inventory ids > 0"); return false; }
+        UObject* cmd = make_input(STR("PendingBlueprintInput"), err);
+        if (!cmd) return false;
+        if (!set_bool_prop(cmd, STR("bApply"), apply) || !set_bool_prop(cmd, STR("bReset"), reset)
+            || !set_num_prop(cmd, STR("PrimaryInventoryID"), primary) || !set_num_prop(cmd, STR("PlayerInventoryID"), player)
+            || !set_num_prop(cmd, STR("EditingFromBlockID"), editing) || !set_num_prop(cmd, STR("AttachTargetID"), station))
+        { err = STR("PendingBlueprintInput fields missing"); return false; }
+        return send_typed(0, cmd, kTypePending, err);
     }
 
     // WHAT: DisassembleInput{TargetId = target, bMassDisassemble = mass != 0}, receiver 0.

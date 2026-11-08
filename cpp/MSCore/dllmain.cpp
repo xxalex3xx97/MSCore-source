@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.6";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.0";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -670,6 +670,64 @@ namespace
         return lua_result(lua, ok, err);
     }
 
+    // Lua: add_block(station, classPath, x, y, h, rot) -> ok, err
+    int lua_add_block(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!lua.is_number(1) || lua_type(lua.get_lua_state(), 2) != LUA_TSTRING || !lua.is_number(3) || !lua.is_number(4) || !lua.is_number(5) || !lua.is_number(6))
+                err = STR("add_block needs station, classPath, x, y, h, rot");
+            else
+            {
+                const int station = arg_int(lua);
+                const std::string path = arg_bytes(lua);
+                const int x = arg_int(lua), y = arg_int(lua), h = arg_int(lua), rot = arg_int(lua);
+                ok = factory_guard([&] { return add_block(station, path, x, y, h, rot, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: pending(station, apply 0|1, reset 0|1, primary, player, editing) -> ok, err
+    int lua_pending(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try
+        {
+            if (!nums(lua, 6)) err = STR("pending needs station, apply, reset, primary, player, editing numbers");
+            else
+            {
+                const int station = arg_int(lua);
+                const bool apply = arg_int(lua) != 0;
+                const bool reset = arg_int(lua) != 0;
+                const int primary = arg_int(lua), player = arg_int(lua), editing = arg_int(lua);
+                ok = factory_guard([&] { return pending(station, apply, reset, primary, player, editing, err); }, err);
+            }
+        }
+        catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: read_block_class(classPath) -> true, text | false, err   (text format: msc_station.hpp)
+    int lua_read_block_class(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        std::string out;
+        try {
+            const std::string path = arg_bytes(lua);
+            if (path.empty()) err = STR("read_block_class needs a class path string");
+            else ok = factory_guard([&] { return read_block_class(path, out, err); }, err);
+        } catch (...) { ok = false; err = STR("exception"); }
+        lua.set_bool(ok);
+        if (ok) lua.set_string(out); else lua.set_string(narrow(err));
+        return 2;
+    }
+
     // Lua: disassemble(targetId, mass) -> ok, err
     int lua_disassemble(const LuaMadeSimple::Lua& lua)
     {
@@ -986,6 +1044,9 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_send_typed", lua_send_typed);
     lua.register_function("MSCoreNative_find_buildable", lua_find_buildable);
     lua.register_function("MSCoreNative_build_place", lua_build_place);
+    lua.register_function("MSCoreNative_add_block", lua_add_block);
+    lua.register_function("MSCoreNative_pending", lua_pending);
+    lua.register_function("MSCoreNative_read_block_class", lua_read_block_class);
     lua.register_function("MSCoreNative_disassemble", lua_disassemble);
     lua.register_function("MSCoreNative_set_recipe", lua_set_recipe);
     lua.register_function("MSCoreNative_port_toggle", lua_port_toggle);
@@ -1009,7 +1070,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.6");
+        ModVersion = STR("0.8.0");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1044,8 +1105,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below.
-    MSCORE_API int MSCore_api() { return 4; }
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only).
+    MSCORE_API int MSCore_api() { return 5; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
