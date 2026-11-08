@@ -5,6 +5,7 @@
 --      M.cost_row(host, item, need, have, opts) -> WBP_ItemAmount row | nil   (opts.refund, opts.pc)
 --      M.fmt_int(n) -> "1,595"; M.geometry_log(widget); M.Z; M.install(MSCore) -> MSCore.wbp = M
 -- Call open / inventory_grid / cost_row on the game thread (ExecuteInGameThread). Every game call goes through pcall.
+-- Camera: open sets controller CharacterInputEnabled=false (AllowCharacterInput), close restores it only if it was true.
 -- Window rules (proven in BlueprintUnitUI): Z below 2 (WBP_CursorItemStack draws held items at Z 2), GameAndUIEx input
 -- (UIOnly breaks PC:IsInputKeyDown(Shift) = shift-click quick move), sizing lives in the WBP (Lua size calls are ignored).
 
@@ -16,6 +17,7 @@ local function nm(o) if not ok(o) then return "?" end local s, v = pcall(functio
 local function rd(o, p) local s, v = pcall(function() return o[p] end) if s then return v end return nil end
 local function try(tag, f, ...) local s, r = pcall(f, ...) if not s then L("FAIL " .. tag .. ": " .. tostring(r)) end return s end
 local function inVp(o) local s, v = pcall(function() return o:IsInViewport() end) return s and v == true end
+local function live(o) if o == nil then return false end local s, v = pcall(function() return o:IsValid() end) return s and v == true end   -- no userdata check (fakes in tests)
 local function guard(tag, f) return function(...) local s, r = pcall(f, ...) if not s then L(tag .. " FAIL: " .. tostring(r)) return nil end return r end end
 
 local LIB = "/Script/UMG.Default__WidgetBlueprintLibrary"
@@ -29,6 +31,39 @@ local COST_GREEN = { R = 0.1, G = 0.6, B = 0.2, A = 1 }
 
 M.Z = 1          -- window Z. Must stay below 2: the game's WBP_CursorItemStack (AddToViewport 2) draws over us during drag.
 M._opens = 0     -- open counter: input is restored on close only if no window opened since
+M._cie = { holders = {}, prev = nil, pc = nil }   -- CharacterInputEnabled block: IA_Mouse look is gated on it (rea-window-camera-drag.md)
+-- stable identity of a controller: the same UObject can arrive as different Lua wrappers (table/userdata)
+local function cie_id(p)
+  local s, v = pcall(function() return p:GetAddress() end)
+  if s and v ~= nil then return tostring(v) end
+  s, v = pcall(function() return p:GetFullName() end)
+  if s and v ~= nil then return tostring(v) end
+  return tostring(p)
+end
+function M._cie_acquire(h, p)
+  local c = M._cie
+  local id = cie_id(p)
+  local alive = 0
+  for k in pairs(c.holders) do if live(k.wbp) then alive = alive + 1 else c.holders[k] = nil end end   -- window destroyed without close (death/load): drop it
+  -- re-read prev only for a new controller: a dead holder may have left CIE=false, re-reading would lose the real prev (stays frozen)
+  if alive == 0 and c.pc ~= id then
+    local s, v = pcall(function() return p.CharacterInputEnabled end)
+    if s and type(v) == "boolean" then c.prev = v else c.prev = nil end   -- nil = unreadable (unknown): release restores true
+  end
+  c.pc = id
+  c.holders[h] = true
+  if not pcall(function() p:AllowCharacterInput(false) end) then try("CIE prop", function() p.CharacterInputEnabled = false end) end
+end
+function M._cie_release(h, p)
+  local c = M._cie
+  if not c.holders[h] then return end
+  c.holders[h] = nil
+  for k in pairs(c.holders) do if live(k.wbp) then return end c.holders[k] = nil end   -- another live window still open: keep blocked
+  if c.prev ~= false and live(p) then   -- restore unless the value was read as false (unknown = restore)
+    if not pcall(function() p:AllowCharacterInput(true) end) then try("CIE prop restore", function() p.CharacterInputEnabled = true end) end
+  end
+  c.prev, c.pc = nil, nil
+end
 
 -- AssetRegistryHelpers fallback for LoadAsset-gated paths (FAssetData table). Game thread only.
 local ARH
@@ -97,6 +132,7 @@ local function open_impl(spec, owner)
   try("user focus", function() wbp:SetUserFocus(p) end)
   try("look ignore", function() p:SetIgnoreLookInput(true) end)
   try("move ignore", function() p:SetIgnoreMoveInput(true) end)
+  M._cie_acquire(h, p)
   M._opens = M._opens + 1
   L("open " .. nm(wbp) .. " n=" .. M._opens .. " inVp=" .. tostring(inVp(wbp)))
   return h
@@ -112,6 +148,7 @@ function M.close(h)
     -- MANDATORY ORDER: grid cleanup (removes delegates) first, then RemoveFromParent, then input restore
     for _, g in ipairs(grids) do if ok(g) then pcall(function() g:CleanupInventory() end) end end
     if ok(wbp) then try("RemoveFromParent", function() wbp:RemoveFromParent() end) end
+    M._cie_release(h, p)
     if ok(p) and ep == M._opens then   -- no window opened since: restore input
       try("look unignore", function() p:SetIgnoreLookInput(false) end)
       try("move unignore", function() p:SetIgnoreMoveInput(false) end)

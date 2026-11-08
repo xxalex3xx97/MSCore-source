@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.7.5";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.7.6";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -597,10 +597,16 @@ namespace
     // ---------------- factory natives (API 4): args consumed in order, see arg_int / arg_obj ----------------
 
     // next arg as bytes: "" for nil or a non-string. Always consumes the arg.
+    // WHY: lua.get_string() goes through lua_tostring + strlen, so binary data stopped at the first NUL. Copy by length.
     std::string arg_bytes(const LuaMadeSimple::Lua& lua)
     {
-        if (!lua.is_string(1)) { lua.discard_value(1); return std::string(); }
-        return std::string(lua.get_string(1));
+        // lua_type, not lua_tolstring alone: a number would be converted in place and accepted as bytes
+        if (lua_type(lua.get_lua_state(), 1) != LUA_TSTRING) { lua.discard_value(1); return std::string(); }
+        size_t n = 0;
+        const char* p = lua_tolstring(lua.get_lua_state(), 1, &n);
+        std::string s(p ? p : "", n);
+        lua.discard_value(1);
+        return s;
     }
 
     // Lua: send_typed(receiver, cmd UObject, typeId) -> ok, err
@@ -770,6 +776,21 @@ namespace
         lua.set_bool(ok);
         if (ok) lua.set_string(out); else lua.set_string(narrow(err));
         return 2;
+    }
+
+    // Lua: inv_split(invId, src, amount, dst) -> true | false, err   (0-based slots, same inventory; msc_station.hpp inv_split)
+    int lua_inv_split(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try {
+            if (!nums(lua, 4)) err = STR("inv_split needs inv id, src, amount, dst numbers");
+            else {
+                const int id = arg_int(lua), src = arg_int(lua), amount = arg_int(lua), dst = arg_int(lua);
+                ok = factory_guard([&] { return inv_split(id, src, amount, dst, err); }, err);
+            }
+        } catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
     }
 
     // Lua: export_ok(name) -> true when this DLL exports name (GetProcAddress). Read-only, for selfcheck.
@@ -971,6 +992,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_inv_move", lua_inv_move);
     lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
+    lua.register_function("MSCoreNative_inv_split", lua_inv_split);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
     lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
     lua.register_function("MSCoreNative_refund_status", lua_refund_status);
@@ -987,7 +1009,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.7.5");
+        ModVersion = STR("0.7.6");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1322,6 +1344,14 @@ extern "C"
     {
         return export_call([&](std::wstring& e) {
             return factory_guard([&] { return inv_move(primary_inv_id, secondary_inv_id, slot, action, e); }, e);
+        }, err, errlen);
+    }
+
+    // 0.7.6: local move of n items between two slots of one Inventory (no game command). Slots 0-based. Not a game command: co-op desync risk.
+    MSCORE_API int MSCore_inv_split(int inv_id, int src_slot, int amount, int dst_slot, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            return factory_guard([&] { return inv_split(inv_id, src_slot, amount, dst_slot, e); }, e);
         }, err, errlen);
     }
 

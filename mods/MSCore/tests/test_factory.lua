@@ -128,11 +128,78 @@ check("parse_inventory: empty slot item is empty string", inv[2].item == "" and 
 check("parse_inventory: slot 3 fields", inv[3].item == "MagneticCoils" and inv[3].amount == 50 and inv[3].max == 20)
 check("parse_inventory: empty text gives no slots", #F.parse_inventory("") == 0)
 
+-- ===== Main_Base (2).json floors (2026-11-08)
+do
+    local blocks = {
+        { class = "BPO_Station_02A", gx = 2, gy = 42, h = 0, rot = 0 },
+        { class = "BPO_Station_02A", gx = 2, gy = -42, h = 0, rot = 0 },
+        { class = "BPO_Station_02A", gx = 14, gy = 10, h = 4, rot = 0 },
+        { class = "BPO_Station_02A", gx = -2, gy = 10, h = 4, rot = 0 },
+        { class = "BPO_Dock_2", gx = 2, gy = 50, h = 0, rot = 1 },
+        { class = "BPO_Dock_2", gx = 2, gy = -50, h = 0, rot = 3 },
+        { class = "BPO_ElevatorBlock_03", gx = 16, gy = 16, h = 0, rot = 0 },
+        { class = "BPO_ElevatorBlock_03", gx = -4, gy = 16, h = 0, rot = 0 },
+    }
+    local fl = F.floor_rects(blocks)
+    local function at(dat, x, y, h) return F.validate_place(fl, {}, { dat = dat, x = x, y = y, h = h or 0, rot = 0 }) end
+    local cpos = { {8, 386}, {24, 386}, {8, -386}, {24, -386}, {8, 376}, {24, 376} }
+    for _, p in ipairs(cpos) do
+        check(string.format("MB2 container (%d,%d) ok", p[1], p[2]), at("DAT_Container_2", p[1], p[2]) == true)
+    end
+    local bpos = { {5, 367}, {5, 369} }
+    for y = -367, -383, -2 do bpos[#bpos + 1] = { 37, y } end
+    for _, x in ipairs({ 29, 31, 33, 35 }) do bpos[#bpos + 1] = { x, -383 } end
+    for _, y in ipairs({ 111, 113, 115 }) do
+        bpos[#bpos + 1] = { 123, y }
+        for _, x in ipairs({ -27, -29, -31, -33, -35, -37 }) do bpos[#bpos + 1] = { x, y } end
+    end
+    for _, p in ipairs(bpos) do
+        check(string.format("MB2 belt (%d,%d) ok", p[1], p[2]), at("DAT_ConveyorBelt", p[1], p[2]) == true)
+    end
+    local ok, why = at("DAT_Container_2", 200, 200)
+    check("MB2 container (200,200) refused outside every floor", ok == false and why:find("outside every floor", 1, true) ~= nil)
+    -- single Station_01 (floor +-14): belt at x=13 (footprint 12..14) inside, x=15 (14..16) outside
+    local one = F.floor_rects({ { class = "BPO_Station_01", gx = 0, gy = 0, h = 0, rot = 0 } })
+    check("MB2 single block: belt (13,1) inside ok", F.validate_place(one, {}, { dat = "DAT_ConveyorBelt", x = 13, y = 1, h = 0, rot = 0 }) == true)
+    check("MB2 single block: belt (15,1) outside refused", F.validate_place(one, {}, { dat = "DAT_ConveyorBelt", x = 15, y = 1, h = 0, rot = 0 }) == false)
+    check("MB2 belt at h=8 over layer-0 floors refused", at("DAT_ConveyorBelt", 5, 367, 8) == false)
+    -- seam: two Station_02 at gx 0 and 8 (64 pitch, floors +-30 -> gap 30..34); container at x=32 straddles it
+    local seam = F.floor_rects({
+        { class = "BPO_Station_02", gx = 0, gy = 0, h = 0, rot = 0 },
+        { class = "BPO_Station_02", gx = 8, gy = 0, h = 0, rot = 0 },
+    })
+    check("MB2 seam: container (32,0) straddling touching blocks ok", F.validate_place(seam, {}, { dat = "DAT_Container_2", x = 32, y = 0, h = 0, rot = 0 }) == true)
+end
+
 -- ===== install hooks
 local MS = {}
 F.install(MS)
 I.install(MS)
 check("install sets MSCore.factory and MSCore.inv", MS.factory == F and MS.inv == I)
+
+-- ===== factory_native.inv_split (0.7.6): mscore.lua loaded with UE4SS globals stubbed (no game)
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    -- _G metatable is restored on every path (pass or error in the section)
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        -- mscore.lua copies the natives when it loads, so each case loads it again
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local ok1, why1 = MSC.factory_native.inv_split(1, 0, 1, 2)
+        check("inv_split: missing native gives nil, 'missing' text", ok1 == nil and tostring(why1):find("missing", 1, true) ~= nil)
+        _G.MSCoreNative_inv_split = function(id, s, n, d) return true, nil end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local ok2, why2 = MSC2.factory_native.inv_split(1, 0, 1, 2)
+        check("inv_split: present native is called", ok2 == true and why2 == nil)
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_inv_split = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("inv_split section ran without error: " .. tostring(sec_err), false) end
+end
 
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

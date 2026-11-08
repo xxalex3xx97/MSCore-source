@@ -52,7 +52,7 @@ M.tables = { -- machine DAT -> footprint {w,h} in cells (half extents); odd rot 
 M.block_floor = { -- block class -> floor {w,h} half extents in units; nofloor = no floor rect
     BPO_CommandModule = { w = 0, h = 0 },
     BPO_Dock = { w = 0, h = 0, nofloor = true },
-    BPO_Dock_2 = { w = 14, h = 30 },
+    BPO_Dock_2 = { w = 30, h = 30 },
     BPO_ElevatorBlock_03 = { w = 12, h = 12 },
     BPO_MiningDroneBayBlock = { w = 0, h = 0 },
     BPO_ShipyardCore = { w = 0, h = 0, nofloor = true },
@@ -98,8 +98,42 @@ function M.floor_rects(blocks, tbl)
     return out
 end
 
+-- real floors sit 2 units inside their 64-unit pitch, so neighbours leave 4-6 unit gaps that belts/machines cross:
+-- every rect is padded by PAD and a footprint is valid when the UNION of padded same-layer rects covers it.
+-- footprint is inflated by PAD too (morphological closing): gaps <= 2*PAD between floors are bridged,
+-- a lone floor edge stays exact (a footprint hanging 1 past it fails). ponytail: exact cell extents if the probe gives them
+M.PAD = 3
+local function covered(floors, layer, x0, x1, y0, y1)
+    local rs, xs, ys = {}, { x0, x1 }, { y0, y1 }
+    for _, f in ipairs(floors) do
+        if f.layer == layer then
+            local a, b, c, d = f.x - f.w - M.PAD, f.x + f.w + M.PAD, f.y - f.h - M.PAD, f.y + f.h + M.PAD
+            if a < x1 and b > x0 and c < y1 and d > y0 then
+                rs[#rs + 1] = { a, b, c, d }
+                if a > x0 and a < x1 then xs[#xs + 1] = a end
+                if b > x0 and b < x1 then xs[#xs + 1] = b end
+                if c > y0 and c < y1 then ys[#ys + 1] = c end
+                if d > y0 and d < y1 then ys[#ys + 1] = d end
+            end
+        end
+    end
+    table.sort(xs); table.sort(ys)
+    for i = 1, #xs - 1 do
+        for j = 1, #ys - 1 do
+            if xs[i + 1] > xs[i] and ys[j + 1] > ys[j] then
+                local cx, cy, hit = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2, false
+                for _, r in ipairs(rs) do
+                    if cx > r[1] and cx < r[2] and cy > r[3] and cy < r[4] then hit = true break end
+                end
+                if not hit then return false end
+            end
+        end
+    end
+    return true
+end
+
 -- floors: list from floor_rects. existing: machine records {dat,x,y,h,rot}. m: {dat,x,y,h,rot}.
--- Rules (probe pp_check_new): parity (x-w and y-h even); inside one floor of the same layer (DAT_SignWall exempt);
+-- Rules (probe pp_check_new): parity (x-w and y-h even); covered by the union of padded floors of the same layer (DAT_SignWall exempt);
 -- no overlap with an existing machine of the same layer. Returns true, or false + reason.
 function M.validate_place(floors, existing, m)
     local w, h = M.footprint(m.dat, m.rot)
@@ -109,14 +143,7 @@ function M.validate_place(floors, existing, m)
     end
     local layer = M.layer(m.h)
     if m.dat ~= "DAT_SignWall" then
-        local inside = false
-        for _, f in ipairs(floors) do
-            if f.layer == layer and m.x - w >= f.x - f.w and m.x + w <= f.x + f.w
-                and m.y - h >= f.y - f.h and m.y + h <= f.y + f.h then
-                inside = true
-                break
-            end
-        end
+        local inside = covered(floors, layer, m.x - w - M.PAD, m.x + w + M.PAD, m.y - h - M.PAD, m.y + h + M.PAD)
         if not inside then return false, "outside every floor of its layer: " .. m.dat end
     end
     for _, e in ipairs(existing) do

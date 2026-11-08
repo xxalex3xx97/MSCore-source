@@ -44,7 +44,7 @@ local red = MSCore.ui.rgba(255, 0, 0)
 
 | Function | Args | Returns | Notes |
 |---|---|---|---|
-| `wbp.open` | `spec, owner` | handle `{ wbp, pc }` or `nil` | `spec` = `"/Game/Path/WBP_X.WBP_X_C"` or the bare package `"/Game/Path/WBP_X"` (adds `_C`) or a class object. `owner` = your PlayerController (or `nil`: the local one is used). |
+| `wbp.open` | `spec, owner` | handle `{ wbp, pc }` or `nil` | `spec` = `"/Game/Path/WBP_X.WBP_X_C"` or the bare package `"/Game/Path/WBP_X"` (adds `_C`) or a class object. `owner` = your PlayerController (or `nil`: the local one is used). While open it blocks camera look; wbp.close restores it. |
 | `wbp.close` | `handle` | - | Idempotent. Teardown order: grid `CleanupInventory`, `RemoveFromParent`, then input restore. Runs on a later tick. |
 | `wbp.inventory_grid` | `handle, host, inv, other, columns` | grid or `nil` | Adds the game's `WBP_Inventory` into the widget named `host`, sets `Columns` and `ShowSortButton`, then `SetupInventory(inv, other, pc)`. Pass `(unit_inv, player_inv)` for the unit grid and `(player_inv, unit_inv)` for the mirror, as the game does. |
 | `wbp.cost_row` | `host, item, need, have, opts` | row or `nil` | Adds the game's `WBP_ItemAmount` row to `host`. Text `have/needx`, red when `have < need`. `opts.refund = true` shows `+N refund` in green. `opts.pc` = controller. |

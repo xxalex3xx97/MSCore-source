@@ -51,6 +51,7 @@ Thin wrappers over the factory natives. The glue table is `MSCore.factory_native
 | `factory_native.inv_move` | `prim, sec, slot, action, receiver` | `ok, err` | InventoryInput sent to `receiver` (the player object id). Without `receiver` it is 0, which the game silently drops. `action` `2` = quick move. |
 | `factory_native.read_station` | `stationId` | `blocks, machines` or `nil, err` | Live station Blueprint (native read, parsed). `blocks` = `{class,gx,gy,h,rot}`; `machines` = `{id,cls,bcls,x,y,h,rot,cfg}`, `cfg` `nil` when unreadable. |
 | `factory_native.read_inventory` | `invId` | `slots` or `nil, err` | Live Inventory `ItemSlots` (native read). `slots` = `{item,amount,max}` per slot, `item` `""` = empty slot, `max` = `Item.MaxStackSize`. |
+| `factory_native.inv_split` | `invId, src, amount, dst` | `true` or `nil, err` | 0.7.6: local move of `amount` items from slot `src` to the EMPTY slot `dst` of one Inventory (0-based slots). Same inventory only, `amount` <= the stack cap. Not a game command: co-op clients do not see it (desync accepted). Needs MSCore 0.7.6 DLL. |
 
 {: .warning }
 Receiver `0` is silently dropped by the game; pass the player object's id as receiver (fixed in MSCore 0.7.5). See [Inventories, refunds and builds]({{ site.baseurl }}{% link mod-authors/game-internals/inventories-refunds-builds.md %}).
@@ -69,7 +70,7 @@ Needs the native DLL.
 | `steer.throttle` | `id, delta` | `ok, err` | Sends a throttle step of `delta` (integer) to ship `id`. |
 
 {: .warning }
-**Not verified in game:** `aim` and `throttle` through MSCore. The Ctrl+F9 test key in `main.lua` was not confirmed.
+**Not verified in game:** `aim` and `throttle` through MSCore.
 
 ## Example
 
