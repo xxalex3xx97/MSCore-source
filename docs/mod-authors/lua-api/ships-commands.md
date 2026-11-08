@@ -70,7 +70,7 @@ Needs the native DLL.
 | `steer.throttle` | `id, delta` | `ok, err` | Sends a throttle step of `delta` (integer) to ship `id`. |
 
 {: .warning }
-**Not verified in game:** `aim` and `throttle` through MSCore. The Ctrl+F9 test key in `main.lua` was not confirmed.
+**Not verified in game:** `aim` and `throttle` through MSCore.
 
 ## Example
 

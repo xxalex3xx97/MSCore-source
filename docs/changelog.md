@@ -5,11 +5,13 @@ nav_order: 6
 
 # Changelog
 
-## 0.7.6 - Local inventory split
+## 0.7.6 - Local inventory split, camera block, Dock_2 floor
 - **New:** `MSCore_inv_split(inv_id, src_slot, amount, dst_slot, err, errlen)` (C export) and `MSCoreNative_inv_split(invId, src, amount, dst)` (Lua, returns `true` or `false, err`), `MSCore.native.inv_split`, `MSCore.factory_native.inv_split`. Moves `amount` items from slot `src` to the EMPTY slot `dst` of the same Inventory. Slots are 0-based. `amount` must be at most the stack cap (`MaxStackSize`, or 1 when `MaxStackSize` is 1, times the inventory multiplier). If the destination refuses, the items go back to the source.
 - **How:** the game's `RemoveAtSlot` and `AddAtSlot` are called by RVA (0x421c730, 0x4216060). The 40 entry bytes of each are compared first; any difference turns the feature off (`native inv_split` error text). The source and destination are re-read after each call (the remove return value is not trusted).
 - **Not a game command.** It edits the inventory locally, so co-op clients do not see it. Co-op desync is accepted for this version.
-- **Unverified in game:** not run in game yet. Lua tests: `mods\MSCore	ests	est_factory.lua` (inv_split native missing / present).
+- **wbp:** while a WBP window is open the camera look is blocked (controller AllowCharacterInput(false) / CharacterInputEnabled); close restores the previous value. Window code: mscore_wbp.lua.
+- **factory:** Dock_2 floor is 30x30; a footprint across touching floors validates against the union of the padded floors.
+- **Unverified in game:** not run in game yet. Lua tests: ``mods\MSCore	ests	est_factory.lua`` (inv_split native missing / present).
 - Native API stays 4, Lua API stays 3.
 
 ## 0.7.5 - Blueprint Unit refund / charge redirect
