@@ -19,7 +19,7 @@ nav_order: 5
 | **Rollback** | Restoring the backup files of the last update. Restart the game afterwards. |
 | **Native DLL** | `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It holds the native part and exports the `MSCore_*` C functions. |
 | **MSCore Lua API v3** | The Lua API, a counter separate from the native API. `MSCore.api` is `3` (v2 added the `factory`, `inv`, `wbp` modules, v3 added `blocks`). Mods call `MSCore.require(3)` to say they need it. |
-| **MSCore native API v4** | The native API. `MSCore_api()` returns `4` (v3 = scan and chunk hold, v4 = factory exports). |
+| **MSCore native API v5** | The native API. `MSCore_api()` returns `5` (v3 = scan and chunk hold, v4 = factory exports, v5 = station block natives, which are Lua only and add no C export). |
 | **MSCore native API v2 (base)** | The native API as first shipped. `MSCore_api()` returned `2`. Added the orders, autopilot, skip-to, filters, warp, sector list, map pin, dock and item lookup exports (0.4.0). |
 | **selfcheck.log** | `ue4ss\Mods\MSCore\selfcheck.log`. Written about 8 seconds after a world loads. Lines are `OK`, `BROKEN`, `SKIP` or `CHANGED`. |
 | **Chunk** | An integer grid cell of the world (`ch`). One chunk is `2048` metres (`units.CHUNK_M`). |

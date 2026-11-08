@@ -15,7 +15,8 @@ Helpers for building simple UMG widgets: create objects, set text, convert colou
 |---|---|---|---|
 | `ui.mk` | `cls, outer` | UMG object | Creates `/Script/UMG.<cls>` (for example `"TextBlock"`), owned by `outer`. |
 | `ui.setText` | `tb, s` | - | Sets a TextBlock's text. |
-| `ui.onClick` | `btn, fn` | - | Calls `fn()` on the game thread when `btn` is clicked. The handler is registered through `ForceLayoutPrepass`, see the gotchas. |
+| `ui.onClick` | `btn, fn` | - | Calls `fn()` on the game thread when `btn` is clicked. The handler is registered through `ForceLayoutPrepass`, see the gotchas. A button that is not valid is skipped (0.8.0). |
+| `ui.clearClicks` | - | - | 0.8.0: drops the click map and removes the click hook. The removal is deferred 100 ms and a reopen before it cancels it. The click map is emptied, so bind the buttons again with `onClick`. |
 | `ui.lin` | `c` | number | Converts one sRGB value (0 to 255) to a linear 0 to 1 number. |
 | `ui.rgba` | `r, g, b, a` | `{ R, G, B, A }` | `r, g, b` are converted with `lin`. `a` defaults to `1`. |
 | `ui.smallFont` | `tb, size` | - | Sets the font size of a text block. Logs one failure line at most. |

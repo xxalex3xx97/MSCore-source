@@ -20,7 +20,7 @@ MSCore.require(1)
 |---|---|
 | `MSCore.require(n)` | Errors when the installed Lua API is older than `n`. |
 | `MSCore.logger(tag)` | Returns `log, try`. `try(label, f, ...)` returns `ok, result`. |
-| `MSCore.api`, `MSCore.version` | `3` and `"0.7.6"`. |
+| `MSCore.api`, `MSCore.version` | `3` and `"0.8.0"`. |
 | `MSCore.native` | Native wrappers, or `nil` when the DLL is not loaded. |
 
 ## Game objects
@@ -86,7 +86,10 @@ MSCore.require(1)
 | `MSCore.native.version()` | Native version string. |
 | `MSCore.native.check(name)` | Read-only world check. Returns `ok, detail`. |
 | `MSCore.native.pin_ensure()` | Call every tick until it returns `true`. |
-| `MSCore_api()` (C) | Returns `4`. Check before other exports. |
+| `MSCore_api()` (C) | Returns `5`. Check before other exports. |
+| `MSCore.factory_native.add_block(station, classPath, x, y, h, rot)` | Adds one station block (0.8.0, Lua only). Returns `true` or `nil, err`. |
+| `MSCore.factory_native.remove_block(station, classPath, x, y, h, rot)` | Removes one station block (0.8.0). Same args as `add_block`. |
+| `MSCore.factory_native.pending(station, apply, reset, primary, player, editing)` | Station pending blueprint: reset, or apply (0.8.0). |
 | `GetProcAddress(h, "MSCore_add_input")` (C) | Resolve an export from `main.dll`. |
 
 ## Manager buttons
