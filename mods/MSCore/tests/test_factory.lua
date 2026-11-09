@@ -138,6 +138,11 @@ check("parse_station: bid -1 with mids still parsed", smid[1].bid == -1 and smid
 check("parse_station: 8-column line keeps bid", smid[3].bid == 6)
 local s8 = F.parse_station("B\tBPO_Old\t1\t1\t0\t2\t/Game/O.O_C\t7\n")
 check("parse_station: old 8-column line still parses", #s8 == 1 and s8[1].bid == 7 and s8[1].rot == 2 and #s8[1].mids == 0)
+-- mids: non-numeric pieces skipped (no nil holes), spaces tolerated, order kept
+local sjunk = F.parse_station("B\tBPO_G\t0\t0\t0\t0\t/Game/G.G_C\t1\t12,x,14\nB\tBPO_H\t0\t0\t0\t0\t/Game/H.H_C\t1\t 5 , 6 \nB\tBPO_I\t0\t0\t0\t0\t/Game/I.I_C\t1\t\n")
+check("parse_station: mids skip non-numeric piece", #sjunk[1].mids == 2 and sjunk[1].mids[1] == 12 and sjunk[1].mids[2] == 14)
+check("parse_station: mids trim spaces", #sjunk[2].mids == 2 and sjunk[2].mids[1] == 5 and sjunk[2].mids[2] == 6)
+check("parse_station: mids empty gives {}", type(sjunk[3].mids) == "table" and #sjunk[3].mids == 0)
 
 -- ===== parse_docks (0.8.3 native read_docks text)
 local dk = F.parse_docks("D\t164700\t164688\t164692\tBPO_ShipyardBlockDock\tShipyard Dock 4\t164700\nD\t5\t-1\t164692\tBPO_IndustrialDock\t\t-1\n")
