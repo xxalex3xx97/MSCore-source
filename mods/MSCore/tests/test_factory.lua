@@ -280,5 +280,33 @@ do
     if not sec_ok then check("add_block section ran without error: " .. tostring(sec_err), false) end
 end
 
+-- ===== factory_native.rename_dock (0.8.3): fake native, same stub setup as inv_split
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local r1, w1 = MSC.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: missing native gives nil, 'missing' text", r1 == nil and tostring(w1):find("missing", 1, true) ~= nil)
+        local seen
+        _G.MSCoreNative_rename_dock = function(id, text) seen = { id, text } return false, "refused" end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r2, w2 = MSC2.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: native refusal text is passed through", r2 == nil and w2 == "refused")
+        check("rename_dock: id and text reach the native", seen and seen[1] == 2325 and seen[2] == "Dock A")
+        _G.MSCoreNative_rename_dock = function() return true, "" end
+        local MSC3 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r3, w3 = MSC3.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: ok gives true, no reason", r3 == true and w3 == nil)
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_rename_dock = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("rename_dock section ran without error: " .. tostring(sec_err), false) end
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

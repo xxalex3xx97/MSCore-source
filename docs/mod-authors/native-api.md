@@ -63,7 +63,7 @@ Receiver `0` is silently dropped by the game; pass the player object's id as rec
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.
 
-`read_station`, `read_docks`, `read_inventory` and `read_block_class` are Lua-only (no C export): `MSCoreNative_read_station`, `MSCoreNative_read_docks`, `MSCoreNative_read_inventory`, `MSCoreNative_read_block_class`, source `cpp\MSCore\msc_station.hpp`. `MSCoreNative_inv_split` (0.7.6) is the Lua form of `MSCore_inv_split`: returns `true` or `false, err`.
+`read_station`, `read_docks`, `read_inventory`, `read_block_class` and `rename_dock` are Lua-only (no C export): `MSCoreNative_read_station`, `MSCoreNative_read_docks`, `MSCoreNative_read_inventory`, `MSCoreNative_read_block_class`, `MSCoreNative_rename_dock` (`rename_dock(receiverId, text) -> ok, err`, source `cpp\MSCore\msc_rename.hpp`), source `cpp\MSCore\msc_station.hpp`. `MSCoreNative_inv_split` (0.7.6) is the Lua form of `MSCore_inv_split`: returns `true` or `false, err`.
 
 Typed id table (value written at `cmd+0x28`, the int that the flush checks):
 

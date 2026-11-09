@@ -18,7 +18,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     redirect_status = nat("MSCoreNative_redirect_status"), redirect_stats = nat("MSCoreNative_redirect_stats"), refund_log = nat("MSCoreNative_refund_log"),
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
-    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok, read_docks = _G.MSCoreNative_read_docks,
+    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok, read_docks = _G.MSCoreNative_read_docks, rename_dock = _G.MSCoreNative_rename_dock,
     add_block = _G.MSCoreNative_add_block, remove_block = _G.MSCoreNative_remove_block, pending =_G.MSCoreNative_pending, read_block_class = _G.MSCoreNative_read_block_class } or nil
 
 function MSCore.require(n)
@@ -434,6 +434,15 @@ function factory_native.read_docks(stationId)
     if not ok then return nil, text end
     local F = package.loaded["mscore_factory"] or require("mscore_factory")
     return F.parse_docks(text)
+end
+-- 0.8.3: rename a dock (native SetTextInputCommand; Lua CreateInputSetText crashes the game): true | nil, reason
+function factory_native.rename_dock(receiverId, text)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.rename_dock then return nil, "native rename_dock missing (MSCore 0.8.3 build 3 needed)" end
+    local ok, err = N.rename_dock(receiverId, text)
+    if not ok then return nil, err end
+    return true
 end
 -- live Inventory ItemSlots by save id: slots {item,amount,max} ("" item = empty slot) or nil, err
 function factory_native.read_inventory(invId)
@@ -950,7 +959,7 @@ load_optional("mscore_factory", function(mod, M) mod.install(M) end)
 -- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
 if MSCore.factory then
     MSCore.factory.native = factory_native
-    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_docks", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_docks", "rename_dock", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
         if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
     end
 end

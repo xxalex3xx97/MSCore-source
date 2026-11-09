@@ -21,6 +21,7 @@
 #include <Unreal/Hooks/Hooks.hpp>
 #include <Unreal/CoreUObject/UObject/UnrealType.hpp>
 #include <Unreal/Property/FEnumProperty.hpp>
+#include <Unreal/Property/FTextProperty.hpp>
 
 using namespace RC;
 using namespace RC::Unreal;
@@ -35,6 +36,7 @@ using namespace RC::Unreal;
 #include "msc_scan.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
+#include "msc_rename.hpp"
 #include "msc_refund.hpp"
 #include "msc_loader.hpp"
 
@@ -857,6 +859,18 @@ namespace
         return 2;
     }
 
+    // Lua: rename_dock(receiverId int, text string) -> ok, err   (native SetTextInputCommand; the FText never reaches Lua)
+    int lua_rename_dock(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try {
+            if (!nums(lua, 1) || lua_type(lua.get_lua_state(), 2) != LUA_TSTRING) err = STR("rename_dock needs receiver id number and name string");
+            else { const int receiver = arg_int(lua); const std::string text = arg_bytes(lua); ok = factory_guard([&] { return rename_dock(receiver, text, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
     // Lua: read_inventory(invId) -> true, text | false, err   (text format: msc_station.hpp)
     int lua_read_inventory(const LuaMadeSimple::Lua& lua)
     {
@@ -1093,6 +1107,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
     lua.register_function("MSCoreNative_read_docks", lua_read_docks);
+    lua.register_function("MSCoreNative_rename_dock", lua_rename_dock);
     lua.register_function("MSCoreNative_inv_split", lua_inv_split);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
     lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
