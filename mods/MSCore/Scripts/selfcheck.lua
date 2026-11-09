@@ -174,8 +174,16 @@ function M.run(MSCore)
         for _, b in ipairs(blocks) do
             for _, d in ipairs(rows) do if b.bid and b.bid >= 0 and b.bid == d.block_id then hits = hits + 1 end end
         end
+        -- 0.8.3 block mids (9th column): a dock block's child machines should list a dock machine_id (dock BlockID may be -1)
+        local dockIds, mhits = {}, 0
+        for _, d in ipairs(rows) do if d.machine_id then dockIds[d.machine_id] = true end end
+        for _, b in ipairs(blocks) do
+            for _, m in ipairs(b.mids or {}) do if dockIds[m] then mhits = mhits + 1 break end end
+        end
+        local firstMids = blocks[1] and table.concat(blocks[1].mids or {}, ",") or "(no block)"
         return yes(true, #rows .. " docks of station " .. sid .. ", first machine_id=" .. tostring(r.machine_id) .. " raw_id=" .. tostring(r.raw_id)
-            .. " block_id=" .. tostring(r.block_id) .. " " .. tostring(r.class) .. " '" .. tostring(r.name) .. "'; blocks whose bid is a dock block_id: " .. hits)
+            .. " block_id=" .. tostring(r.block_id) .. " " .. tostring(r.class) .. " '" .. tostring(r.name) .. "'; blocks whose bid is a dock block_id: " .. hits
+            .. "; blocks whose mids contain a dock machine_id: " .. mhits .. " of " .. #rows .. " named dock rows; first block mids: " .. firstMids)
     end)
     check("hacks", function() return yes(#MSCore.hacks.list() > 0, #MSCore.hacks.list() .. " entries") end)
     check("blocks.status", function()

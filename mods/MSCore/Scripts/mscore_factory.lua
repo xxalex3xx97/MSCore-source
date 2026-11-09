@@ -255,13 +255,15 @@ end
 
 -- parse_station(text) -> blocks, machines. Text from MSCore.native.read_station (format: cpp/MSCore/msc_station.hpp).
 -- B\tclass\tgx\tgy\th\trot[\tclassPath] ; M\tid\tcls\tx\ty\th\trot\tcfg. cfg "-" -> nil (unreadable), "" -> "" (empty), else raw bytes.
--- path = full class path (0.8.0 7th column), nil on an older 6-column line. bid = BlockID (0.8.3 8th column), -1 when unreadable, nil when absent.
+-- path = full class path (0.8.0 7th column), nil on an older 6-column line. bid = BlockID (0.8.3 8th column), -1 when unreadable, nil when absent. mids = child machine ids (9th column), {} when absent.
 function M.parse_station(text)
     local blocks, machines = {}, {}
     for _, line in ipairs(split_plain(text or "", "\n")) do
         local f = split_plain(line, "\t")
         if f[1] == "B" and #f >= 6 then
-            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]), path = f[7], bid = tonumber(f[8] or "") }
+            local mids = {}   -- child machine ids (0.8.3 9th column, comma-separated); {} when absent or empty
+            if f[9] and f[9] ~= "" then for p in string.gmatch(f[9], "[^,]+") do mids[#mids + 1] = tonumber(p) end end
+            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]), path = f[7], bid = tonumber(f[8] or ""), mids = mids }
         elseif f[1] == "M" and #f >= 8 then
             local cfg = f[8]
             if cfg == "-" then cfg = nil

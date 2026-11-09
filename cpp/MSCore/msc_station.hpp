@@ -1,7 +1,8 @@
 // FILE: cpp/MSCore/msc_station.hpp
 // WHAT: read_station(id): the live Blueprint (Blocks + Machines) of one StationObject as one tab-separated text (native API 4, Lua only).
-//       Lines: B\tclass\tgx\tgy\th\trot\tclassPath\tblockId   and   M\tid\tcls\tx\ty\th\trot\tcfg
-//       blockId (0.8.3) = BlockID of the block record, -1 when unreadable. Old parsers ignore the extra column.
+//       Lines: B\tclass\tgx\tgy\th\trot\tclassPath\tblockId\tmids   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       blockId (0.8.3) = BlockID of the block record, -1 when unreadable.
+//       mids (0.8.3, 9th column) = comma-separated MachineIDs of the block's DefaultMachines, "" when none. Old parsers ignore the extra columns.
 //       read_docks(id) (0.8.3): the Dock objects of one station. Lines: D\tmachineId\tblockId\tparentId\tclass\tdisplayName\trawId
 //       read_block_class(path) (0.8.0): class defaults of one BuildingBlockObject class. Lines: K\t... then I\titem\tamount per ItemCost entry.
 //       read_inventory(id) (0.7.3): the ItemSlots of one Inventory, same style. Lines: S\titem\tamount\tmax
@@ -117,6 +118,38 @@ namespace
         return false;
     }
 
+    // WHAT: comma-separated MachineIDs of the child machines of one block element e ("" when none or unreadable).
+    // WHY: a dock block can read BlockID -1, but its child machines are listed here (dock machine_id is among them).
+    // SOURCE: field DefaultMachines = array of structs with MachineID (RE 2026-11, vault rea-native-block s3: stride 0x30, MachineID at +0x18).
+    //         Fallback: DefaultMachineIDs (int array), used only when DefaultMachines is not an array of structs.
+    //         NOT verified in game yet: which one the game exposes is unknown until the next in-game run (selfcheck logs the result).
+    std::string st_mids(UStruct* et, const uint8_t* e)
+    {
+        std::string out;
+        auto add = [&out](int v) { if (!out.empty()) out += ','; out += std::to_string(v); };
+        FProperty* dp = st_field(et, STR("DefaultMachines"));
+        auto* da = dp ? CastField<FArrayProperty>(dp) : nullptr;
+        auto* dsp = da ? CastField<FStructProperty>(da->GetInner()) : nullptr;
+        if (dsp && dsp->GetStruct())
+        {
+            const auto* ta = reinterpret_cast<const TArray<uint8_t>*>(e + dp->GetOffset_Internal());
+            const size_t es = static_cast<size_t>(da->GetInner()->GetElementSize());
+            for (int j = 0; ta->GetData() && j < ta->Num(); ++j)
+            {
+                int id = 0;
+                if (st_idval(dsp->GetStruct(), ta->GetData() + static_cast<size_t>(j) * es, STR("MachineID"), id)) add(id);
+            }
+            return out;
+        }
+        FProperty* ip = st_field(et, STR("DefaultMachineIDs"));
+        auto* ia = ip ? CastField<FArrayProperty>(ip) : nullptr;
+        if (!ia || !CastField<FIntProperty>(ia->GetInner())) return out;
+        const auto* ita = reinterpret_cast<const TArray<uint8_t>*>(e + ip->GetOffset_Internal());
+        for (int j = 0; ita->GetData() && j < ita->Num(); ++j)
+            add(*reinterpret_cast<const int32_t*>(ita->GetData() + static_cast<size_t>(j) * sizeof(int32_t)));
+        return out;
+    }
+
     // WHAT: appends the B lines (Blueprint.Blocks). false + err on a missing Blueprint or a too large text.
     bool st_read_blocks(UObject* s, std::string& out, std::wstring& err)
     {
@@ -134,7 +167,7 @@ namespace
             if (const uint8_t* t = st_struct(et, e, STR("Transform"), tst)) st_transform(tst, t, gx, gy, h, rot);
             st_idval(et, e, STR("BlockID"), bid);
             out += "B\t" + cls + "\t" + std::to_string(gx) + "\t" + std::to_string(gy) + "\t" + std::to_string(h) + "\t" + std::to_string(rot) + "\t" + path
-                 + "\t" + std::to_string(bid) + "\n";
+                 + "\t" + std::to_string(bid) + "\t" + st_mids(et, e) + "\n";
             if (out.size() > kMaxStationBytes) { err = STR("station too large"); return false; }
         }
         return true;

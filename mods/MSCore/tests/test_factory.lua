@@ -129,6 +129,16 @@ check("parse_station: 8th column is the block id", sbid[1].bid == 164692 and sbi
 check("parse_station: block id -1 kept", sbid[2].bid == -1)
 check("parse_station: 7-column block has no bid", sbid[3].bid == nil and sbid[3].path == "/Game/C.C_C")
 
+-- 0.8.3: 9th column = comma-separated child MachineIDs ("" when none); absent on 8-column lines
+local smid = F.parse_station("B\tBPO_D\t0\t0\t0\t0\t/Game/D.D_C\t-1\t164692,164693\nB\tBPO_E\t0\t0\t0\t0\t/Game/E.E_C\t5\t\nB\tBPO_F\t0\t0\t0\t0\t/Game/F.F_C\t6\n")
+check("parse_station: 9th column gives the machine ids", smid[1].mids[1] == 164692 and smid[1].mids[2] == 164693 and #smid[1].mids == 2)
+check("parse_station: 9th column empty gives empty list", type(smid[2].mids) == "table" and #smid[2].mids == 0)
+check("parse_station: absent 9th column gives empty list", type(smid[3].mids) == "table" and #smid[3].mids == 0)
+check("parse_station: bid -1 with mids still parsed", smid[1].bid == -1 and smid[1].mids[1] == 164692)
+check("parse_station: 8-column line keeps bid", smid[3].bid == 6)
+local s8 = F.parse_station("B\tBPO_Old\t1\t1\t0\t2\t/Game/O.O_C\t7\n")
+check("parse_station: old 8-column line still parses", #s8 == 1 and s8[1].bid == 7 and s8[1].rot == 2 and #s8[1].mids == 0)
+
 -- ===== parse_docks (0.8.3 native read_docks text)
 local dk = F.parse_docks("D\t164700\t164688\t164692\tBPO_ShipyardBlockDock\tShipyard Dock 4\t164700\nD\t5\t-1\t164692\tBPO_IndustrialDock\t\t-1\n")
 check("parse_docks: two rows", #dk == 2)
