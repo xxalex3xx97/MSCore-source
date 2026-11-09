@@ -123,6 +123,20 @@ check("parse_station: empty text gives two empty tables", #eb == 0 and #em == 0)
 local sb7 = F.parse_station("B\tBPO_Station_01\t0\t0\t0\t0\t/Game/BPO_Station_01.BPO_Station_01_C\nB\tBPO_Old\t1\t1\t0\t2\n")
 check("parse_station: 7th column is the class path", sb7[1].path == "/Game/BPO_Station_01.BPO_Station_01_C")
 check("parse_station: 6-column block has no path", #sb7 == 2 and sb7[2].path == nil and sb7[2].rot == 2)
+-- 0.8.3: 8th column = BlockID (-1 unreadable); a 7-column line has bid nil
+local sbid = F.parse_station("B\tBPO_A\t0\t0\t0\t0\t/Game/A.A_C\t164692\nB\tBPO_B\t0\t0\t0\t0\t/Game/B.B_C\t-1\nB\tBPO_C\t0\t0\t0\t0\t/Game/C.C_C\n")
+check("parse_station: 8th column is the block id", sbid[1].bid == 164692 and sbid[1].path == "/Game/A.A_C")
+check("parse_station: block id -1 kept", sbid[2].bid == -1)
+check("parse_station: 7-column block has no bid", sbid[3].bid == nil and sbid[3].path == "/Game/C.C_C")
+
+-- ===== parse_docks (0.8.3 native read_docks text)
+local dk = F.parse_docks("D\t164700\t164688\t164692\tBPO_ShipyardBlockDock\tShipyard Dock 4\t164700\nD\t5\t-1\t164692\tBPO_IndustrialDock\t\t-1\n")
+check("parse_docks: two rows", #dk == 2)
+check("parse_docks: row fields", dk[1].machine_id == 164700 and dk[1].block_id == 164688 and dk[1].parent_id == 164692
+    and dk[1].class == "BPO_ShipyardBlockDock" and dk[1].name == "Shipyard Dock 4" and dk[1].raw_id == 164700)
+check("parse_docks: empty name kept, unknown block id -1", dk[2].name == "" and dk[2].block_id == -1 and dk[2].raw_id == -1)
+local de = F.parse_docks("")
+check("parse_docks: empty text gives empty table", type(de) == "table" and #de == 0)
 
 -- ===== parse_block_class (0.8.0 native read_block_class text)
 local bi = F.parse_block_class("K\t1\t0\t2\t-524088\t-524088\t-262144\t524188\t524088\t655360\nI\tDAT_Iron\t5\nI\tDAT_Gear\t2\n")

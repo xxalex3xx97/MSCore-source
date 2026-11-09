@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.2";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.3";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -842,6 +842,21 @@ namespace
         return 2;
     }
 
+    // Lua: read_docks(stationId) -> true, text | false, err   (text format: msc_station.hpp)
+    int lua_read_docks(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        std::string out;
+        try {
+            if (!nums(lua, 1)) err = STR("read_docks needs a station id number");
+            else { const int id = arg_int(lua); ok = factory_guard([&] { return read_docks(id, out, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        lua.set_bool(ok);
+        if (ok) lua.set_string(out); else lua.set_string(narrow(err));
+        return 2;
+    }
+
     // Lua: read_inventory(invId) -> true, text | false, err   (text format: msc_station.hpp)
     int lua_read_inventory(const LuaMadeSimple::Lua& lua)
     {
@@ -1077,6 +1092,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_inv_move", lua_inv_move);
     lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
+    lua.register_function("MSCoreNative_read_docks", lua_read_docks);
     lua.register_function("MSCoreNative_inv_split", lua_inv_split);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
     lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
@@ -1094,7 +1110,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.2");
+        ModVersion = STR("0.8.3");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1129,8 +1145,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only).
-    MSCORE_API int MSCore_api() { return 5; }
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only).
+    MSCORE_API int MSCore_api() { return 6; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {

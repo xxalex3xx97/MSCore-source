@@ -5,6 +5,12 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.3 - Native docks with block ids
+- **New:** native `read_docks(stationId)` (`MSCoreNative_read_docks`, `MSCore.factory_native.read_docks`): the Dock objects of one station as rows `{machine_id, block_id, parent_id, class, name, raw_id}`. Fields are found by property name in C++.
+- **New:** `read_station` `B` lines have an 8th column, the block's BlockID (`-1` when unreadable). `parse_station` gives it as `bid` (`nil` on older lines).
+- **New:** selfcheck `native.read_docks` and `native.types` (logs the real native property types of Dock.MachineID, Dock.BlockID, Dock.ParentID and the block BlockID).
+- Native API is 6 (`MSCore_api()` returns `6`, the new natives are Lua only). Lua API stays 3. Module version `0.8.3`.
+
 ## 0.8.2 - Events tick on the game thread
 - **Fixed:** the events tick no longer runs Lua on UE4SS's async thread. It runs on the game thread (`LoopInGameThreadWithDelay`, through the `loopGT` helper). The async thread corrupted the shared Lua state during long imports in other mods (Blueprint Unit).
 - Native API stays 5, Lua API 3.

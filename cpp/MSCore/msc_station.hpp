@@ -1,6 +1,8 @@
 // FILE: cpp/MSCore/msc_station.hpp
 // WHAT: read_station(id): the live Blueprint (Blocks + Machines) of one StationObject as one tab-separated text (native API 4, Lua only).
-//       Lines: B\tclass\tgx\tgy\th\trot\tclassPath   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       Lines: B\tclass\tgx\tgy\th\trot\tclassPath\tblockId   and   M\tid\tcls\tx\ty\th\trot\tcfg
+//       blockId (0.8.3) = BlockID of the block record, -1 when unreadable. Old parsers ignore the extra column.
+//       read_docks(id) (0.8.3): the Dock objects of one station. Lines: D\tmachineId\tblockId\tparentId\tclass\tdisplayName\trawId
 //       read_block_class(path) (0.8.0): class defaults of one BuildingBlockObject class. Lines: K\t... then I\titem\tamount per ItemCost entry.
 //       read_inventory(id) (0.7.3): the ItemSlots of one Inventory, same style. Lines: S\titem\tamount\tmax
 //       inv_split(inv, src, n, dst) (0.7.6): local move between two slots of one Inventory (RVA-bound game functions, see below).
@@ -45,6 +47,22 @@ namespace
         if (!sp || !sp->GetStruct()) return nullptr;
         out = sp->GetStruct();
         return base + p->GetOffset_Internal();
+    }
+
+    // WHAT: ID-like value of a property: an IntProperty, or the int inside a struct (inner 'ID', then 'Value', then the first int).
+    //       false and v untouched when unreadable.
+    // WHY: Dock.MachineID / BlockID are opaque structs in Lua. Inner names are not verified yet (selfcheck native.types logs them).
+    bool st_idval(UStruct* st, const uint8_t* base, const TCHAR* name, int& v)
+    {
+        if (st_int(st, base, name, v)) return true;
+        UStruct* is = nullptr;
+        const uint8_t* p = st_struct(st, base, name, is);
+        if (!p) return false;
+        if (st_int(is, p, STR("ID"), v) || st_int(is, p, STR("Value"), v)) return true;
+        for (UStruct* u = is; u && u->GetName() != STR("Object"); u = u->GetSuperStruct())
+            for (FProperty* f : u->ForEachProperty())
+                if (CastField<FIntProperty>(f)) { v = *reinterpret_cast<const int32_t*>(p + f->GetOffset_Internal()); return true; }
+        return false;
     }
 
     // WHAT: UObject* of an ObjectProperty, or nullptr. The caller still checks alive().
@@ -111,10 +129,12 @@ namespace
             const uint8_t* e = ta->GetData() + static_cast<size_t>(i) * es;
             std::string cls, path;
             if (UObject* k = st_obj(et, e, STR("Class"))) { cls = st_short(k->GetName()); for (wchar_t c : k->GetPathName()) path += static_cast<char>(c); }
-            int gx = 0, gy = 0, h = 0, rot = 0;
+            int gx = 0, gy = 0, h = 0, rot = 0, bid = -1;
             UStruct* tst = nullptr;
             if (const uint8_t* t = st_struct(et, e, STR("Transform"), tst)) st_transform(tst, t, gx, gy, h, rot);
-            out += "B\t" + cls + "\t" + std::to_string(gx) + "\t" + std::to_string(gy) + "\t" + std::to_string(h) + "\t" + std::to_string(rot) + "\t" + path + "\n";
+            st_idval(et, e, STR("BlockID"), bid);
+            out += "B\t" + cls + "\t" + std::to_string(gx) + "\t" + std::to_string(gy) + "\t" + std::to_string(h) + "\t" + std::to_string(rot) + "\t" + path
+                 + "\t" + std::to_string(bid) + "\n";
             if (out.size() > kMaxStationBytes) { err = STR("station too large"); return false; }
         }
         return true;
@@ -175,6 +195,35 @@ namespace
         if (!st) { err = STR("no live StationObject with id ") + std::to_wstring(station_id); return false; }
         out.clear();
         return st_read_blocks(st, out, err) && st_read_machines(st, out, err);
+    }
+
+    // WHAT: text of the live Dock objects whose ParentID is station_id. Lines: D\tmachine_id\tblock_id\tparent_id\tclass\tdisplay_name\traw_id
+    //       machine_id = MachineID (falls back to the ID property), block_id = BlockID, -1 when unreadable, raw_id = ID property.
+    // WHY: Lua cannot read Dock.MachineID / BlockID (opaque structs). Fields found by name, never by offset.
+    // SAFETY: game thread, reads only. Every object is checked by alive() before use. Empty text when the station has no docks.
+    bool read_docks(int station_id, std::string& out, std::wstring& err)
+    {
+        std::vector<UObject*> all;
+        UObjectGlobals::FindAllOf(STR("Dock"), all);
+        out.clear();
+        for (UObject* o : all)
+        {
+            if (!alive(o) || o->GetName().rfind(STR("Default__"), 0) == 0) continue;
+            const uint8_t* b = reinterpret_cast<const uint8_t*>(o);
+            UStruct* ds = o->GetClassPrivate();
+            int parent = -1;
+            if (!st_idval(ds, b, STR("ParentID"), parent) || parent != station_id) continue;
+            int machine = -1, block = -1;
+            if (!st_idval(ds, b, STR("MachineID"), machine)) machine = obj_id(o);
+            st_idval(ds, b, STR("BlockID"), block);
+            std::string name;
+            for (wchar_t c : read_text_prop(o, STR("DisplayName")))
+                name += (c == '\t' || c == '\r' || c == '\n') ? ' ' : (c > 0x7F ? '?' : static_cast<char>(c));   // ASCII only
+            out += "D\t" + std::to_string(machine) + "\t" + std::to_string(block) + "\t" + std::to_string(parent) + "\t"
+                 + st_short(o->GetClassPrivate()->GetName()) + "\t" + name + "\t" + std::to_string(obj_id(o)) + "\n";
+            if (out.size() > kMaxStationBytes) { err = STR("docks too large"); return false; }
+        }
+        return true;
     }
 
     // WHAT: narrow copy of an object name (names are ASCII). No _C strip, unlike st_short.

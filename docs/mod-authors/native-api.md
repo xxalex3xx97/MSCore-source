@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 5.** `MSCore_api()` returns `5`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section).
+**Native API version: 6.** `MSCore_api()` returns `6`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only) and the block id column of `read_station`.
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`5`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`6`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -63,7 +63,7 @@ Receiver `0` is silently dropped by the game; pass the player object's id as rec
 
 Used by the blueprint and factory tools. Source: `cpp\MSCore\msc_factory.hpp`. Ported from the MiningBench factory probe (`bp_send`, `bp_place`), same route and fields.
 
-`read_station`, `read_inventory` and `read_block_class` are Lua-only (no C export): `MSCoreNative_read_station`, `MSCoreNative_read_inventory`, `MSCoreNative_read_block_class`, source `cpp\MSCore\msc_station.hpp`. `MSCoreNative_inv_split` (0.7.6) is the Lua form of `MSCore_inv_split`: returns `true` or `false, err`.
+`read_station`, `read_docks`, `read_inventory` and `read_block_class` are Lua-only (no C export): `MSCoreNative_read_station`, `MSCoreNative_read_docks`, `MSCoreNative_read_inventory`, `MSCoreNative_read_block_class`, source `cpp\MSCore\msc_station.hpp`. `MSCoreNative_inv_split` (0.7.6) is the Lua form of `MSCore_inv_split`: returns `true` or `false, err`.
 
 Typed id table (value written at `cmd+0x28`, the int that the flush checks):
 
