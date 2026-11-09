@@ -51,7 +51,7 @@ namespace
 
     // WHAT: ID-like value of a property: an IntProperty, or the int inside a struct (inner 'ID', then 'Value', then the first int).
     //       false and v untouched when unreadable.
-    // WHY: Dock.MachineID / BlockID are opaque structs in Lua. Inner names are not verified yet (selfcheck native.types logs them).
+    // WHY: Dock.MachineID / BlockID are opaque structs in Lua. Inner names are not verified yet (the Lua side no longer reflects them, see changelog 0.8.3).
     bool st_idval(UStruct* st, const uint8_t* base, const TCHAR* name, int& v)
     {
         if (st_int(st, base, name, v)) return true;

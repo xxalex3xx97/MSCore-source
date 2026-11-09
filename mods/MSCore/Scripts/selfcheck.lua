@@ -177,54 +177,6 @@ function M.run(MSCore)
         return yes(true, #rows .. " docks of station " .. sid .. ", first machine_id=" .. tostring(r.machine_id) .. " raw_id=" .. tostring(r.raw_id)
             .. " block_id=" .. tostring(r.block_id) .. " " .. tostring(r.class) .. " '" .. tostring(r.name) .. "'; blocks whose bid is a dock block_id: " .. hits)
     end)
-    -- diagnostic (0.8.3): the real native property types of Dock.MachineID / BlockID / ParentID and the block BlockID. Reflection only, reads no values.
-    local function fname(x)
-        local ok, s = pcall(function() return x:GetFName():ToString() end)
-        if ok and s then return s end
-        ok, s = pcall(function() return x:GetName() end)
-        return ok and tostring(s) or "?"
-    end
-    local function call(o, m) local ok, r = pcall(function() return o[m](o) end) if ok then return r end return nil end
-    local function findProp(c, name)   -- FProperty by name up the class chain, nil when missing
-        for _ = 1, 16 do
-            if not c then return nil end
-            local found
-            pcall(function() c:ForEachProperty(function(p) if not found and fname(p) == name then found = p end end) end)
-            if found then return found end
-            c = call(c, "GetSuperStruct")
-        end
-        return nil
-    end
-    local function typeOf(p)   -- "IntProperty", "StructProperty{ID:IntProperty,...}", "missing"
-        if not p then return "missing" end
-        local s = fname(call(p, "GetClass"))
-        if s == "StructProperty" then
-            local st = call(p, "GetStruct")
-            if not st then return s .. "{no GetStruct}" end
-            local parts = {}
-            local okf, e = pcall(function() st:ForEachProperty(function(q) parts[#parts + 1] = fname(q) .. ":" .. fname(call(q, "GetClass")) end) end)
-            return s .. "{" .. table.concat(parts, ",") .. (okf and "" or (" err=" .. tostring(e))) .. "}"
-        end
-        return s
-    end
-    check("native.types", function()
-        local sid, d = sampleDock() if not sid then return "SKIP", "no dock with a readable ParentID" end
-        local st
-        local okf, all = pcall(FindAllOf, "StationObject")
-        for _, o in ipairs(okf and all or {}) do
-            local ok, id = pcall(function() return o.ID end)
-            if not st and S.valid(o) and ok and id == sid then st = o end
-        end
-        if not st then return "SKIP", "no live StationObject with id " .. sid end
-        local dc = d:GetClass()
-        local bpP = findProp(st:GetClass(), "Blueprint")
-        local bst = bpP and call(bpP, "GetStruct")
-        local blP = bst and findProp(bst, "Blocks")
-        local inn = blP and call(blP, "GetInner")
-        local ent = inn and call(inn, "GetStruct")
-        return "OK", "Dock.MachineID=" .. typeOf(findProp(dc, "MachineID")) .. " Dock.BlockID=" .. typeOf(findProp(dc, "BlockID"))
-            .. " Dock.ParentID=" .. typeOf(findProp(dc, "ParentID")) .. " block.BlockID=" .. ((ent and typeOf(findProp(ent, "BlockID"))) or "no block struct")
-    end)
     check("hacks", function() return yes(#MSCore.hacks.list() > 0, #MSCore.hacks.list() .. " entries") end)
     check("blocks.status", function()
         local B = MSCore.blocks if not B then return "BROKEN", "mscore_blocks not loaded" end

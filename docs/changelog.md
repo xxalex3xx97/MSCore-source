@@ -8,7 +8,8 @@ nav_order: 6
 ## 0.8.3 - Native docks with block ids
 - **New:** native `read_docks(stationId)` (`MSCoreNative_read_docks`, `MSCore.factory_native.read_docks`): the Dock objects of one station as rows `{machine_id, block_id, parent_id, class, name, raw_id}`. Fields are found by property name in C++.
 - **New:** `read_station` `B` lines have an 8th column, the block's BlockID (`-1` when unreadable). `parse_station` gives it as `bid` (`nil` on older lines).
-- **New:** selfcheck `native.read_docks` and `native.types` (logs the real native property types of Dock.MachineID, Dock.BlockID, Dock.ParentID and the block BlockID).
+- **New:** selfcheck `native.read_docks` (counts, first row, and whether a live block bid equals a dock block_id).
+- **Fixed:** build 1 of 0.8.3 crashed the game (EXCEPTION_ACCESS_VIOLATION inside a UE4SS Lua UStruct lambda). The cause was the selfcheck `native.types` check, which walked UStruct/UProperty reflection from Lua; `pcall` cannot catch a native access violation. Removed. selfcheck has no Lua reflection now.
 - Native API is 6 (`MSCore_api()` returns `6`, the new natives are Lua only). Lua API stays 3. Module version `0.8.3`.
 
 ## 0.8.2 - Events tick on the game thread
