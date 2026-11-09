@@ -73,7 +73,7 @@ function M.run(MSCore)
             local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
             return yes(N.export_ok(n) == true, "GetProcAddress") end)
     end
-    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move", "read_station", "read_inventory", "inv_split" }) do
+    for _, n in ipairs({ "send_typed", "find_buildable", "build_place", "disassemble", "set_recipe", "port_toggle", "inv_move", "read_station", "read_docks", "rename_dock", "read_inventory", "inv_split" }) do
         check("native." .. n, function()
             local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
             return yes(type(N[n]) == "function", "MSCoreNative_" .. n .. " registered") end)
@@ -155,6 +155,36 @@ function M.run(MSCore)
     check("docks", function()
         local d = MSCore.docks() if #d == 0 then return "SKIP", "no docks" end
         return yes(#d > 0, #d .. " docks, first id=" .. tostring(d[1].id) .. " " .. d[1].name) end)
+    -- 0.8.3 native docks. sampleDock = first dock with a numeric ParentID (Lua read): its station id and the Dock object.
+    local function sampleDock()
+        for _, e in ipairs(MSCore.docks()) do
+            local ok, p = pcall(function() return e.obj.ParentID end)
+            if ok and type(p) == "number" then return p, e.obj end
+        end
+    end
+    check("native.read_docks", function()
+        local N = MSCore.native if not N or not N.read_docks then return "BROKEN", "native read_docks missing (MSCore 0.8.3 DLL needed)" end
+        local sid = sampleDock() if not sid then return "SKIP", "no dock with a readable ParentID" end
+        local rows, err = MSCore.factory_native.read_docks(sid)
+        if not rows then return "BROKEN", tostring(err) end
+        if #rows == 0 then return "BROKEN", "station " .. sid .. ": Lua sees docks, read_docks gave none" end
+        local r = rows[1]
+        local blocks = MSCore.factory_native.read_station(sid) or {}
+        local hits = 0
+        for _, b in ipairs(blocks) do
+            for _, d in ipairs(rows) do if b.bid and b.bid >= 0 and b.bid == d.block_id then hits = hits + 1 end end
+        end
+        -- 0.8.3 block mids (9th column): a dock block's child machines should list a dock machine_id (dock BlockID may be -1)
+        local dockIds, mhits = {}, 0
+        for _, d in ipairs(rows) do if d.machine_id then dockIds[d.machine_id] = true end end
+        for _, b in ipairs(blocks) do
+            for _, m in ipairs(b.mids or {}) do if dockIds[m] then mhits = mhits + 1 break end end
+        end
+        local firstMids = blocks[1] and table.concat(blocks[1].mids or {}, ",") or "(no block)"
+        return yes(true, #rows .. " docks of station " .. sid .. ", first machine_id=" .. tostring(r.machine_id) .. " raw_id=" .. tostring(r.raw_id)
+            .. " block_id=" .. tostring(r.block_id) .. " " .. tostring(r.class) .. " '" .. tostring(r.name) .. "'; blocks whose bid is a dock block_id: " .. hits
+            .. "; blocks whose mids contain a dock machine_id: " .. mhits .. " of " .. #rows .. " named dock rows; first block mids: " .. firstMids)
+    end)
     check("hacks", function() return yes(#MSCore.hacks.list() > 0, #MSCore.hacks.list() .. " entries") end)
     check("blocks.status", function()
         local B = MSCore.blocks if not B then return "BROKEN", "mscore_blocks not loaded" end

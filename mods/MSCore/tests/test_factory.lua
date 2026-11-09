@@ -123,6 +123,35 @@ check("parse_station: empty text gives two empty tables", #eb == 0 and #em == 0)
 local sb7 = F.parse_station("B\tBPO_Station_01\t0\t0\t0\t0\t/Game/BPO_Station_01.BPO_Station_01_C\nB\tBPO_Old\t1\t1\t0\t2\n")
 check("parse_station: 7th column is the class path", sb7[1].path == "/Game/BPO_Station_01.BPO_Station_01_C")
 check("parse_station: 6-column block has no path", #sb7 == 2 and sb7[2].path == nil and sb7[2].rot == 2)
+-- 0.8.3: 8th column = BlockID (-1 unreadable); a 7-column line has bid nil
+local sbid = F.parse_station("B\tBPO_A\t0\t0\t0\t0\t/Game/A.A_C\t164692\nB\tBPO_B\t0\t0\t0\t0\t/Game/B.B_C\t-1\nB\tBPO_C\t0\t0\t0\t0\t/Game/C.C_C\n")
+check("parse_station: 8th column is the block id", sbid[1].bid == 164692 and sbid[1].path == "/Game/A.A_C")
+check("parse_station: block id -1 kept", sbid[2].bid == -1)
+check("parse_station: 7-column block has no bid", sbid[3].bid == nil and sbid[3].path == "/Game/C.C_C")
+
+-- 0.8.3: 9th column = comma-separated child MachineIDs ("" when none); absent on 8-column lines
+local smid = F.parse_station("B\tBPO_D\t0\t0\t0\t0\t/Game/D.D_C\t-1\t164692,164693\nB\tBPO_E\t0\t0\t0\t0\t/Game/E.E_C\t5\t\nB\tBPO_F\t0\t0\t0\t0\t/Game/F.F_C\t6\n")
+check("parse_station: 9th column gives the machine ids", smid[1].mids[1] == 164692 and smid[1].mids[2] == 164693 and #smid[1].mids == 2)
+check("parse_station: 9th column empty gives empty list", type(smid[2].mids) == "table" and #smid[2].mids == 0)
+check("parse_station: absent 9th column gives empty list", type(smid[3].mids) == "table" and #smid[3].mids == 0)
+check("parse_station: bid -1 with mids still parsed", smid[1].bid == -1 and smid[1].mids[1] == 164692)
+check("parse_station: 8-column line keeps bid", smid[3].bid == 6)
+local s8 = F.parse_station("B\tBPO_Old\t1\t1\t0\t2\t/Game/O.O_C\t7\n")
+check("parse_station: old 8-column line still parses", #s8 == 1 and s8[1].bid == 7 and s8[1].rot == 2 and #s8[1].mids == 0)
+-- mids: non-numeric pieces skipped (no nil holes), spaces tolerated, order kept
+local sjunk = F.parse_station("B\tBPO_G\t0\t0\t0\t0\t/Game/G.G_C\t1\t12,x,14\nB\tBPO_H\t0\t0\t0\t0\t/Game/H.H_C\t1\t 5 , 6 \nB\tBPO_I\t0\t0\t0\t0\t/Game/I.I_C\t1\t\n")
+check("parse_station: mids skip non-numeric piece", #sjunk[1].mids == 2 and sjunk[1].mids[1] == 12 and sjunk[1].mids[2] == 14)
+check("parse_station: mids trim spaces", #sjunk[2].mids == 2 and sjunk[2].mids[1] == 5 and sjunk[2].mids[2] == 6)
+check("parse_station: mids empty gives {}", type(sjunk[3].mids) == "table" and #sjunk[3].mids == 0)
+
+-- ===== parse_docks (0.8.3 native read_docks text)
+local dk = F.parse_docks("D\t164700\t164688\t164692\tBPO_ShipyardBlockDock\tShipyard Dock 4\t164700\nD\t5\t-1\t164692\tBPO_IndustrialDock\t\t-1\n")
+check("parse_docks: two rows", #dk == 2)
+check("parse_docks: row fields", dk[1].machine_id == 164700 and dk[1].block_id == 164688 and dk[1].parent_id == 164692
+    and dk[1].class == "BPO_ShipyardBlockDock" and dk[1].name == "Shipyard Dock 4" and dk[1].raw_id == 164700)
+check("parse_docks: empty name kept, unknown block id -1", dk[2].name == "" and dk[2].block_id == -1 and dk[2].raw_id == -1)
+local de = F.parse_docks("")
+check("parse_docks: empty text gives empty table", type(de) == "table" and #de == 0)
 
 -- ===== parse_block_class (0.8.0 native read_block_class text)
 local bi = F.parse_block_class("K\t1\t0\t2\t-524088\t-524088\t-262144\t524188\t524088\t655360\nI\tDAT_Iron\t5\nI\tDAT_Gear\t2\n")
@@ -254,6 +283,34 @@ do
     _G.MSCoreNative_read_block_class = nil
     setmetatable(_G, nil)
     if not sec_ok then check("add_block section ran without error: " .. tostring(sec_err), false) end
+end
+
+-- ===== factory_native.rename_dock (0.8.3): fake native, same stub setup as inv_split
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local r1, w1 = MSC.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: missing native gives nil, 'missing' text", r1 == nil and tostring(w1):find("missing", 1, true) ~= nil)
+        local seen
+        _G.MSCoreNative_rename_dock = function(id, text) seen = { id, text } return false, "refused" end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r2, w2 = MSC2.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: native refusal text is passed through", r2 == nil and w2 == "refused")
+        check("rename_dock: id and text reach the native", seen and seen[1] == 2325 and seen[2] == "Dock A")
+        _G.MSCoreNative_rename_dock = function() return true, "" end
+        local MSC3 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r3, w3 = MSC3.factory_native.rename_dock(2325, "Dock A")
+        check("rename_dock: ok gives true, no reason", r3 == true and w3 == nil)
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_rename_dock = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("rename_dock section ran without error: " .. tostring(sec_err), false) end
 end
 
 print(string.format("%d passed, %d failed", pass, fail))

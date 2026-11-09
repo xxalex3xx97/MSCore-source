@@ -5,6 +5,15 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.3 - Native docks with block ids
+- **New:** native `read_docks(stationId)` (`MSCoreNative_read_docks`, `MSCore.factory_native.read_docks`): the Dock objects of one station as rows `{machine_id, block_id, parent_id, class, name, raw_id}`. Fields are found by property name in C++.
+- **New:** `read_station` `B` lines have an 8th column, the block's BlockID (`-1` when unreadable). `parse_station` gives it as `bid` (`nil` on older lines).
+- **New:** `read_station` `B` lines have a 9th column `mids`: the comma-separated MachineIDs of the block's child machines (`DefaultMachines`, fallback `DefaultMachineIDs`), empty when none. A dock block can read BlockID `-1`, so match docks through `mids`. `parse_station` gives `blocks[i].mids` (a list, `{}` when absent). Not verified in game yet.
+- **New:** selfcheck `native.read_docks` (counts, first row, whether a live block bid equals a dock block_id, and how many blocks have a dock machine_id in `mids`).
+- **New:** native `rename_dock(receiverId, text)` (`MSCoreNative_rename_dock`, `MSCore.factory_native.rename_dock`): `SetTextInputCommand.CreateInputSetText(Text, 0)` built in C++ (FText made natively, never through Lua), then `AddInputCommand(receiverId, cmd)`. Returns `true` or `false, err`. Name 1-200 characters, receiver > 0. Param buffer sized from the real offsets (text/config/ret) and the UFunction parms size; FText copied as its first 16 bytes (object ptr + ref), config written after; offsets out of range or overlapping return `CreateInputSetText param offsets out of range: psize=.. text=.. config=.. ret=.. sizeof(FText)=..`. The Lua form `CreateInputSetText` crashes the game (access violation in `FText::ToFString` while UE4SS pushes the null FText back to Lua; `pcall` cannot catch it). Needs the 0.8.3 build 3 DLL.
+- **Fixed:** build 1 of 0.8.3 crashed the game (EXCEPTION_ACCESS_VIOLATION inside a UE4SS Lua UStruct lambda). The cause was the selfcheck `native.types` check, which walked UStruct/UProperty reflection from Lua; `pcall` cannot catch a native access violation. Removed. selfcheck has no Lua reflection now.
+- Native API is 6 (`MSCore_api()` returns `6`, the new natives are Lua only). Lua API stays 3. Module version `0.8.3`.
+
 ## 0.8.2 - Events tick on the game thread
 - **Fixed:** the events tick no longer runs Lua on UE4SS's async thread. It runs on the game thread (`LoopInGameThreadWithDelay`, through the `loopGT` helper). The async thread corrupted the shared Lua state during long imports in other mods (Blueprint Unit).
 - Native API stays 5, Lua API 3.

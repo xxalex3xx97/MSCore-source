@@ -255,13 +255,15 @@ end
 
 -- parse_station(text) -> blocks, machines. Text from MSCore.native.read_station (format: cpp/MSCore/msc_station.hpp).
 -- B\tclass\tgx\tgy\th\trot[\tclassPath] ; M\tid\tcls\tx\ty\th\trot\tcfg. cfg "-" -> nil (unreadable), "" -> "" (empty), else raw bytes.
--- path = full class path (0.8.0 7th column), nil on an older 6-column line.
+-- path = full class path (0.8.0 7th column), nil on an older 6-column line. bid = BlockID (0.8.3 8th column), -1 when unreadable, nil when absent. mids = child machine ids (9th column), {} when absent.
 function M.parse_station(text)
     local blocks, machines = {}, {}
     for _, line in ipairs(split_plain(text or "", "\n")) do
         local f = split_plain(line, "\t")
         if f[1] == "B" and #f >= 6 then
-            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]), path = f[7] }
+            local mids = {}   -- child machine ids (0.8.3 9th column, comma-separated); {} when absent or empty
+            if f[9] and f[9] ~= "" then for p in string.gmatch(f[9], "[^,]+") do local n = tonumber(p); if n then mids[#mids + 1] = n end end end   -- tonumber skips spaces; non-numeric pieces dropped
+            blocks[#blocks + 1] = { class = f[2], gx = tonumber(f[3]), gy = tonumber(f[4]), h = tonumber(f[5]), rot = tonumber(f[6]), path = f[7], bid = tonumber(f[8] or ""), mids = mids }
         elseif f[1] == "M" and #f >= 8 then
             local cfg = f[8]
             if cfg == "-" then cfg = nil
@@ -271,6 +273,18 @@ function M.parse_station(text)
         end
     end
     return blocks, machines
+end
+
+-- parse_docks(text) -> rows {machine_id, block_id, parent_id, class, name, raw_id} (0.8.3). Text from MSCore.native.read_docks: D lines (msc_station.hpp).
+function M.parse_docks(text)
+    local rows = {}
+    for _, line in ipairs(split_plain(text or "", "\n")) do
+        local f = split_plain(line, "\t")
+        if f[1] == "D" and #f >= 7 then
+            rows[#rows + 1] = { machine_id = tonumber(f[2]), block_id = tonumber(f[3]), parent_id = tonumber(f[4]), class = f[5], name = f[6], raw_id = tonumber(f[7]) }
+        end
+    end
+    return rows
 end
 
 -- parse_block_class(text) -> {station, ship, machines, min={x,y,z}, max={x,y,z}, cost={{item, amount}}} or nil, err. Text from MSCore.native.read_block_class (K and I lines, msc_station.hpp).
