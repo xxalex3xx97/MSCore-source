@@ -4,6 +4,9 @@
 //      Here the FText is built natively and never crosses into Lua. Included after msc_factory.hpp (uses send_typed, factory_guard, prm).
 // GAME FACTS: SetTextInputCommand = type id 57; Text FText @ +0x40, Config @ +0x50 (vault rea-machine-config.md). Receiver = dock MachineID.
 #pragma once
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <new>
 #include <string>
 #include <utility>
@@ -66,18 +69,30 @@ namespace
         const size_t toff = static_cast<size_t>(tp->GetOffset_Internal());
         const size_t coff = static_cast<size_t>(cp->GetOffset_Internal());
         const size_t roff = static_cast<size_t>(rp->GetOffset_Internal());
-        if (toff + sizeof(FText) > psize || coff + sizeof(int32_t) > psize || roff + sizeof(UObject*) > psize)
-        { err = STR("CreateInputSetText params size mismatch"); return false; }
+        const size_t fsize = sizeof(FText);
+        wchar_t offmsg[256];
+        swprintf(offmsg, 256, L"CreateInputSetText param offsets out of range: psize=%zu text=%zu config=%zu ret=%zu sizeof(FText)=%zu",
+                 psize, toff, coff, roff, fsize);
+        // ranges: text [toff, toff+16) (the FText object ptr + ref controller), config [coff, coff+4), ret [roff, roff+8)
+        if (toff >= 0x400 || coff >= 0x400 || roff >= 0x400) { err = offmsg; return false; }
+        const bool overlap = (toff < coff + 4 && coff < toff + 16) || (toff < roff + 8 && roff < toff + 16) || (coff < roff + 8 && roff < coff + 4);
+        if (overlap) { err = offmsg; return false; }
 
-        std::vector<uint8_t> buf(psize + 16, 0);
-        const int32_t config = 0;
-        std::memcpy(buf.data() + coff, &config, sizeof(config));
+        const size_t needed = std::max({ psize, toff + 24, coff + sizeof(int32_t), roff + sizeof(UObject*) });
+        std::vector<uint8_t> buf(needed + 64, 0);
 
-        // 5. FText built natively, then MOVED into the buffer: the move zeroes the local, so only the buffer owns the reference.
-        //    The buffer copy is never destructed here (if the callee destroys it, the ref is released once; else it leaks, harmless).
+        // 5. FText built natively. The engine layout (16-byte ptr + ref, then flags) may differ from UE4SS sizeof(FText),
+        //    so the copy goes into an aligned scratch and only the first 16 bytes move into the buffer (flags stay zero).
+        //    The scratch is never destructed: the ref now belongs to the buffer (worst case one leaked ref).
         FText ftext(wtext.c_str());
         if (!ftext.GetTextData()) { err = STR("FText construction failed"); return false; }
-        new (buf.data() + toff) FText(std::move(ftext));
+        alignas(16) unsigned char scratch[sizeof(FText) + 16];
+        FText* moved = new (scratch) FText(std::move(ftext));
+        std::memcpy(buf.data() + toff, moved, 16);
+
+        // Config written after the FText copy, so an oversized FText can never clobber it
+        const int32_t config = 0;
+        std::memcpy(buf.data() + coff, &config, sizeof(config));
 
         // 6-7. call and read the returned command
         cdo->ProcessEvent(fn, buf.data());
