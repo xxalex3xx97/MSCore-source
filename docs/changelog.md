@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.2 - Events tick on the game thread
+- **Fixed:** the events tick no longer runs Lua on UE4SS's async thread. It runs on the game thread (`LoopInGameThreadWithDelay`, through the `loopGT` helper). The async thread corrupted the shared Lua state during long imports in other mods (Blueprint Unit).
+- Native API stays 5, Lua API 3.
+
 ## 0.8.1 - Refund redirect only on demand
 - **Fixed:** manual deconstruction refunds went into the Blueprint Unit instead of the player. The redirect was on at MSCore start since 0.7.5.
 - **Changed:** redirect off by default. Opt-in file `Mods/MSCore/refund_redirect_on.txt` restores the old always-on behaviour (not used if `refund_redirect_off.txt` exists). Mods that need the redirect call `MSCoreNative_redirect_enable(true)` and must turn it off again with `(false)`. Blueprint Unit does this around its own builds.
