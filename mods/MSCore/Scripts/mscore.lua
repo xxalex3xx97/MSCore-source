@@ -204,6 +204,21 @@ function ui.hadd(hb, w)
 end
 
 ---------------------------------------------------------------- events: one shared 250 ms poll loop per Lua state
+-- game-thread timer. UE4SS LoopAsync runs its Lua lambda on the async thread inside this Lua state and corrupts it while the game thread runs long Lua (BPU import).
+-- LoopInGameThreadWithDelay runs on the game thread only. fn returns true = stop. Old UE4SS without it: LoopAsync + ExecuteInGameThread as before.
+local function loopGT(ms, fn)
+    if LoopInGameThreadWithDelay and CancelDelayedAction then
+        local h
+        local okL, res = pcall(LoopInGameThreadWithDelay, ms, function() if fn() then pcall(CancelDelayedAction, h) end end)
+        if okL then h = res; return end
+    end
+    local stop = false
+    LoopAsync(ms, function()
+        if stop then return true end
+        pcall(ExecuteInGameThread, function() if not stop and fn() then stop = true end end)
+        return false
+    end)
+end
 local events = {}
 MSCore.events = events
 local ev = { fns = {}, n = 0, started = false }
@@ -213,13 +228,11 @@ function events.on(name, fn)
     ev.fns[ev.n] = fn
     if not ev.started then
         ev.started = true
-        LoopAsync(250, function()
-            pcall(ExecuteInGameThread, function()
-                for i = 1, ev.n do
-                    local f = ev.fns[i]
-                    if f then pcall(f) end
-                end
-            end)
+        loopGT(250, function()
+            for i = 1, ev.n do
+                local f = ev.fns[i]
+                if f then pcall(f) end
+            end
             return false
         end)
     end
