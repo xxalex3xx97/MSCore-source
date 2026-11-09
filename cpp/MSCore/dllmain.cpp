@@ -40,7 +40,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.1";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.2";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -1094,7 +1094,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.1");
+        ModVersion = STR("0.8.2");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
