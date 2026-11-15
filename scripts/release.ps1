@@ -68,6 +68,11 @@ try {
     Copy-Item -LiteralPath $ueFiles[0] "$us\dwmapi.dll"
     Copy-Item -LiteralPath $ueFiles[1] "$us\ue4ss\UE4SS.dll"
     Copy-Item -LiteralPath $ueFiles[2] "$us\ue4ss\UE4SS-settings.ini"
+    # release builds hide the UE4SS console and GUI (the dev install keeps them visible; the manager never overwrites an existing ini)
+    $ini = "$us\ue4ss\UE4SS-settings.ini"
+    $txt = [IO.File]::ReadAllText($ini)
+    foreach ($k in 'ConsoleEnabled', 'GuiConsoleEnabled', 'GuiConsoleVisible') { $txt = $txt -replace "(?m)^$k\s*=\s*\d+", "$k = 0" }
+    [IO.File]::WriteAllText($ini, $txt)
     Copy-Item -LiteralPath $ueFiles[3] "$us\ue4ss\UE4SS-LICENSE.txt"
     if ($hasThird) { Copy-Item -LiteralPath $third "$us\ue4ss\THIRD-PARTY.txt" }
     $ueZipName = "ue4ss-$Ue4ssVersion.zip"
