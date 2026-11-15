@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.4 - Quiet release install
+- **Changed:** the `UE4SS-settings.ini` that ships with a release has the UE4SS console and GUI hidden (`ConsoleEnabled`, `GuiConsoleEnabled`, `GuiConsoleVisible` = 0). Dev installs keep their own file. The manager never overwrites an existing `UE4SS-settings.ini`, so players who already have one keep their console until they set those three lines to `0`.
+- No API change. Native API 5, Lua API 3. Not yet run in game.
+
 ## 0.8.3 - Native docks with block ids
 - **New:** native `read_docks(stationId)` (`MSCoreNative_read_docks`, `MSCore.factory_native.read_docks`): the Dock objects of one station as rows `{machine_id, block_id, parent_id, class, name, raw_id}`. Fields are found by property name in C++.
 - **New:** `read_station` `B` lines have an 8th column, the block's BlockID (`-1` when unreadable). `parse_station` gives it as `bid` (`nil` on older lines).
