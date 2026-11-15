@@ -31,7 +31,7 @@ If it finds nothing, click **Browse game folder** and pick the `Main Sequence De
 Click **Install/Repair MSCore**. The manager:
 
 - copies the UE4SS files (`dwmapi.dll` and `ue4ss\`) into the game folder;
-- keeps an existing `UE4SS-settings.ini` and only creates it when it is missing;
+- keeps an existing `UE4SS-settings.ini` and only creates it when it is missing (the release copy has the UE4SS console and GUI hidden; players who already have an ini keep theirs and can set `ConsoleEnabled`, `GuiConsoleEnabled` and `GuiConsoleVisible` to `0` themselves);
 - installs MSCore into `ue4ss\Mods\MSCore`;
 - adds the line `MSCore : 1` to `ue4ss\Mods\mods.txt`.
 
