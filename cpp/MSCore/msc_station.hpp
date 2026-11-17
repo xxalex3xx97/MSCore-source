@@ -371,8 +371,8 @@ namespace
     // WHAT: the game's RemoveAtSlot / AddAtSlot, bound by RVA. The 40 entry bytes of each are compared first (msc_refund.hpp rule: fail closed).
     // WHY: RE 2026-11. int fn(Inventory* rcx, ItemStack* rdx, int32 slot), Win64 ABI. RemoveAtSlot's return value is unreliable: the slot is re-read instead.
     //      AddAtSlot has no bounds check, puts into exactly that slot if empty, merges only same item, never spills elsewhere.
-    constexpr uint64_t SPLIT_REMOVE_RVA = 0x421c730;
-    constexpr uint64_t SPLIT_ADD_RVA = 0x4216060;
+    constexpr uint64_t SPLIT_REMOVE_RVA = 0x428c840;
+    constexpr uint64_t SPLIT_ADD_RVA = 0x4289960;
     constexpr size_t SPLIT_HEAD_LEN = 40;
     constexpr uint8_t SPLIT_REMOVE_HEAD[SPLIT_HEAD_LEN] = {
         0x40, 0x53, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x30, 0x49,

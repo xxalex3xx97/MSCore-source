@@ -7,11 +7,11 @@
 //         unit first and overflow to the player inventory, and only then to the game's drop object.
 //       CHARGE: for the 4 whitelisted sim call sites the helper returns the group [unit_inventory, normal inventory] instead of the normal
 //         inventory (GetAmount sums members, Remove takes unit first).
-//       Groups: one persistent rooted InventoryGroup per path, made with the game's own constructor (RVA 0x421a0b0, byte guarded) on the game
+//       Groups: one persistent rooted InventoryGroup per path, made with the game's own constructor (RVA 0x428bbc0, byte guarded) on the game
 //       thread at first use; the two member slots (TArray at +0x70, count +0x78) are overwritten per use. Refund group members are nulled after
 //       use. If no group can be made, refund falls back to swapping [player+0x288] to the unit inventory itself; charge then does nothing.
 // WHY: lets players keep build materials and deconstruction refunds in the Blueprint Unit.
-// SAFETY: fail closed. Nothing is installed unless: exe size == 149200896, both entry patterns match exactly once in .text, the expected 7
+// SAFETY: fail closed. Nothing is installed unless: exe size == 149299200, both entry patterns match exactly once in .text, the expected 7
 //         entry bytes are there, and exactly 4 call sites `48 8B 4F 60 E8 rel32` call the charge helper. Any failure installs nothing and logs
 //         "COMPAT refund ...". Any doubt in a lookup (frame not a station, no unit, inventory dead, creative sender) calls the original unchanged.
 //         All raw game reads run inside SEH; hook bodies catch everything and have reentrancy guards.
@@ -40,22 +40,22 @@
 
 namespace
 {
-    constexpr uint64_t REF_EXE_SIZE = 149200896;   // the verified build
+    constexpr uint64_t REF_EXE_SIZE = 149299200;   // the verified build
     constexpr const char* REF_PAT_DISASM = "48 8B C4 55 48 8B EC 48 83 EC 70 48 89 58 08 48 89 70 10 48 89 78 18 48 8B F9 4C 89 60 20 45 33 E4 4C 89 70 F0 4C 89 78 E8 48 8B 81 80 01 00 00 4C 8B BA 88 02 00 00";   // va 0x144226170
     constexpr const char* REF_PAT_CHARGE = "48 8B 81 40 02 00 00 48 85 C0 74 18 8B 40 08 0F BA E0 1E 72 0F 48 8B 81 40 02 00 00";   // va 0x14427f120
     constexpr uint8_t REF_HEAD_DISASM[7] = { 0x48, 0x8B, 0xC4, 0x55, 0x48, 0x8B, 0xEC };   // mov rax,rsp; push rbp; mov rbp,rsp
     constexpr uint8_t REF_HEAD_CHARGE[7] = { 0x48, 0x8B, 0x81, 0x40, 0x02, 0x00, 0x00 };   // mov rax,[rcx+0x240]
     // FindObject(map owner, id) -> UObject*: a pure hash lookup (many identical template copies exist, so an RVA + byte check, not a unique pattern)
-    constexpr uint64_t REF_FINDOBJ_RVA = 0x4220ee0;
+    constexpr uint64_t REF_FINDOBJ_RVA = 0x42d8080;
     constexpr const char* REF_PAT_FINDOBJ = "40 53 48 83 EC 20 8B 41 48 8B DA 3B 41 74 74 47 44 8B 81 88 00 00 00 4C 8D 51 78 4D 8B 4A 08 41 FF C8 4C 23 C3";
     constexpr size_t REF_SITES = 4;
     constexpr size_t REF_RING = 200;
     constexpr const char* REF_CONTAINER_CLASS = "BP_BPUnitStoreObj_01_C";
     constexpr const char* REF_STATION_CLASS = "BP_StationObject_C";
     // InventoryGroup constructor (primary, secondary) -> group, va 0x14421a0b0. '?' = rip-relative displacement (4 bytes).
-    constexpr uint64_t REF_GCTOR_RVA = 0x421a0b0;
+    constexpr uint64_t REF_GCTOR_RVA = 0x428bbc0;
     constexpr const char* REF_PAT_GCTOR = "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 81 EC B0 00 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 84 24 A0 00 00 00 48 8B EA 48 8B F1 E8";
-    constexpr uint64_t REF_GROUP_VT_RVA = 0x734e238;   // inner vtable of an InventoryGroup (at group+0x68), va 0x14734e238
+    constexpr uint64_t REF_GROUP_VT_RVA = 0x736e600;   // inner vtable of an InventoryGroup (at group+0x68), va 0x14736e600
     constexpr int REF_LOG_FIRST = 20;                  // REDIRECT lines: first N, then every REF_LOG_EVERY-th
     constexpr int REF_LOG_EVERY = 25;
 
@@ -263,7 +263,7 @@ namespace
         uint8_t creative = 0;
         void* sim = nullptr;
         ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach);
-        ref_rd(reinterpret_cast<uint8_t*>(player) + 0x370, creative);
+        ref_rd(reinterpret_cast<uint8_t*>(player) + 0x390, creative);
         ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim);
         std::string chain;
         int levels = 0;
@@ -460,7 +460,7 @@ namespace
         uint8_t creative = 0;
         int32_t attach = 0;
         void* sim = nullptr;
-        if (!orig || !alive(reinterpret_cast<UObject*>(orig)) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x370, creative) || creative ||
+        if (!orig || !alive(reinterpret_cast<UObject*>(orig)) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x390, creative) || creative ||
             !ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim) || attach <= 0)
         { ++g_ref.st_skip; return nullptr; }
         RefUnit u;
