@@ -37,6 +37,7 @@ using namespace RC::Unreal;
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
 #include "msc_rename.hpp"
+#include "msc_dockfilter.hpp"
 #include "msc_refund.hpp"
 #include "msc_loader.hpp"
 
@@ -859,6 +860,18 @@ namespace
         return 2;
     }
 
+    // Lua: set_dock_filter(receiverId int, index int, itemName string, bLoading 0|1) -> ok, err   (native StationConsoleInput SetFilter)
+    int lua_set_dock_filter(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try {
+            if (!nums(lua, 2) || lua_type(lua.get_lua_state(), 3) != LUA_TSTRING || lua_type(lua.get_lua_state(), 4) != LUA_TNUMBER) err = STR("set_dock_filter needs receiver id, index, item name string, bLoading number");
+            else { const int receiver = arg_int(lua); const int index = arg_int(lua); const std::string item = arg_bytes(lua); const int loading = arg_int(lua); ok = factory_guard([&] { return set_dock_filter(receiver, index, item, loading != 0, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
     // Lua: rename_dock(receiverId int, text string) -> ok, err   (native SetTextInputCommand; the FText never reaches Lua)
     int lua_rename_dock(const LuaMadeSimple::Lua& lua)
     {
@@ -1108,6 +1121,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
     lua.register_function("MSCoreNative_read_docks", lua_read_docks);
     lua.register_function("MSCoreNative_rename_dock", lua_rename_dock);
+    lua.register_function("MSCoreNative_set_dock_filter", lua_set_dock_filter);
     lua.register_function("MSCoreNative_inv_split", lua_inv_split);
     lua.register_function("MSCoreNative_export_ok", lua_export_ok);
     lua.register_function("MSCoreNative_refund_enable", lua_refund_enable);
@@ -1160,7 +1174,7 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only).
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); level 7 note: set_dock_filter (Lua native only, no C export, number unchanged).
     MSCORE_API int MSCore_api() { return 6; }
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)

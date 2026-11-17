@@ -18,7 +18,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     redirect_status = nat("MSCoreNative_redirect_status"), redirect_stats = nat("MSCoreNative_redirect_stats"), refund_log = nat("MSCoreNative_refund_log"),
     send_typed = _G.MSCoreNative_send_typed, find_buildable = _G.MSCoreNative_find_buildable, build_place = _G.MSCoreNative_build_place,
     disassemble = _G.MSCoreNative_disassemble, set_recipe = _G.MSCoreNative_set_recipe, port_toggle = _G.MSCoreNative_port_toggle,
-    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok, read_docks = _G.MSCoreNative_read_docks, rename_dock = _G.MSCoreNative_rename_dock,
+    inv_move = _G.MSCoreNative_inv_move, read_station = _G.MSCoreNative_read_station, read_inventory = _G.MSCoreNative_read_inventory, inv_split = _G.MSCoreNative_inv_split, export_ok = _G.MSCoreNative_export_ok, read_docks = _G.MSCoreNative_read_docks, rename_dock = _G.MSCoreNative_rename_dock, set_dock_filter = _G.MSCoreNative_set_dock_filter,
     add_block = _G.MSCoreNative_add_block, remove_block = _G.MSCoreNative_remove_block, pending =_G.MSCoreNative_pending, read_block_class = _G.MSCoreNative_read_block_class } or nil
 
 function MSCore.require(n)
@@ -441,6 +441,15 @@ function factory_native.rename_dock(receiverId, text)
     if not N then return nil, NO_NATIVE end
     if not N.rename_dock then return nil, "native rename_dock missing (MSCore 0.8.3 build 3 needed)" end
     local ok, err = N.rename_dock(receiverId, text)
+    if not ok then return nil, err end
+    return true
+end
+-- set a dock item filter (native StationConsoleInput SetFilter): true | nil, reason
+function factory_native.set_dock_filter(receiverId, index, itemName, bLoading)
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.set_dock_filter then return nil, "native set_dock_filter missing (newer MSCore build needed)" end
+    local ok, err = N.set_dock_filter(receiverId, index, itemName, bLoading)
     if not ok then return nil, err end
     return true
 end
