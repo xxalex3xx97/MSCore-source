@@ -9,7 +9,7 @@
 
 namespace
 {
-    // resolve table, verified build 149200896; selfcheck native.offsets guards it
+    // resolve table, verified build 149299200; selfcheck native.offsets guards it
     constexpr int kTypeIdOffset = 0x28;
     constexpr int kThrottleTypeId = 0x3a;
     constexpr double kViewRawPerDeg = 65536.0;

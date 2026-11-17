@@ -184,7 +184,7 @@ int main()
     CHECK(charge(g_thunk1, 1100) == SHIP);           // station without unit
     CHECK(charge(g_thunk1, 1200) == SHIP);           // not a station, no parent
     CHECK(charge(g_thunk2, 1000) == SHIP);           // not a whitelisted call site
-    put<uint8_t>(P, 0x370, 1); CHECK(charge(g_thunk1, 1000) == SHIP); put<uint8_t>(P, 0x370, 0);   // creative sender
+    put<uint8_t>(P, 0x390, 1); CHECK(charge(g_thunk1, 1000) == SHIP); put<uint8_t>(P, 0x390, 0);   // creative sender
     put<void*>(P, 0x240, nullptr);                   // orig inventory null -> original result (null) passes through
     CHECK(charge(g_thunk1, 1000) == nullptr);
     put<void*>(P, 0x240, SHIP);
