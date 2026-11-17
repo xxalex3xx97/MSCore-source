@@ -188,7 +188,7 @@ namespace
     }
 
     // player Inventory / bCreative offsets, resolved by ref_resolve_player (see below)
-    struct RefOff { int inv = -1, creative = -1; uint8_t cmask = 1; bool tried = false; };
+    struct RefOff { int inv = -1, creative = -1; uint8_t cmask = 1; bool tried = false; int n = 0; };
     RefOff g_roff;
 
     // ---------------- probe bodies (log only) ----------------
@@ -387,7 +387,8 @@ namespace
     {
         if (g_roff.tried) return g_roff.inv >= 0 && g_roff.creative >= 0;
         if (!player || !alive(player)) return false;
-        g_roff.tried = true;
+        if (++g_roff.n >= 3) g_roff.tried = true;   // a miss is retried (first call may not be the player); latched after 3 or on success
+        g_roff.inv = -1; g_roff.creative = -1;
         FProperty* pi = st_field(player->GetClassPrivate(), STR("Inventory"));
         FProperty* pc = st_field(player->GetClassPrivate(), STR("bCreative"));
         auto* bc = pc ? CastField<FBoolProperty>(pc) : nullptr;
@@ -396,6 +397,7 @@ namespace
         msc_log(STR("COMPAT OFFSET Player.Inventory = ") + nat_hex(g_roff.inv < 0 ? 0 : g_roff.inv) + (pi ? STR("") : STR(" MISSING")));
         msc_log(STR("COMPAT OFFSET Player.bCreative = ") + nat_hex(g_roff.creative < 0 ? 0 : g_roff.creative) + (bc ? STR("") : STR(" MISSING")));
         const bool ok = g_roff.inv >= 0 && g_roff.creative >= 0;
+        if (ok) g_roff.tried = true;
         caps_add("refund_offsets", ok, "Player.Inventory/bCreative");
         return ok;
     }

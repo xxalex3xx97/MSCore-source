@@ -7,12 +7,14 @@
 
 #include <string>
 #include <vector>
+#include <mutex>
 
 namespace
 {
     struct CapRow { std::string name; bool ok; std::string why; };
     std::vector<CapRow> g_caps;
-    void caps_add(const std::string& name, bool ok, const std::string& why) { g_caps.push_back({ name, ok, why }); }
+    std::mutex g_caps_mx;   // caps_add runs on the game thread, caps_text on the Lua thread
+    void caps_add(const std::string& name, bool ok, const std::string& why) { std::lock_guard<std::mutex> lk(g_caps_mx); g_caps.push_back({ name, ok, why }); }
     // "name=ok name=off:why ..." (each entry followed by a space)
-    std::string caps_text() { std::string s; for (auto& c : g_caps) s += c.name + (c.ok ? "=ok" : "=off:" + c.why) + " "; return s; }
+    std::string caps_text() { std::lock_guard<std::mutex> lk(g_caps_mx); std::string s; for (auto& c : g_caps) s += c.name + (c.ok ? "=ok" : "=off:" + c.why) + " "; return s; }
 }
