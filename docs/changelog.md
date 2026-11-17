@@ -5,8 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.5 - Game update compat
+- **Compat:** game build 149299200 supported: the refund redirect's exe size check, function addresses and the player creative-flag offset follow the new game build, and `verified_build` in the Lua side is bumped to match. Without this the refund redirect refused to start on the new build ("COMPAT refund failed: exe size").
+- No API change. Native API 5, Lua API 3. Not yet run in game beyond the Blueprint Unit build click.
+
 ## 0.8.4 - Quiet release install
-- **Compat:** game build 149299200 supported: `verified_build` in the Lua side bumped to match the native guards (no API change).
 - **Changed:** the `UE4SS-settings.ini` that ships with a release has the UE4SS console and GUI hidden (`ConsoleEnabled`, `GuiConsoleEnabled`, `GuiConsoleVisible` = 0). Dev installs keep their own file. The manager never overwrites an existing `UE4SS-settings.ini`, so players who already have one keep their console until they set those three lines to `0`.
 - No API change. Native API 5, Lua API 3. Not yet run in game.
 
