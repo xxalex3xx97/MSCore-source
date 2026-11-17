@@ -67,6 +67,12 @@ namespace
         bool patched = false;
     };
 
+    // Lua-armed redirect idle-drain. BPU renews (redirect_enable(true)) while its run is active (about every 4 s). After the run,
+    // BPU calls enable(false) but the game still disassembles/refunds for minutes, so MSCore keeps the redirect on and
+    // switches it off REF_IDLE_MS after the last redirected item. REF_MAX_MS = hard cap since the last renewal.
+    constexpr ULONGLONG REF_IDLE_MS = 8000;
+    constexpr ULONGLONG REF_MAX_MS = 600000;
+
     struct RefState
     {
         bool enabled = false;
@@ -78,6 +84,11 @@ namespace
         uint8_t* gctor = nullptr;           // group constructor (null = groups unavailable)
         uint64_t group_vt = 0;              // vtable of the first group made by the game's own constructor (0 = not learned yet)
         bool redirect = false;              // redirect switch (default on at start)
+        bool lua_armed = false;             // redirect was turned on from Lua (expires unless renewed); the opt-in file never sets it
+        bool opt_in = false;                // startup file opt-in turned redirect on; Lua enable(true) does not arm expiry while set
+        ULONGLONG armed_ms = 0;             // GetTickCount64 of the last Lua enable(true) (renewal)
+        ULONGLONG last_event_ms = 0;        // GetTickCount64 of the last actually redirected refund or charge
+        bool draining = false;              // Lua enable(false) while armed: stays on until idle (ref_expired)
         void* grp_refund = nullptr;         // persistent rooted InventoryGroup objects
         void* grp_charge = nullptr;
         int group_fail_n = 0;               // sticky: after 3 failed creations stop trying
@@ -577,9 +588,26 @@ namespace
         return r;
     }
 
+    // WHAT: auto-off for the Lua-armed redirect. Returns true (and logs once) when it just expired. Hooks call it first; an expired redirect passes through.
+    bool ref_expired()
+    {
+        if (!g_ref.redirect || !g_ref.lua_armed) return false;
+        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG last = g_ref.armed_ms > g_ref.last_event_ms ? g_ref.armed_ms : g_ref.last_event_ms;
+        const bool cap = now - g_ref.armed_ms > REF_MAX_MS;
+        const bool idle = now - last > REF_IDLE_MS;
+        if (!cap && !idle) return false;
+        g_ref.redirect = false;
+        g_ref.lua_armed = false;
+        g_ref.draining = false;
+        msc_log(cap ? L"REDIRECT auto-off (cap 600 s)" : L"REDIRECT auto-off (idle 8 s)");
+        return true;
+    }
+
     uint64_t ref_hook_disasm(void* machine, void* player, void*, void*)
     {
         const RefFn2 orig = ref_tramp(g_ref.a);
+        ref_expired();
         if (t_dis_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig(machine, player);
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig(machine, player);
         void* newinv = nullptr;
@@ -598,6 +626,7 @@ namespace
             catch (...) { newinv = nullptr; ++g_ref.st_err; }
         }
         if (!newinv) return orig(machine, player);
+        g_ref.last_event_ms = GetTickCount64();
         t_dis_busy = true;   // nested DisassembleSelf calls inside the original pass through unchanged; cleared by ref_call_swapped
         return ref_call_swapped(orig, machine, player, newinv, saved, grp);
     }
@@ -605,6 +634,7 @@ namespace
     void* ref_hook_charge(void* player, void*, void* cmd, void* ret)
     {
         void* const orig = reinterpret_cast<void*>(ref_tramp(g_ref.b)(player, nullptr));
+        ref_expired();
         if (t_chg_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig;
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig;
         RefBusy guard(t_chg_busy);
@@ -618,6 +648,7 @@ namespace
                 res = nullptr;
         }
         catch (...) { res = nullptr; ++g_ref.st_err; }
+        if (res) g_ref.last_event_ms = GetTickCount64();
         return res ? res : orig;
     }
 
@@ -801,7 +832,7 @@ namespace
         if (!g_ref.valid) return;
         if (!g_ref.enabled && !g_ref.redirect) { ref_unpatch(); g_ref.status = "off"; return; }
         g_ref.status = std::string("on: redirect=") + (g_ref.redirect ? "on" : "off") + " probe_log=" + (g_ref.enabled ? "on" : "off") +
-                       " groups=" + (g_ref.gctor && g_ref.group_fail_n < 3 ? "yes" : "no");
+                       " groups=" + (g_ref.gctor && g_ref.group_fail_n < 3 ? "yes" : "no") + (g_ref.draining ? " draining" : "");
     }
 
     // WHAT: probe log switch (MSCoreNative_refund_enable). Returns the status string.
@@ -819,9 +850,10 @@ namespace
         if (on)
         {
             if (!ref_install()) return g_ref.status;
+            const bool was_on = g_ref.redirect;
             g_ref.redirect = true;
             ref_refresh();
-            msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
+            if (!was_on) msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
         }
         else { g_ref.redirect = false; ref_refresh(); }
         return g_ref.status;

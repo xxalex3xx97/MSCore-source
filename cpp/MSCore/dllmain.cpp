@@ -928,13 +928,33 @@ namespace
     }
 
     // Lua: refund_status() / redirect_status() -> status string ("off", "on: redirect=.. probe_log=.. groups=..", or "COMPAT refund failed: <why>").
-    int lua_refund_status(const LuaMadeSimple::Lua& lua) { lua.set_string(g_ref.status); return 1; }
+    int lua_refund_status(const LuaMadeSimple::Lua& lua) { if (ref_expired()) ref_refresh(); lua.set_string(g_ref.status); return 1; }
 
     // Lua: redirect_enable(bool) -> status string. Turns the refund / charge redirect on or off. Default OFF; Blueprint Unit turns it on only while it builds.
     int lua_redirect_enable(const LuaMadeSimple::Lua& lua)
     {
         std::string st;
-        try { st = ref_set_redirect(lua_toboolean(lua.get_lua_state(), 1) != 0); } catch (...) { st = "COMPAT refund failed: exception"; }
+        const bool on = lua_toboolean(lua.get_lua_state(), 1) != 0;
+        try
+        {
+            if (!on && g_ref.redirect && g_ref.lua_armed)
+            {
+                // BPU's run ended but the game still refunds: keep on, ref_expired() switches off after idle.
+                g_ref.draining = true;
+                ref_refresh();
+                st = g_ref.status;
+            }
+            else
+            {
+                g_ref.draining = false;
+                st = ref_set_redirect(on);
+                if (!on) g_ref.opt_in = false;   // explicit Lua off drops the file opt-in
+                // Lua-armed: every enable(true) renews (armed_ms). opt-in file on = never expires.
+                g_ref.lua_armed = on && g_ref.redirect && !g_ref.opt_in;
+                g_ref.armed_ms = GetTickCount64();
+            }
+        }
+        catch (...) { st = "COMPAT refund failed: exception"; }
         lua.set_string(st);
         return 1;
     }
@@ -971,7 +991,7 @@ namespace
         const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
         std::error_code ec;
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
-        if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) ref_set_redirect(true);
+        if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
