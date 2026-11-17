@@ -6,7 +6,7 @@
 //       read_docks(id) (0.8.3): the Dock objects of one station. Lines: D\tmachineId\tblockId\tparentId\tclass\tdisplayName\trawId
 //       read_block_class(path) (0.8.0): class defaults of one BuildingBlockObject class. Lines: K\t... then I\titem\tamount per ItemCost entry.
 //       read_inventory(id) (0.7.3): the ItemSlots of one Inventory, same style. Lines: S\titem\tamount\tmax
-//       inv_split(inv, src, n, dst) (0.7.6): local move between two slots of one Inventory (RVA-bound game functions, see below).
+//       inv_split(inv, src, n, dst) (0.7.6): local move between two slots of one Inventory (pattern-bound game functions, see below).
 //       cfg = lowercase hex of SerializedMachineConfig, "" for an empty array, "-" when the field is unreadable.
 //       Trailing _C is stripped from class names.
 // WHY: Lua struct access to Blueprint crashes UE4SS, so the walk is native. Ported from MiningBenchMod mb_bpprobe.hpp
@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "msc_caps.hpp"
 
 namespace
 {
@@ -368,11 +369,9 @@ namespace
     }
 
     // ---- inv_split (0.7.6): n items from one slot to another slot of the SAME Inventory ----
-    // WHAT: the game's RemoveAtSlot / AddAtSlot, bound by RVA. The 40 entry bytes of each are compared first (msc_refund.hpp rule: fail closed).
+    // WHAT: the game's RemoveAtSlot / AddAtSlot, bound by a unique 40-byte pattern (fail closed when it does not match exactly once).
     // WHY: RE 2026-11. int fn(Inventory* rcx, ItemStack* rdx, int32 slot), Win64 ABI. RemoveAtSlot's return value is unreliable: the slot is re-read instead.
     //      AddAtSlot has no bounds check, puts into exactly that slot if empty, merges only same item, never spills elsewhere.
-    constexpr uint64_t SPLIT_REMOVE_RVA = 0x428c840;
-    constexpr uint64_t SPLIT_ADD_RVA = 0x4289960;
     constexpr size_t SPLIT_HEAD_LEN = 40;
     constexpr uint8_t SPLIT_REMOVE_HEAD[SPLIT_HEAD_LEN] = {
         0x40, 0x53, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x30, 0x49,
@@ -384,8 +383,6 @@ namespace
         0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x30, 0x4c,
         0x8b, 0x3a, 0x48, 0x8b, 0xda, 0x49, 0x63, 0xe8, 0x48, 0x8b,
         0xf9, 0x4d, 0x85, 0xff, 0x0f, 0x84, 0x58, 0x01, 0x00, 0x00 };
-    constexpr size_t SPLIT_SLOTS_OFF = 0x78;        // ItemSlots TArray inside Inventory (checked by property offset)
-    constexpr size_t SPLIT_MULT_OFF = 0xB0;         // int32 stack multiplier of Inventory (RE)
     constexpr size_t SPLIT_FLAGS_OFF = 8;           // uint32 object flags of an Item; bit 30 = dead (RE)
     constexpr uint32_t SPLIT_DEAD_BIT = 1u << 30;
     constexpr size_t SPLIT_STRIDE = 16;             // ItemStack {void* item @0, int32 amount @8, int32 pad @12}
@@ -394,17 +391,34 @@ namespace
     static_assert(sizeof(SplitStack) == SPLIT_STRIDE, "ItemStack layout");
     using SplitAtSlotFn = int (*)(void* inv, SplitStack* st, int32_t slot);
 
-    // WHAT: the two game functions as addresses, after the entry bytes match. false + err when the exe differs.
+    // WHAT: the two game functions as addresses, found by their unique 40-byte head. false + err when either is not found exactly once.
     bool split_fns(void*& rem, void*& add, std::wstring& err)
     {
-        const uint8_t* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
-        if (!base) { err = STR("split: no module base"); return false; }
-        const uint8_t* r = base + SPLIT_REMOVE_RVA;
-        const uint8_t* a = base + SPLIT_ADD_RVA;
-        if (memcmp(r, SPLIT_REMOVE_HEAD, SPLIT_HEAD_LEN) != 0 || memcmp(a, SPLIT_ADD_HEAD, SPLIT_HEAD_LEN) != 0)
-        { err = STR("split: inventory functions differ from this build, feature off"); return false; }
-        rem = const_cast<uint8_t*>(r);
-        add = const_cast<uint8_t*>(a);
+        static void* s_rem = nullptr; static void* s_add = nullptr; static bool s_tried = false;
+        if (!s_tried)
+        {
+            s_tried = true;
+            const uint8_t* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+            const std::vector<NatRange> ranges = base ? nat_ranges(base) : std::vector<NatRange>();
+            const auto find = [&](const uint8_t* head, size_t n) -> void* {
+                std::vector<int16_t> pat(head, head + n);   // exact bytes, no wildcards
+                size_t total = 0; const uint8_t* hit = nullptr;
+                for (const NatRange& r : ranges)
+                {
+                    size_t c = 0, f = 0;
+                    if (!nat_seh_count(r.p, r.n, pat.data(), pat.size(), c, f)) return nullptr;
+                    if (c && !hit) hit = r.p + f;
+                    total += c;
+                }
+                return total == 1 ? const_cast<uint8_t*>(hit) : nullptr;
+            };
+            s_rem = find(SPLIT_REMOVE_HEAD, SPLIT_HEAD_LEN);
+            s_add = find(SPLIT_ADD_HEAD, SPLIT_HEAD_LEN);
+            msc_log(STR("COMPAT split natives remove=") + nat_hex(reinterpret_cast<uint64_t>(s_rem)) + STR(" add=") + nat_hex(reinterpret_cast<uint64_t>(s_add)));
+            caps_add("split", s_rem && s_add, "natives");
+        }
+        if (!s_rem || !s_add) { err = STR("split: inventory functions not found uniquely in this build, feature off"); return false; }
+        rem = s_rem; add = s_add;
         return true;
     }
 
@@ -413,9 +427,12 @@ namespace
     {
         FProperty* p = st_field(inv->GetClassPrivate(), STR("ItemSlots"));
         auto* ap = p ? CastField<FArrayProperty>(p) : nullptr;
-        if (!ap || p->GetOffset_Internal() != SPLIT_SLOTS_OFF || ap->GetInner()->GetElementSize() != SPLIT_STRIDE)
+        if (!ap || ap->GetInner()->GetElementSize() != SPLIT_STRIDE)
         { err = STR("split: unexpected Inventory layout"); return false; }
-        auto* ta = reinterpret_cast<TArray<uint8_t>*>(reinterpret_cast<uint8_t*>(inv) + SPLIT_SLOTS_OFF);
+        const int slots_off = p->GetOffset_Internal();
+        static bool s_logged = false;
+        if (!s_logged) { s_logged = true; msc_log(STR("COMPAT OFFSET Inventory.ItemSlots = ") + nat_hex(static_cast<uint64_t>(slots_off))); }
+        auto* ta = reinterpret_cast<TArray<uint8_t>*>(reinterpret_cast<uint8_t*>(inv) + slots_off);
         data = ta->GetData();
         num = ta->Num();
         if (!data) { err = STR("inventory has no slot array"); return false; }
@@ -464,8 +481,9 @@ namespace
         if (dit) { err = STR("split: destination slot is not empty"); return false; }
         int ms = 0;
         if (!st_int(static_cast<UObject*>(it)->GetClassPrivate(), static_cast<const uint8_t*>(it), STR("MaxStackSize"), ms)) { err = STR("split: item has no MaxStackSize"); return false; }
-        const int32_t mult = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(inv) + SPLIT_MULT_OFF);
-        if (mult < 1 || mult > 10000000) { err = STR("split: inventory multiplier out of range"); return false; }   // raw RE read: refuse garbage
+        int mult = 0;
+        if (!st_int(inv->GetClassPrivate(), reinterpret_cast<const uint8_t*>(inv), STR("StackMultiplier"), mult)) { err = STR("split: no stack multiplier"); return false; }
+        if (mult < 1 || mult > 10000000) { err = STR("split: inventory multiplier out of range"); return false; }
         const int64_t cap = ms == 1 ? 1 : static_cast<int64_t>(ms) * mult;
         if (cap > INT32_MAX) { err = STR("split: stack cap out of range"); return false; }
         if (n > cap) { err = STR("split: amount above the stack cap"); return false; }

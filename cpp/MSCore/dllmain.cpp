@@ -26,6 +26,7 @@
 using namespace RC;
 using namespace RC::Unreal;
 
+#include "msc_caps.hpp"
 #include "msc_api.hpp"
 #include "msc_cmd.hpp"
 #include "msc_ue.hpp"
@@ -42,7 +43,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.5";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.6";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -300,7 +301,7 @@ namespace
     // WHY: text form of the msc_cmd.hpp offsets; selfcheck native.offsets looks for 0x28 in it.
     int lua_offsets(const LuaMadeSimple::Lua& lua)
     {
-        lua.set_string("typeid_off=0x28 throttle_id=0x3a view_raw_per_deg=65536");
+        lua.set_string("typeid_off=0x28 throttle_id=0x3a view_raw_per_deg=65536 " + caps_text());
         return 1;
     }
 
@@ -1125,7 +1126,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.5");
+        ModVersion = STR("0.8.6");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1144,6 +1145,8 @@ public:
     {
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
+        // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
