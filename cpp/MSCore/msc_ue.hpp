@@ -19,6 +19,26 @@ namespace
     // WHAT: writes a line to the UE4SS log with an [MSCore] prefix. WHY: every export logs through here.
     void msc_log(const std::wstring& s) { Output::send<LogLevel::Normal>(STR("[MSCore] {}\n"), s); }
 
+    // WHAT: SEH-guarded raw copy. POD only (MSVC: no C++ objects in a function with __try). Existing per-module helpers (ref_rd, ch_seh_copy) are left as they are.
+    template <typename T>
+    bool ms_rd_seh(const uint8_t* src, T* dst)
+    {
+        __try { *dst = *reinterpret_cast<const T*>(src); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    template <typename T>
+    bool ms_wr_seh(uint8_t* dst, const T* src)
+    {
+        __try { *reinterpret_cast<T*>(dst) = *src; return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    // WHAT: reads T at p+off into out. false when p is null or the read faults. WHY: rule R1, no bare *(T*)(p+off).
+    template <typename T>
+    bool ms_rd(const void* p, size_t off, T& out) { return p && ms_rd_seh(static_cast<const uint8_t*>(p) + off, &out); }
+    // WHAT: writes v at p+off. false when p is null or the write faults. Callers write only after selftest passed (rule R3).
+    template <typename T>
+    bool ms_wr(void* p, size_t off, const T& v) { return p && ms_wr_seh(static_cast<uint8_t*>(p) + off, &v); }
+
     // WHAT: narrow to wide by casting each byte. Names and error texts are ASCII.
     std::wstring widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 

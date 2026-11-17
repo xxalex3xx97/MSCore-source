@@ -58,6 +58,9 @@ function M.run(MSCore)
     check("native.offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local s = N.offsets() return yes(type(s) == "string" and s:find("0x28", 1, true) ~= nil, tostring(s)) end)
+    check("native.caps no runtime off", function()   -- module_disable adds "<module> exception" to the caps text
+        local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
+        local s = tostring(N.offsets()) return yes(not s:find("exception", 1, true), s) end)
     check("native.check_offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, d = N.check_offsets()

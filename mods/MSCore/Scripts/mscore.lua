@@ -967,4 +967,17 @@ load_optional("mscore_inv", function(mod, M) mod.install(M) end)
 load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
 load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
 
+---------------------------------------------------------------- hook (never throws)
+-- hook(logical_name, fn_path, callback [, post_callback]) -> true | false. A failed RegisterHook logs one COMPAT line
+-- and records hook_caps[logical_name] = "off:<why>" (the cap row for that hook).
+MSCore.hook_caps = {}
+function MSCore.hook(name, path, cb, post)
+    local ok, pre = pcall(RegisterHook, path, cb, post or function() end)
+    if ok and pre ~= nil then return true end
+    local why = ok and "not found" or tostring(pre)
+    MSCore.hook_caps[name] = "off:" .. why
+    print("[MSCore] COMPAT hook " .. name .. " off: " .. why .. "\n")
+    return false
+end
+
 return MSCore

@@ -14,7 +14,8 @@
 //       the game's own constructor makes (no RVA). ref_group_ok checks +0x78 == 2 and +0x7c >= 2; a layout shift makes the check fail, groups
 //       turn off after 3 failures, and refund falls back to the unit inventory swap.
 // WHY: lets players keep build materials and deconstruction refunds in the Blueprint Unit.
-// SAFETY: fail closed. Nothing is installed unless: both entry patterns match exactly once in .text, the expected 7
+// SAFETY: game reads go through ref_rd and writes through ms_wr (both SEH). A fault calls module_disable("refund") once; the hooks then
+//         call through unchanged. Ids are read by property name first (raw offset = COMPAT fallback). Fail closed. Nothing is installed unless: both entry patterns match exactly once in .text, the expected 7
 //         entry bytes are there, and exactly 4 call sites `48 8B 4F 60 E8 rel32` call the charge helper. Any failure installs nothing and logs
 //         "COMPAT refund ...". Any doubt in a lookup (frame not a station, no unit, inventory dead, creative sender) calls the original unchanged.
 //         All raw game reads run inside SEH; hook bodies catch everything and have reentrancy guards.
@@ -66,6 +67,12 @@ namespace
         bool patched = false;
     };
 
+    // Lua-armed redirect idle-drain. BPU renews (redirect_enable(true)) while its run is active (about every 4 s). After the run,
+    // BPU calls enable(false) but the game still disassembles/refunds for minutes, so MSCore keeps the redirect on and
+    // switches it off REF_IDLE_MS after the last redirected item. REF_MAX_MS = hard cap since the last renewal.
+    constexpr ULONGLONG REF_IDLE_MS = 8000;
+    constexpr ULONGLONG REF_MAX_MS = 600000;
+
     struct RefState
     {
         bool enabled = false;
@@ -77,6 +84,11 @@ namespace
         uint8_t* gctor = nullptr;           // group constructor (null = groups unavailable)
         uint64_t group_vt = 0;              // vtable of the first group made by the game's own constructor (0 = not learned yet)
         bool redirect = false;              // redirect switch (default on at start)
+        bool lua_armed = false;             // redirect was turned on from Lua (expires unless renewed); the opt-in file never sets it
+        bool opt_in = false;                // startup file opt-in turned redirect on; Lua enable(true) does not arm expiry while set
+        ULONGLONG armed_ms = 0;             // GetTickCount64 of the last Lua enable(true) (renewal)
+        ULONGLONG last_event_ms = 0;        // GetTickCount64 of the last actually redirected refund or charge
+        bool draining = false;              // Lua enable(false) while armed: stays on until idle (ref_expired)
         void* grp_refund = nullptr;         // persistent rooted InventoryGroup objects
         void* grp_charge = nullptr;
         int group_fail_n = 0;               // sticky: after 3 failed creations stop trying
@@ -91,16 +103,27 @@ namespace
         int win_dropped = 0;
         uint64_t other_ret[8] = {};
         uint64_t other_n[8] = {};
+        std::unordered_map<std::string, bool> id_fb;   // raw id fallback logged once per tag
     };
     RefState g_ref;
 
     // ---------------- SEH POD helpers ----------------
 
+    // WHAT: a game memory read or write faulted: refund off for the session (module_disable, logged once). Hooks become call-through.
+    // WHY: fail closed (rule R3). Not inside __try: it builds strings.
+    void ref_fault(const wchar_t* where)
+    {
+        if (module_ok(L"refund")) module_disable(L"refund", std::wstring(L"fault ") + where);
+    }
+
+    // WHAT: reads T at p into out. false on null or fault (a fault also calls ref_fault).
     template <typename T>
     bool ref_rd(const void* p, T& out)
     {
-        __try { out = *reinterpret_cast<const T*>(p); return true; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (!p) return false;
+        if (ms_rd_seh(static_cast<const uint8_t*>(p), &out)) return true;
+        ref_fault(L"read");
+        return false;
     }
 
     // pat_count inside SEH (the scan reads the whole exe)
@@ -179,12 +202,34 @@ namespace
 
     std::string ref_num(bool ok, int64_t v) { return ok ? std::to_string(v) : std::string("none"); }
 
-    // id at +0x30 of a game object (-1 when unreadable)
+    // WHAT: int32 property `name` of a game object: offset by reflection (st_field) first; raw offset `off` only when the name is missing.
+    //       The raw fallback logs one COMPAT line and one caps row per tag. false when unreadable.
+    // WHY: layouts move between game updates, property names do not.
+    bool ref_id_read(void* o, const TCHAR* name, const char* tag, size_t off, int32_t& out)
+    {
+        if (!o || !alive(reinterpret_cast<UObject*>(o))) return false;
+        int32_t roff = -1;
+        seh_run([&] {
+            UObject* u = reinterpret_cast<UObject*>(o);
+            if (FProperty* p = st_field(u->GetClassPrivate(), name); p && CastField<FIntProperty>(p)) roff = p->GetOffset_Internal();
+        });
+        if (roff < 0)
+        {
+            roff = static_cast<int32_t>(off);
+            if (g_ref.id_fb.emplace(tag, true).second)
+            {
+                msc_log(STR("COMPAT refund: ") + widen(tag) + STR(" not a named property, raw offset ") + widen(std::to_string(off)) + STR(" used"));
+                caps_add(std::string("refund_id_") + tag, true, "raw offset " + std::to_string(off));
+            }
+        }
+        return ref_rd(reinterpret_cast<uint8_t*>(o) + roff, out);
+    }
+
+    // id (save ID property, raw +0x30 fallback) of a game object (-1 when unreadable)
     int32_t ref_id(void* o)
     {
         int32_t v = -1;
-        if (!o || !ref_rd(reinterpret_cast<uint8_t*>(o) + 0x30, v)) return -1;
-        return v;
+        return ref_id_read(o, STR("ID"), "ID", 0x30, v) ? v : -1;
     }
 
     // player Inventory / bCreative offsets, resolved by ref_resolve_player (see below)
@@ -199,7 +244,7 @@ namespace
         uint8_t* p = reinterpret_cast<uint8_t*>(player);
         int32_t frame_id = 0;
         void* sim = nullptr;
-        ref_rd(m + 0x34, frame_id);
+        ref_id_read(machine, STR("ParentID"), "ParentID", 0x34, frame_id);
         ref_rd(m + 0x28, sim);
         const std::string mcls = ref_cls(machine);
         void* frame = ref_find(sim, frame_id);
@@ -265,7 +310,7 @@ namespace
         int32_t attach = 0;
         uint8_t creative_byte = 0;
         void* sim = nullptr;
-        ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach);
+        ref_id_read(cmd, STR("AttachTargetID"), "AttachTargetID", 0x34, attach);
         ref_rd(reinterpret_cast<uint8_t*>(player) + g_roff.creative, creative_byte);
         const bool creative = (creative_byte & g_roff.cmask) != 0;
         ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim);
@@ -279,7 +324,7 @@ namespace
             chain += (chain.empty() ? "" : ">") + ref_cls(o) + "(" + std::to_string(id) + ")";
             ++levels;
             int32_t parent = 0;
-            if (!ref_rd(reinterpret_cast<uint8_t*>(o) + 0x34, parent)) break;
+            if (!ref_id_read(o, STR("ParentID"), "ParentID", 0x34, parent)) break;
             id = parent;
         }
         const char* why = "ok";
@@ -357,7 +402,7 @@ namespace
     {
         int32_t fid = 0;
         void* sim = nullptr;
-        if (!ref_rd(reinterpret_cast<uint8_t*>(machine) + 0x34, fid) || !ref_rd(reinterpret_cast<uint8_t*>(machine) + 0x28, sim)) return false;
+        if (!ref_id_read(machine, STR("ParentID"), "ParentID", 0x34, fid) || !ref_rd(reinterpret_cast<uint8_t*>(machine) + 0x28, sim)) return false;
         void* frame = ref_find(sim, fid);
         if (!frame || !(ref_cflags(frame) & 4)) return false;
         u.station = fid;
@@ -373,7 +418,7 @@ namespace
             if (!o) return false;
             if (ref_cflags(o) & 4) { u.station = id; return ref_unit_in(o, u); }
             int32_t parent = 0;
-            if (!ref_rd(reinterpret_cast<uint8_t*>(o) + 0x34, parent)) return false;
+            if (!ref_id_read(o, STR("ParentID"), "ParentID", 0x34, parent)) return false;
             id = parent;
         }
         return false;
@@ -389,35 +434,43 @@ namespace
         if (!player || !alive(player)) return false;
         if (++g_roff.n >= 3) g_roff.tried = true;   // a miss is retried (first call may not be the player); latched after 3 or on success
         g_roff.inv = -1; g_roff.creative = -1;
-        FProperty* pi = st_field(player->GetClassPrivate(), STR("Inventory"));
-        FProperty* pc = st_field(player->GetClassPrivate(), STR("bCreative"));
-        auto* bc = pc ? CastField<FBoolProperty>(pc) : nullptr;
-        if (pi) g_roff.inv = pi->GetOffset_Internal();
-        if (bc) { g_roff.creative = bc->GetOffset_Internal(); g_roff.cmask = bc->GetFieldMask(); }
-        msc_log(STR("COMPAT OFFSET Player.Inventory = ") + nat_hex(g_roff.inv < 0 ? 0 : g_roff.inv) + (pi ? STR("") : STR(" MISSING")));
-        msc_log(STR("COMPAT OFFSET Player.bCreative = ") + nat_hex(g_roff.creative < 0 ? 0 : g_roff.creative) + (bc ? STR("") : STR(" MISSING")));
+        bool hpi = false, hbc = false;
+        seh_run([&] {   // reflection reads the class: SEH (a fault leaves the offsets at -1 = not resolved)
+            FProperty* pi = st_field(player->GetClassPrivate(), STR("Inventory"));
+            FProperty* pc = st_field(player->GetClassPrivate(), STR("bCreative"));
+            auto* bc = pc ? CastField<FBoolProperty>(pc) : nullptr;
+            if (pi) g_roff.inv = pi->GetOffset_Internal();
+            if (bc) { g_roff.creative = bc->GetOffset_Internal(); g_roff.cmask = bc->GetFieldMask(); }
+            hpi = pi != nullptr; hbc = bc != nullptr;
+        });
+        msc_log(STR("COMPAT OFFSET Player.Inventory = ") + nat_hex(g_roff.inv < 0 ? 0 : g_roff.inv) + (hpi ? STR("") : STR(" MISSING")));
+        msc_log(STR("COMPAT OFFSET Player.bCreative = ") + nat_hex(g_roff.creative < 0 ? 0 : g_roff.creative) + (hbc ? STR("") : STR(" MISSING")));
         const bool ok = g_roff.inv >= 0 && g_roff.creative >= 0;
         if (ok) g_roff.tried = true;
         caps_add("refund_offsets", ok, "Player.Inventory/bCreative");
         return ok;
     }
 
+    // WHAT: group check: alive, vtable (once learned), members pointer set, count 2, max >= 2. Reads through ref_rd (SEH).
     bool ref_group_ok(void* g)
     {
-        __try
-        {
-            if (!alive(reinterpret_cast<UObject*>(g))) return false;
-            const uint8_t* b = reinterpret_cast<const uint8_t*>(g);
-            if (g_ref.group_vt && *reinterpret_cast<const uint64_t*>(b + 0x68) != g_ref.group_vt) return false;
-            return *reinterpret_cast<void* const*>(b + 0x70) && *reinterpret_cast<const int32_t*>(b + 0x78) == 2 && *reinterpret_cast<const int32_t*>(b + 0x7c) >= 2;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        if (!alive(reinterpret_cast<UObject*>(g))) return false;
+        uint64_t vt = 0;
+        void* mem = nullptr;
+        int32_t num = 0, mx = 0;
+        if (!ref_rd(reinterpret_cast<uint8_t*>(g) + 0x68, vt) || !ref_rd(reinterpret_cast<uint8_t*>(g) + 0x70, mem) ||
+            !ref_rd(reinterpret_cast<uint8_t*>(g) + 0x78, num) || !ref_rd(reinterpret_cast<uint8_t*>(g) + 0x7c, mx)) return false;
+        if (g_ref.group_vt && vt != g_ref.group_vt) return false;
+        return mem && num == 2 && mx >= 2;
     }
 
+    // WHAT: writes the two members a, b of the group. Member TArray pointer read through ref_rd, writes through ms_wr; a fault turns refund off.
     bool ref_group_fill(void* g, void* a, void* b)
     {
-        __try { void** d = *reinterpret_cast<void***>(reinterpret_cast<uint8_t*>(g) + 0x70); d[0] = a; d[1] = b; return true; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        void** d = nullptr;
+        if (!ref_rd(reinterpret_cast<uint8_t*>(g) + 0x70, d) || !d) return false;
+        if (!ms_wr(d, 0, a) || !ms_wr(d, sizeof(void*), b)) { ref_fault(L"write"); return false; }
+        return true;
     }
 
     void ref_group_null(void* g) { ref_group_fill(g, nullptr, nullptr); }
@@ -441,8 +494,10 @@ namespace
             if (!g) return nullptr;
             ref_group_learn_vt(g);
             if (!ref_group_ok(g)) return nullptr;
-            void** d = *reinterpret_cast<void***>(reinterpret_cast<uint8_t*>(g) + 0x70);
-            if (d[0] != a || d[1] != b) return nullptr;
+            void** d = nullptr;
+            void* m0 = nullptr;
+            void* m1 = nullptr;
+            if (!ref_rd(reinterpret_cast<uint8_t*>(g) + 0x70, d) || !d || !ref_rd(d, m0) || !ref_rd(d + 1, m1) || m0 != a || m1 != b) return nullptr;
             reinterpret_cast<UObject*>(g)->SetRootSet();
             return g;
         }
@@ -499,7 +554,7 @@ namespace
         void* sim = nullptr;
         if (!orig || !alive(reinterpret_cast<UObject*>(orig)) || !ref_rd(reinterpret_cast<uint8_t*>(player) + g_roff.creative, creative_byte) ||
             (creative_byte & g_roff.cmask) ||
-            !ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim) || attach <= 0)
+            !ref_id_read(cmd, STR("AttachTargetID"), "AttachTargetID", 0x34, attach) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim) || attach <= 0)
         { ++g_ref.st_skip; return nullptr; }
         RefUnit u;
         if (!ref_unit_attach(sim, attach, u) || u.inv == orig) { ++g_ref.st_skip; return nullptr; }
@@ -520,17 +575,40 @@ namespace
     // WHAT: runs the original with [player+0x288] = newinv; the slot (and the group members) are restored even when the original faults.
     uint64_t ref_call_swapped(RefFn2 orig, void* machine, void* player, void* newinv, void* saved, void* grp)
     {
-        void** slot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(player) + g_roff.inv);
+        if (!ms_wr(player, g_roff.inv, newinv))   // slot not written: original runs unchanged
+        {
+            ref_fault(L"write slot");
+            if (grp) ref_group_null(grp);
+            t_dis_busy = false;
+            return orig(machine, player);
+        }
         uint64_t r = 0;
-        __try { *slot = newinv; r = orig(machine, player); }
-        __finally { *slot = saved; if (grp) ref_group_null(grp); t_dis_busy = false; }
+        __try { r = orig(machine, player); }
+        __finally { if (!ms_wr(player, g_roff.inv, saved)) ref_fault(L"restore slot"); if (grp) ref_group_null(grp); t_dis_busy = false; }
         return r;
+    }
+
+    // WHAT: auto-off for the Lua-armed redirect. Returns true (and logs once) when it just expired. Hooks call it first; an expired redirect passes through.
+    bool ref_expired()
+    {
+        if (!g_ref.redirect || !g_ref.lua_armed) return false;
+        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG last = g_ref.armed_ms > g_ref.last_event_ms ? g_ref.armed_ms : g_ref.last_event_ms;
+        const bool cap = now - g_ref.armed_ms > REF_MAX_MS;
+        const bool idle = now - last > REF_IDLE_MS;
+        if (!cap && !idle) return false;
+        g_ref.redirect = false;
+        g_ref.lua_armed = false;
+        g_ref.draining = false;
+        msc_log(cap ? L"REDIRECT auto-off (cap 600 s)" : L"REDIRECT auto-off (idle 8 s)");
+        return true;
     }
 
     uint64_t ref_hook_disasm(void* machine, void* player, void*, void*)
     {
         const RefFn2 orig = ref_tramp(g_ref.a);
-        if (t_dis_busy || (!g_ref.enabled && !g_ref.redirect)) return orig(machine, player);
+        ref_expired();
+        if (t_dis_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig(machine, player);
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig(machine, player);
         void* newinv = nullptr;
         void* saved = nullptr;
@@ -548,6 +626,7 @@ namespace
             catch (...) { newinv = nullptr; ++g_ref.st_err; }
         }
         if (!newinv) return orig(machine, player);
+        g_ref.last_event_ms = GetTickCount64();
         t_dis_busy = true;   // nested DisassembleSelf calls inside the original pass through unchanged; cleared by ref_call_swapped
         return ref_call_swapped(orig, machine, player, newinv, saved, grp);
     }
@@ -555,7 +634,8 @@ namespace
     void* ref_hook_charge(void* player, void*, void* cmd, void* ret)
     {
         void* const orig = reinterpret_cast<void*>(ref_tramp(g_ref.b)(player, nullptr));
-        if (t_chg_busy || (!g_ref.enabled && !g_ref.redirect)) return orig;
+        ref_expired();
+        if (t_chg_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig;
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig;
         RefBusy guard(t_chg_busy);
         void* res = nullptr;
@@ -568,6 +648,7 @@ namespace
                 res = nullptr;
         }
         catch (...) { res = nullptr; ++g_ref.st_err; }
+        if (res) g_ref.last_event_ms = GetTickCount64();
         return res ? res : orig;
     }
 
@@ -625,10 +706,11 @@ namespace
         else memcpy(buf, h.orig, 7);
         DWORD old = 0;
         if (!VirtualProtect(h.target, 7, PAGE_EXECUTE_READWRITE, &old)) return false;
-        memcpy(h.target, buf, 7);
+        const bool wrote = ref_seh_copy(buf, h.target, 7);
         DWORD tmp = 0;
         VirtualProtect(h.target, 7, old, &tmp);
         FlushInstructionCache(GetCurrentProcess(), h.target, 7);
+        if (!wrote) { ref_fault(L"patch"); return false; }
         h.patched = on;
         return true;
     }
@@ -750,7 +832,7 @@ namespace
         if (!g_ref.valid) return;
         if (!g_ref.enabled && !g_ref.redirect) { ref_unpatch(); g_ref.status = "off"; return; }
         g_ref.status = std::string("on: redirect=") + (g_ref.redirect ? "on" : "off") + " probe_log=" + (g_ref.enabled ? "on" : "off") +
-                       " groups=" + (g_ref.gctor && g_ref.group_fail_n < 3 ? "yes" : "no");
+                       " groups=" + (g_ref.gctor && g_ref.group_fail_n < 3 ? "yes" : "no") + (g_ref.draining ? " draining" : "");
     }
 
     // WHAT: probe log switch (MSCoreNative_refund_enable). Returns the status string.
@@ -768,9 +850,10 @@ namespace
         if (on)
         {
             if (!ref_install()) return g_ref.status;
+            const bool was_on = g_ref.redirect;
             g_ref.redirect = true;
             ref_refresh();
-            msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
+            if (!was_on) msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
         }
         else { g_ref.redirect = false; ref_refresh(); }
         return g_ref.status;

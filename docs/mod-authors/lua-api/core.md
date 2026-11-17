@@ -24,6 +24,7 @@ Top-level `MSCore` fields, `MSCore.require` and `MSCore.logger`.
 |---|---|---|---|
 | `MSCore.require(n)` | `n`: API number | `MSCore` | Errors when `n` is not a number or is larger than `MSCore.api`. |
 | `MSCore.logger(tag)` | `tag`: string prefix | `log, try` | See the two helpers below. |
+| `MSCore.hook(name, path, cb [, post])` | `name`: logical name, `path`: function path, `cb`/`post`: callbacks | `true` or `false` | `RegisterHook` under `pcall`, never throws. On failure logs `[MSCore] COMPAT hook <name> off: <why>` once and sets `MSCore.hook_caps[name] = "off:<why>"`. `post` defaults to a no-op. |
 | `log(...)` | any values | - | Prints `tag` followed by all arguments joined with spaces. |
 | `try(label, f, ...)` | `label`, function `f`, extra args | `ok, result` | Calls `f` with `pcall`. Logs `label ok` or `label FAIL: <error>`. |
 

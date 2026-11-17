@@ -4,14 +4,17 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
+#include "msc_caps.hpp"
+#include "msc_contract.hpp"
 
 namespace
 {
     // resolve table, verified build 149299200; selfcheck native.offsets guards it
     constexpr int kTypeIdOffset = 0x28;
-    constexpr int kThrottleTypeId = 0x3a;
     constexpr double kViewRawPerDeg = 65536.0;
     constexpr int kViewYawAxis = 2;     // ViewRotation.Z
     constexpr int kViewPitchAxis = 1;   // ViewRotation.Y
@@ -73,13 +76,88 @@ namespace
         return true;
     }
 
-    // WHAT: sets the type id (int @ +0x28) of a ShipMovementInputCommand to 0x3a when it is 0. Other classes are untouched.
-    // WHY: Ghidra: the flush drops a command whose type id is 0; the controller sets 0x3a for this class. The constructor leaves 0.
-    void fix_type_id(UObject* cmd)
+    // forward declarations: msc_ue.hpp (included after this file) defines these with the same signatures
+    void msc_log(const std::wstring& s);
+    template <typename T> bool ms_rd(const void* p, size_t off, T& out);
+    template <typename T> bool ms_wr(void* p, size_t off, const T& v);
+
+    std::mutex g_cmd_mx;      // Lua thread and game thread both send commands
+    std::map<std::wstring, int> g_cmd_cls;   // class name -> layout state: 0 unknown, 1 verified, 2 failed
+    bool g_cmd_row = false;   // the "cmd" cap row exists (set by the first verified class or a failure)
+
+    // WHAT: true when the cmd module is off (runtime kill switch). Sets err. Before any row exists it is false (the first write verifies).
+    bool cmd_is_off(std::wstring& err)
     {
-        if (!alive(cmd) || cmd->GetClassPrivate()->GetName() != STR("ShipMovementInputCommand")) return;
-        int32_t* tid = reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(cmd) + kTypeIdOffset);
-        if (*tid == 0) *tid = kThrottleTypeId;
+        std::lock_guard<std::mutex> lk(g_cmd_mx);
+        if (!g_cmd_row || module_ok(STR("cmd"))) return false;
+        err = STR("cmd module off");
+        return true;
+    }
+
+    // WHAT: layout check of cmd's class, run once per class before its first id write. false with why when the slot at +0x28 is not 0 or a
+    //       class own property starts below 0x2c (the write would hit a reflected field).
+    // WHY: rule R4, the id is written only after the layout is verified. The reads go through SEH (ms_rd); property walk too.
+    bool cmd_layout_ok(UObject* cmd, std::wstring& why)
+    {
+        int32_t slot = -1;
+        if (!ms_rd(cmd, kTypeIdOffset, slot) || slot != 0) { why = STR("slot +0x28 is not 0 after construct"); return false; }
+        int32_t first = 0x7fffffff;
+        bool walked = seh_run([&] {
+            for (FProperty* p : cmd->GetClassPrivate()->ForEachProperty())
+                if (p->GetOffset_Internal() < first) first = p->GetOffset_Internal();
+        });
+        if (!walked) { why = STR("property walk faulted"); return false; }
+        if (first < 0x2c) { why = STR("own property at offset ") + std::to_wstring(first) + STR(" (< 0x2c)"); return false; }
+        return true;
+    }
+
+    // WHAT: writes type id `id` at +0x28 of cmd when that int is 0 (a set id is kept). Class layout verified once before the first write.
+    //       false with err when refused: cmd module off, layout check failed for the class, or a read/write fault. Nothing is written then.
+    // WHY: the flush drops a command whose id is 0 (msc_cmd.hpp header). Writes go through ms_wr (SEH).
+    bool cmd_write_id(UObject* cmd, int32_t id, std::wstring& err)
+    {
+        std::lock_guard<std::mutex> lk(g_cmd_mx);
+        if (g_cmd_row && !module_ok(STR("cmd"))) { err = STR("cmd module off"); return false; }
+        int32_t cur = -1;
+        if (!ms_rd(cmd, kTypeIdOffset, cur)) { err = STR("cmd id read fault"); return false; }
+        if (cur != 0) return true;   // id already set: kept, nothing to verify or write
+        const std::wstring cls = cmd->GetClassPrivate()->GetName();
+        int& st = g_cmd_cls[cls];
+        if (st == 0)
+        {
+            std::wstring why;
+            if (cmd_layout_ok(cmd, why))
+            {
+                st = 1;
+                if (!g_cmd_row) { caps_add("cmd", true, "ids verified"); g_cmd_row = true; }
+            }
+            else
+            {
+                st = 2;
+                msc_log(STR("COMPAT cmd: class ") + cls + STR(" layout check failed (") + why + STR("), id writes off"));
+                caps_add("cmd:" + caps_nar(cls), false, caps_nar(why));
+                module_disable(STR("cmd"), STR("layout ") + cls);
+                g_cmd_row = true;
+            }
+        }
+        if (st != 1) { err = STR("cmd layout check failed: ") + cls; return false; }
+        if (!ms_wr(cmd, kTypeIdOffset, id))
+        {
+            msc_log(STR("COMPAT cmd: id write faulted for class ") + cls + STR(", id writes off"));
+            module_disable(STR("cmd"), STR("write fault"));
+            g_cmd_row = true;
+            err = STR("cmd id write fault");
+            return false;
+        }
+        return true;
+    }
+
+    // WHAT: sets the type id (int @ +0x28) of a ShipMovementInputCommand to kThrottleTypeId when it is 0. Other classes are untouched (true).
+    // WHY: Ghidra: the flush drops a command whose type id is 0; the controller sets 0x3a for this class. The constructor leaves 0.
+    bool fix_type_id(UObject* cmd, std::wstring& err)
+    {
+        if (!alive(cmd) || cmd->GetClassPrivate()->GetName() != STR("ShipMovementInputCommand")) return true;
+        return cmd_write_id(cmd, kThrottleTypeId, err);
     }
 
     // WHAT: calls DMSPlayerController.AddInputCommand(InReceiverID, InCommand). false with `err` set when the function or a parameter is missing.
@@ -107,7 +185,7 @@ namespace
         UObject* cmd = UObjectGlobals::NewObject<UObject>(ctrl, c);
         if (!alive(cmd)) { err = STR("NewObject ShipMovementInputCommand failed"); return false; }
         if (!set_int_prop(cmd, STR("DeltaThrottle"), delta)) { err = STR("DeltaThrottle property missing"); return false; }
-        fix_type_id(cmd);
+        if (!fix_type_id(cmd, err)) return false;
         return add_input(sid, cmd, err);
     }
 

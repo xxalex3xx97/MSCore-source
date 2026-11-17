@@ -11,18 +11,10 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "msc_contract.hpp"
 
 namespace
 {
-    // type ids written at cmd+0x28 (flush drops a command whose id is 0)
-    constexpr int32_t kTypeBuild = 0x2e;        // BuildInput
-    constexpr int32_t kTypeDisassemble = 0x2f;  // DisassembleInput
-    constexpr int32_t kTypeAddBlock = 30;       // AddBlockInput (API 5)
-    constexpr int32_t kTypePending = 33;        // PendingBlueprintInput (API 5)
-    constexpr int32_t kTypeRemoveBlock = 31;    // RemoveBlockInput (API 5)
-    constexpr int32_t kTypeInventory = 12;      // InventoryInput
-    constexpr int32_t kTypePort = 17;           // MachinePortInput
-    constexpr int32_t kTypeSetRecipe = 20;      // SetRecipeInput
     constexpr int64_t kIdentityQuatW = 65536;   // PNum fixed point 1.0
     constexpr int kMaxCfgBytes = 64 * 1024;     // cap for MachineConfigData bytes (Lua and export paths)
 
@@ -141,21 +133,21 @@ namespace
         return nullptr;
     }
 
-    // WHAT: sends cmd to receiver. The type id is written at +0x28 only when that int is 0 (a set id is kept).
+    // WHAT: sends cmd to receiver. The type id is written at +0x28 only when that int is 0 (a set id is kept), after the class layout check (cmd_write_id).
     // WHY: the native flush drops a command whose type id is 0 (msc_cmd.hpp).
     bool send_typed(int receiver, UObject* cmd, int32_t type_id, std::wstring& err)
     {
         if (!alive(cmd)) { err = STR("cmd is not alive"); return false; }
         if (type_id == 0) { err = STR("type id 0 would be dropped by the flush"); return false; }
-        int32_t* tid = reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(cmd) + kTypeIdOffset);
-        if (*tid == 0) *tid = type_id;
+        if (!cmd_write_id(cmd, type_id, err)) return false;
         return add_input(receiver, cmd, err);
     }
 
-    // WHAT: StaticConstructObject of /Script/MainSequence.<cls>, owned by the controller. nullptr with err when the class or object is missing.
+    // WHAT: StaticConstructObject of /Script/MainSequence.<cls>, owned by the controller. nullptr with err when the class or object is missing or the cmd module is off.
     // WHY: the probe builds these input commands without a factory (vault: objects built this way need the type id written by hand).
     UObject* make_input(const TCHAR* cls, std::wstring& err)
     {
+        if (cmd_is_off(err)) return nullptr;
         UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, (STR("/Script/MainSequence.") + std::wstring(cls)).c_str());
         UObject* ctrl = first_of(STR("DMSPlayerController"));
         if (!alive(c) || !alive(ctrl)) { err = STR("class or controller missing: ") + std::wstring(cls); return nullptr; }
