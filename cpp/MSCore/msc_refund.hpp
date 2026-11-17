@@ -67,6 +67,9 @@ namespace
         bool patched = false;
     };
 
+    // Lua-armed redirect expires after this long without a renewal. BPU renews while a run is active (redirect_enable(true) each time).
+    constexpr ULONGLONG REF_RENEW_MS = 10000;
+
     struct RefState
     {
         bool enabled = false;
@@ -78,6 +81,9 @@ namespace
         uint8_t* gctor = nullptr;           // group constructor (null = groups unavailable)
         uint64_t group_vt = 0;              // vtable of the first group made by the game's own constructor (0 = not learned yet)
         bool redirect = false;              // redirect switch (default on at start)
+        bool lua_armed = false;             // redirect was turned on from Lua (expires unless renewed); the opt-in file never sets it
+        bool opt_in = false;                // startup file opt-in turned redirect on; Lua enable(true) does not arm expiry while set
+        ULONGLONG armed_ms = 0;             // GetTickCount64 of the last Lua enable(true)
         void* grp_refund = nullptr;         // persistent rooted InventoryGroup objects
         void* grp_charge = nullptr;
         int group_fail_n = 0;               // sticky: after 3 failed creations stop trying
@@ -577,9 +583,21 @@ namespace
         return r;
     }
 
+    // WHAT: auto-off for the Lua-armed redirect. Returns true (and logs once) when it just expired. Hooks call it first; an expired redirect passes through.
+    bool ref_expired()
+    {
+        if (!g_ref.redirect || !g_ref.lua_armed) return false;
+        if (GetTickCount64() - g_ref.armed_ms <= REF_RENEW_MS) return false;
+        g_ref.redirect = false;
+        g_ref.lua_armed = false;
+        msc_log(L"REDIRECT auto-off (no renewal for 10 s)");
+        return true;
+    }
+
     uint64_t ref_hook_disasm(void* machine, void* player, void*, void*)
     {
         const RefFn2 orig = ref_tramp(g_ref.a);
+        ref_expired();
         if (t_dis_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig(machine, player);
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig(machine, player);
         void* newinv = nullptr;
@@ -605,6 +623,7 @@ namespace
     void* ref_hook_charge(void* player, void*, void* cmd, void* ret)
     {
         void* const orig = reinterpret_cast<void*>(ref_tramp(g_ref.b)(player, nullptr));
+        ref_expired();
         if (t_chg_busy || !module_ok(L"refund") || (!g_ref.enabled && !g_ref.redirect)) return orig;
         if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig;
         RefBusy guard(t_chg_busy);
@@ -819,9 +838,10 @@ namespace
         if (on)
         {
             if (!ref_install()) return g_ref.status;
+            const bool was_on = g_ref.redirect;
             g_ref.redirect = true;
             ref_refresh();
-            msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
+            if (!was_on) msc_log(widen(std::string("REDIRECT on (groups=") + (g_ref.gctor ? "yes" : "no") + ")"));
         }
         else { g_ref.redirect = false; ref_refresh(); }
         return g_ref.status;
