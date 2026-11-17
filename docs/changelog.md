@@ -5,6 +5,15 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.7 - Chunk hold radius
+- **New:** C export `MSCore_chunk_hold2(owner, sys, ch3, radius, err, errlen)`. Radius 1 = 3x3x3 chunks (same as `MSCore_chunk_hold`), radius 0 = centre chunk only. Other radius values fail with `radius must be 0 or 1`.
+- No Lua API change. Native API 7, Lua API 3.
+
+## 0.8.6 - Update-proof addresses
+- **Changed:** the refund redirect and the inventory split no longer depend on fixed game addresses or an exe size check. The FindObject and group-constructor functions, the split functions, the group vtable and the player Inventory / creative-flag offsets are found at load time (patterns, call target, reflection by name). If one cannot be found the feature turns off and the log says which (`COMPAT ...`), instead of running on a wrong address.
+- **New:** one `COMPAT CAPS` line in the log lists what resolved (chunk hold, refund; split and player offsets appear on first use).
+- No API change. Native API 5, Lua API 3. Checked offline against game build 149299200 (all addresses unchanged); refund redirect run in game, split not yet.
+
 ## 0.8.5 - Game update compat
 - **Compat:** game build 149299200 supported: the refund redirect's exe size check, function addresses and the player creative-flag offset follow the new game build, and `verified_build` in the Lua side is bumped to match. Without this the refund redirect refused to start on the new build ("COMPAT refund failed: exe size").
 - No API change. Native API 5, Lua API 3. Not yet run in game beyond the Blueprint Unit build click.

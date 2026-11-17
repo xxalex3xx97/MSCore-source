@@ -11,11 +11,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "msc_contract.hpp"
 
 namespace
 {
     constexpr size_t kRenameMaxChars = 200;
-    constexpr int32_t kSetTextTypeId = 57;
 
     // WHAT: UTF-8 to wide string. false when the bytes are not valid UTF-8.
     bool utf8_to_wide(const std::string& in, std::wstring& out)

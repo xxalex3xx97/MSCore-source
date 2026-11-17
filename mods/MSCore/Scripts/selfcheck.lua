@@ -58,6 +58,9 @@ function M.run(MSCore)
     check("native.offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local s = N.offsets() return yes(type(s) == "string" and s:find("0x28", 1, true) ~= nil, tostring(s)) end)
+    check("native.caps no runtime off", function()   -- module_disable adds "<module> exception" to the caps text
+        local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
+        local s = tostring(N.offsets()) return yes(not s:find("exception", 1, true), s) end)
     check("native.check_offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, d = N.check_offsets()
@@ -68,7 +71,7 @@ function M.run(MSCore)
         local ok, why = N.send_cmd(1, nil) return yes(ok == false, tostring(why)) end)
     -- API 4 factory exports: C exports resolve by GetProcAddress (export_ok), Lua natives are globals. Sends nothing.
     for _, n in ipairs({ "MSCore_send_typed", "MSCore_find_buildable", "MSCore_build_place", "MSCore_disassemble",
-                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move", "MSCore_inv_move_to", "MSCore_inv_split" }) do
+                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move", "MSCore_inv_move_to", "MSCore_inv_split", "MSCore_chunk_hold2" }) do
         check("export." .. n, function()
             local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
             return yes(N.export_ok(n) == true, "GetProcAddress") end)
