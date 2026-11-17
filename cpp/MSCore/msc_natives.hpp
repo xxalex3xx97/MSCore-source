@@ -10,6 +10,7 @@
 
 #include <Windows.h>
 #include "msc_pattern.hpp"
+#include "msc_caps.hpp"
 
 namespace
 {
@@ -86,6 +87,7 @@ namespace
         const auto fail = [](const std::wstring& why) {
             g_nat.system = g_nat.setlevel = g_nat.apply = nullptr;
             g_nat.why = why;
+            caps_add("chunkhold", false, std::string(why.begin(), why.end()));
             msc_log(STR("COMPAT natives failed: ") + why);
             return false;
         };
@@ -117,6 +119,7 @@ namespace
             *w.out = const_cast<uint8_t*>(hit);
         }
         g_nat.resolved = true;
+        caps_add("chunkhold", true, "");
         msc_log(STR("COMPAT natives resolved system=") + nat_hex(reinterpret_cast<uint64_t>(g_nat.system)) +
                  STR(" setlevel=") + nat_hex(reinterpret_cast<uint64_t>(g_nat.setlevel)) +
                  STR(" apply=") + nat_hex(reinterpret_cast<uint64_t>(g_nat.apply)));

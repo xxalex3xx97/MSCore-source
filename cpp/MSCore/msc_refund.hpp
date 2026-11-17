@@ -7,11 +7,14 @@
 //         unit first and overflow to the player inventory, and only then to the game's drop object.
 //       CHARGE: for the 4 whitelisted sim call sites the helper returns the group [unit_inventory, normal inventory] instead of the normal
 //         inventory (GetAmount sums members, Remove takes unit first).
-//       Groups: one persistent rooted InventoryGroup per path, made with the game's own constructor (RVA 0x428bbc0, byte guarded) on the game
+//       Groups: one persistent rooted InventoryGroup per path, made with the game's own constructor (unique pattern) on the game
 //       thread at first use; the two member slots (TArray at +0x70, count +0x78) are overwritten per use. Refund group members are nulled after
 //       use. If no group can be made, refund falls back to swapping [player+0x288] to the unit inventory itself; charge then does nothing.
+//       Group member layout (+0x68 vtable, +0x70 TArray data, +0x78/+0x7c num/max) stays hard-coded. The vtable is learned from the first group
+//       the game's own constructor makes (no RVA). ref_group_ok checks +0x78 == 2 and +0x7c >= 2; a layout shift makes the check fail, groups
+//       turn off after 3 failures, and refund falls back to the unit inventory swap.
 // WHY: lets players keep build materials and deconstruction refunds in the Blueprint Unit.
-// SAFETY: fail closed. Nothing is installed unless: exe size == 149299200, both entry patterns match exactly once in .text, the expected 7
+// SAFETY: fail closed. Nothing is installed unless: both entry patterns match exactly once in .text, the expected 7
 //         entry bytes are there, and exactly 4 call sites `48 8B 4F 60 E8 rel32` call the charge helper. Any failure installs nothing and logs
 //         "COMPAT refund ...". Any doubt in a lookup (frame not a station, no unit, inventory dead, creative sender) calls the original unchanged.
 //         All raw game reads run inside SEH; hook bodies catch everything and have reentrancy guards.
@@ -37,25 +40,20 @@
 #include <mutex>
 #include <unordered_map>
 #include "msc_natives.hpp"
+#include "msc_caps.hpp"
 
 namespace
 {
-    constexpr uint64_t REF_EXE_SIZE = 149299200;   // the verified build
     constexpr const char* REF_PAT_DISASM = "48 8B C4 55 48 8B EC 48 83 EC 70 48 89 58 08 48 89 70 10 48 89 78 18 48 8B F9 4C 89 60 20 45 33 E4 4C 89 70 F0 4C 89 78 E8 48 8B 81 80 01 00 00 4C 8B BA 88 02 00 00";   // va 0x144226170
     constexpr const char* REF_PAT_CHARGE = "48 8B 81 40 02 00 00 48 85 C0 74 18 8B 40 08 0F BA E0 1E 72 0F 48 8B 81 40 02 00 00";   // va 0x14427f120
     constexpr uint8_t REF_HEAD_DISASM[7] = { 0x48, 0x8B, 0xC4, 0x55, 0x48, 0x8B, 0xEC };   // mov rax,rsp; push rbp; mov rbp,rsp
     constexpr uint8_t REF_HEAD_CHARGE[7] = { 0x48, 0x8B, 0x81, 0x40, 0x02, 0x00, 0x00 };   // mov rax,[rcx+0x240]
-    // FindObject(map owner, id) -> UObject*: a pure hash lookup (many identical template copies exist, so an RVA + byte check, not a unique pattern)
-    constexpr uint64_t REF_FINDOBJ_RVA = 0x42d8080;
     constexpr const char* REF_PAT_FINDOBJ = "40 53 48 83 EC 20 8B 41 48 8B DA 3B 41 74 74 47 44 8B 81 88 00 00 00 4C 8D 51 78 4D 8B 4A 08 41 FF C8 4C 23 C3";
     constexpr size_t REF_SITES = 4;
     constexpr size_t REF_RING = 200;
     constexpr const char* REF_CONTAINER_CLASS = "BP_BPUnitStoreObj_01_C";
     constexpr const char* REF_STATION_CLASS = "BP_StationObject_C";
-    // InventoryGroup constructor (primary, secondary) -> group, va 0x14421a0b0. '?' = rip-relative displacement (4 bytes).
-    constexpr uint64_t REF_GCTOR_RVA = 0x428bbc0;
     constexpr const char* REF_PAT_GCTOR = "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 81 EC B0 00 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 84 24 A0 00 00 00 48 8B EA 48 8B F1 E8";
-    constexpr uint64_t REF_GROUP_VT_RVA = 0x736e600;   // inner vtable of an InventoryGroup (at group+0x68), va 0x14736e600
     constexpr int REF_LOG_FIRST = 20;                  // REDIRECT lines: first N, then every REF_LOG_EVERY-th
     constexpr int REF_LOG_EVERY = 25;
 
@@ -77,6 +75,7 @@ namespace
         uint8_t* base = nullptr;
         uint8_t* findobj = nullptr;
         uint8_t* gctor = nullptr;           // group constructor (null = groups unavailable)
+        uint64_t group_vt = 0;              // vtable of the first group made by the game's own constructor (0 = not learned yet)
         bool redirect = false;              // redirect switch (default on at start)
         void* grp_refund = nullptr;         // persistent rooted InventoryGroup objects
         void* grp_charge = nullptr;
@@ -188,6 +187,10 @@ namespace
         return v;
     }
 
+    // player Inventory / bCreative offsets, resolved by ref_resolve_player (see below)
+    struct RefOff { int inv = -1, creative = -1; uint8_t cmask = 1; bool tried = false; };
+    RefOff g_roff;
+
     // ---------------- probe bodies (log only) ----------------
 
     void ref_probe_disasm(void* machine, void* player)
@@ -222,7 +225,7 @@ namespace
         const bool has_cinv = container && ref_rd(reinterpret_cast<uint8_t*>(container) + 0x1b0, cinv) && cinv && ref_id(cinv) >= 0;
         if (has_cinv) cinv_id = ref_id(cinv);
         void* pinv = nullptr;
-        const bool has_pinv = ref_rd(p + 0x288, pinv) && pinv && ref_id(pinv) >= 0;
+        const bool has_pinv = ref_rd(p + g_roff.inv, pinv) && pinv && ref_id(pinv) >= 0;
 
         const char* why = "ok";
         if (!frame) why = "frame not found";
@@ -260,10 +263,11 @@ namespace
             return;
         }
         int32_t attach = 0;
-        uint8_t creative = 0;
+        uint8_t creative_byte = 0;
         void* sim = nullptr;
         ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach);
-        ref_rd(reinterpret_cast<uint8_t*>(player) + 0x390, creative);
+        ref_rd(reinterpret_cast<uint8_t*>(player) + g_roff.creative, creative_byte);
+        const bool creative = (creative_byte & g_roff.cmask) != 0;
         ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim);
         std::string chain;
         int levels = 0;
@@ -377,13 +381,32 @@ namespace
 
     // ---------------- redirect: InventoryGroup management ----------------
 
+    // WHAT: resolves player Inventory / bCreative offsets once from the live player object's class. false + log when a name is missing.
+    // WHY: fails closed, so the redirect never runs with guessed offsets. Not inside SEH: the log line builds strings.
+    bool ref_resolve_player(UObject* player)
+    {
+        if (g_roff.tried) return g_roff.inv >= 0 && g_roff.creative >= 0;
+        if (!player || !alive(player)) return false;
+        g_roff.tried = true;
+        FProperty* pi = st_field(player->GetClassPrivate(), STR("Inventory"));
+        FProperty* pc = st_field(player->GetClassPrivate(), STR("bCreative"));
+        auto* bc = pc ? CastField<FBoolProperty>(pc) : nullptr;
+        if (pi) g_roff.inv = pi->GetOffset_Internal();
+        if (bc) { g_roff.creative = bc->GetOffset_Internal(); g_roff.cmask = bc->GetFieldMask(); }
+        msc_log(STR("COMPAT OFFSET Player.Inventory = ") + nat_hex(g_roff.inv < 0 ? 0 : g_roff.inv) + (pi ? STR("") : STR(" MISSING")));
+        msc_log(STR("COMPAT OFFSET Player.bCreative = ") + nat_hex(g_roff.creative < 0 ? 0 : g_roff.creative) + (bc ? STR("") : STR(" MISSING")));
+        const bool ok = g_roff.inv >= 0 && g_roff.creative >= 0;
+        caps_add("refund_offsets", ok, "Player.Inventory/bCreative");
+        return ok;
+    }
+
     bool ref_group_ok(void* g)
     {
         __try
         {
             if (!alive(reinterpret_cast<UObject*>(g))) return false;
             const uint8_t* b = reinterpret_cast<const uint8_t*>(g);
-            if (*reinterpret_cast<const uint64_t*>(b + 0x68) != reinterpret_cast<uint64_t>(g_ref.base) + REF_GROUP_VT_RVA) return false;
+            if (g_ref.group_vt && *reinterpret_cast<const uint64_t*>(b + 0x68) != g_ref.group_vt) return false;
             return *reinterpret_cast<void* const*>(b + 0x70) && *reinterpret_cast<const int32_t*>(b + 0x78) == 2 && *reinterpret_cast<const int32_t*>(b + 0x7c) >= 2;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -397,13 +420,25 @@ namespace
 
     void ref_group_null(void* g) { ref_group_fill(g, nullptr, nullptr); }
 
+    // WHAT: learns g_ref.group_vt from the first group the game's constructor made. Kept out of SEH (the log line builds strings).
+    void ref_group_learn_vt(void* g)
+    {
+        uint64_t vt = 0;
+        if (g_ref.group_vt || !alive(reinterpret_cast<UObject*>(g)) || !ref_rd(reinterpret_cast<uint8_t*>(g) + 0x68, vt)) return;
+        if (vt < reinterpret_cast<uint64_t>(g_ref.base) || vt >= reinterpret_cast<uint64_t>(g_ref.base) + 0x10000000ULL) return;   // must point into the exe image
+        g_ref.group_vt = vt;
+        msc_log(STR("COMPAT refund: group vtable learned ") + nat_hex(vt - reinterpret_cast<uint64_t>(g_ref.base)));
+    }
+
     // WHAT: new group through the game's constructor, checked (vtable, 2 members == a, b) and rooted. null on any failure.
     void* ref_group_make(void* a, void* b)
     {
         __try
         {
             void* g = reinterpret_cast<void* (*)(void*, void*)>(g_ref.gctor)(a, b);
-            if (!g || !ref_group_ok(g)) return nullptr;
+            if (!g) return nullptr;
+            ref_group_learn_vt(g);
+            if (!ref_group_ok(g)) return nullptr;
             void** d = *reinterpret_cast<void***>(reinterpret_cast<uint8_t*>(g) + 0x70);
             if (d[0] != a || d[1] != b) return nullptr;
             reinterpret_cast<UObject*>(g)->SetRootSet();
@@ -438,7 +473,7 @@ namespace
     // WHAT: inventory to place in [player+0x288] for this refund (group or unit inventory), or null = leave unchanged. saved = the current value.
     void* ref_plan_refund(void* machine, void* player, void*& saved, void*& grp)
     {
-        if (!ref_rd(reinterpret_cast<uint8_t*>(player) + 0x288, saved) || !saved || !alive(reinterpret_cast<UObject*>(saved))) { ++g_ref.st_skip; return nullptr; }
+        if (!ref_rd(reinterpret_cast<uint8_t*>(player) + g_roff.inv, saved) || !saved || !alive(reinterpret_cast<UObject*>(saved))) { ++g_ref.st_skip; return nullptr; }
         const uint32_t mf = ref_cflags(machine);
         RefUnit u;
         if (!(mf & 8) || (mf & 3) || !ref_unit_machine(machine, u) || u.container == machine || u.inv == saved) { ++g_ref.st_skip; return nullptr; }
@@ -457,10 +492,11 @@ namespace
         int site = -1;
         for (size_t i = 0; i < REF_SITES; ++i) if (g_ref.sites[i] == ret) site = static_cast<int>(i);
         if (site < 0) return nullptr;
-        uint8_t creative = 0;
+        uint8_t creative_byte = 0;
         int32_t attach = 0;
         void* sim = nullptr;
-        if (!orig || !alive(reinterpret_cast<UObject*>(orig)) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x390, creative) || creative ||
+        if (!orig || !alive(reinterpret_cast<UObject*>(orig)) || !ref_rd(reinterpret_cast<uint8_t*>(player) + g_roff.creative, creative_byte) ||
+            (creative_byte & g_roff.cmask) ||
             !ref_rd(reinterpret_cast<uint8_t*>(cmd) + 0x34, attach) || !ref_rd(reinterpret_cast<uint8_t*>(player) + 0x28, sim) || attach <= 0)
         { ++g_ref.st_skip; return nullptr; }
         RefUnit u;
@@ -482,7 +518,7 @@ namespace
     // WHAT: runs the original with [player+0x288] = newinv; the slot (and the group members) are restored even when the original faults.
     uint64_t ref_call_swapped(RefFn2 orig, void* machine, void* player, void* newinv, void* saved, void* grp)
     {
-        void** slot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(player) + 0x288);
+        void** slot = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(player) + g_roff.inv);
         uint64_t r = 0;
         __try { *slot = newinv; r = orig(machine, player); }
         __finally { *slot = saved; if (grp) ref_group_null(grp); t_dis_busy = false; }
@@ -493,6 +529,7 @@ namespace
     {
         const RefFn2 orig = ref_tramp(g_ref.a);
         if (t_dis_busy || (!g_ref.enabled && !g_ref.redirect)) return orig(machine, player);
+        if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig(machine, player);
         void* newinv = nullptr;
         void* saved = nullptr;
         void* grp = nullptr;
@@ -517,6 +554,7 @@ namespace
     {
         void* const orig = reinterpret_cast<void*>(ref_tramp(g_ref.b)(player, nullptr));
         if (t_chg_busy || (!g_ref.enabled && !g_ref.redirect)) return orig;
+        if (!ref_resolve_player(reinterpret_cast<UObject*>(player))) return orig;
         RefBusy guard(t_chg_busy);
         void* res = nullptr;
         try
@@ -601,15 +639,10 @@ namespace
         const auto fail = [](const std::string& why) {
             g_ref.valid = false;
             g_ref.status = "COMPAT refund failed: " + why;
+            caps_add("refund", false, why);
             msc_log(widen(g_ref.status));
             return false;
         };
-        wchar_t path[MAX_PATH * 2];
-        const DWORD pn = GetModuleFileNameW(nullptr, path, MAX_PATH * 2);
-        WIN32_FILE_ATTRIBUTE_DATA fa;
-        if (!pn || pn >= MAX_PATH * 2 || !GetFileAttributesExW(path, GetFileExInfoStandard, &fa)) return fail("cannot read exe size");
-        const uint64_t size = (static_cast<uint64_t>(fa.nFileSizeHigh) << 32) | fa.nFileSizeLow;
-        if (size != REF_EXE_SIZE) return fail("exe size " + std::to_string(size) + " != " + std::to_string(REF_EXE_SIZE));
         const uint8_t* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
         if (!base) return fail("no module base");
         const std::vector<NatRange> ranges = nat_ranges(base);   // msc_natives.hpp: the .text section
@@ -633,28 +666,30 @@ namespace
         if (!ref_seh_sites(ranges[0].p, ranges[0].n, tb, g_ref.sites, REF_SITES, sites)) return fail("call site scan faulted");
         if (sites != REF_SITES) return fail("charge helper call sites = " + std::to_string(sites) + " (need " + std::to_string(REF_SITES) + ")");
 
-        // optional lookup native: failure only disables the lookups (the probe then logs nofind), the hooks stay valid
+        // FindObject: no unique pattern. Find it as the call target (E8 rel32) inside the disassemble function whose first bytes equal REF_PAT_FINDOBJ.
         std::vector<int16_t> fp;
-        uint8_t* fo = const_cast<uint8_t*>(base) + REF_FINDOBJ_RVA;
         if (pat_parse(REF_PAT_FINDOBJ, fp))
         {
-            // compare the pattern bytes at the fixed RVA (no wildcards in this pattern)
             std::vector<uint8_t> want;
             for (int16_t v : fp) want.push_back(static_cast<uint8_t>(v));
-            if (ref_seh_eq(fo, want.data(), want.size())) g_ref.findobj = fo;
+            for (size_t i = 0; i + 5 <= 0x600 && !g_ref.findobj; ++i)
+            {
+                uint8_t op = 0; int32_t rel = 0;
+                if (!ref_rd(ta + i, op) || op != 0xE8 || !ref_rd(ta + i + 1, rel)) continue;
+                uint8_t* t = ta + i + 5 + rel;
+                if (ref_seh_eq(t, want.data(), want.size())) g_ref.findobj = t;
+            }
         }
-        if (!g_ref.findobj) msc_log(STR("COMPAT refund: FindObject entry bytes differ, lookups off (no redirect)"));
-        // InventoryGroup constructor: byte compare (wildcards = rip displacement); failure only turns groups off
+        if (!g_ref.findobj) msc_log(STR("COMPAT refund: FindObject not found from the disassemble function, lookups off (no redirect)"));
+        // InventoryGroup constructor: REF_PAT_GCTOR (wildcards = rip displacement) must match exactly once in .text
         std::vector<int16_t> gp;
-        uint8_t* gc = const_cast<uint8_t*>(base) + REF_GCTOR_RVA;
         if (pat_parse(REF_PAT_GCTOR, gp))
         {
-            std::vector<uint8_t> have(gp.size());
-            bool ok = ref_seh_copy(gc, have.data(), have.size());
-            for (size_t i = 0; ok && i < gp.size(); ++i) if (gp[i] >= 0 && have[i] != static_cast<uint8_t>(gp[i])) ok = false;
-            if (ok) g_ref.gctor = gc;
+            size_t c = 0, f = 0;
+            if (ref_seh_count(ranges[0].p, ranges[0].n, gp.data(), gp.size(), c, f) && c == 1)
+                g_ref.gctor = const_cast<uint8_t*>(ranges[0].p) + f;
         }
-        if (!g_ref.gctor) msc_log(STR("COMPAT refund: InventoryGroup constructor bytes differ, groups off (refund swaps to the unit inventory, no charge redirect)"));
+        if (!g_ref.gctor) msc_log(STR("COMPAT refund: InventoryGroup constructor pattern not unique, groups off (refund swaps to the unit inventory, no charge redirect)"));
 
         g_ref.a.target = ta;
         g_ref.b.target = tb;
@@ -662,9 +697,13 @@ namespace
         memcpy(g_ref.b.orig, REF_HEAD_CHARGE, 7);
         g_ref.valid = true;
         char buf[256];
-        snprintf(buf, sizeof buf, "COMPAT refund validated disassemble=0x%llx charge=0x%llx sites=%zu findobj=%s groups=%s",
-                 static_cast<unsigned long long>(ta - base), static_cast<unsigned long long>(tb - base), sites, g_ref.findobj ? "ok" : "off", g_ref.gctor ? "ok" : "off");
+        snprintf(buf, sizeof buf, "COMPAT refund validated disassemble=0x%llx charge=0x%llx sites=%zu findobj=%s groups=%s findobj_rva=0x%llx gctor_rva=0x%llx",
+                 static_cast<unsigned long long>(ta - base), static_cast<unsigned long long>(tb - base), sites, g_ref.findobj ? "ok" : "off", g_ref.gctor ? "ok" : "off",
+                 g_ref.findobj ? static_cast<unsigned long long>(g_ref.findobj - base) : 0ULL, g_ref.gctor ? static_cast<unsigned long long>(g_ref.gctor - base) : 0ULL);
         g_ref.status = buf;
+        caps_add("refund", true, "");
+        caps_add("refund_groups", g_ref.gctor != nullptr, "constructor");
+        caps_add("refund_lookup", g_ref.findobj != nullptr, "findobj");
         msc_log(widen(g_ref.status));
         return true;
     }
