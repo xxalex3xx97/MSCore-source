@@ -43,7 +43,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.6";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.7";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -1126,7 +1126,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.6");
+        ModVersion = STR("0.8.7");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1163,8 +1163,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only).
-    MSCORE_API int MSCore_api() { return 6; }
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius).
+    MSCORE_API int MSCore_api() { return 7; }   // 7 = MSCore_chunk_hold2
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1376,6 +1376,22 @@ extern "C"
         {
             if (!ch3) e = STR("null chunk");
             else r = chunk_hold(owner, sys, ch3, e);
+        }
+        catch (...) { r = 0; e = STR("exception"); }
+        copy_err(e, err, errlen);
+        return r;
+    }
+
+    // chunk hold with radius: radius 1 = 3x3x3 chunks (as MSCore_chunk_hold), 0 = centre chunk only. Same returns and err as MSCore_chunk_hold.
+    MSCORE_API int MSCore_chunk_hold2(int owner, int sys, const long long* ch3, int radius, wchar_t* err, int errlen)
+    {
+        std::wstring e;
+        int r = 0;
+        try
+        {
+            if (!ch3) e = STR("null chunk");
+            else if (radius != 0 && radius != 1) e = STR("radius must be 0 or 1");
+            else r = chunk_hold(owner, sys, ch3, e, radius);
         }
         catch (...) { r = 0; e = STR("exception"); }
         copy_err(e, err, errlen);

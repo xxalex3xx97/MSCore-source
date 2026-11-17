@@ -1,6 +1,6 @@
 // FILE: cpp/MSCore/msc_chunks.hpp
 // WHAT: chunk hold. A 3x3x3 cube of chunks around a centre chunk stays loaded: SetLevel(S,&key,1) + Apply(S,&key) per chunk (native).
-//       chunk_hold(owner, sys, c, err)  sets or moves the owner's cube. Returns 0 fail (err says why), 1 set (or pending chunks added), 2 unchanged.
+//       chunk_hold(owner, sys, c, err, rr)  sets or moves the owner's cube; rr 1 = 3x3x3, rr 0 = centre only. Returns 0 fail (err says why), 1 set (or pending chunks added), 2 unchanged.
 //       chunk_hold_release_owner(owner) drops the owner's cube.
 //       chunk_hold_release_all()        drops every cube (game exit / mod unload).
 //       chunk_ready(why)                natives found by pattern (nat_resolve); why = reason when not ready.
@@ -49,6 +49,7 @@ namespace
     struct ChRec
     {
         int sys = 0;
+        int r = 1;                 // cube radius in chunks: 0 = centre only, 1 = 3x3x3
         int32_t c[3] = {0, 0, 0};
         std::vector<ChKey> keys;   // chunks this owner holds (level 1 applied, counted in refs)
         std::vector<ChKey> pend;   // cube chunks skipped because they were in the player zone; added when they leave it
@@ -422,7 +423,7 @@ namespace
 
     // WHAT: set/move body of chunk_hold (no SEH here: chunk_hold wraps it). Returns 0 fail (err says why), 1 set, 2 unchanged.
     // WHY: the new cube is set before the old one is cleared, so chunks both cubes use never unload.
-    int ch_set(int owner, int sys, const int64_t c3[3], std::wstring& err)
+    int ch_set(int owner, int sys, const int64_t c3[3], int rr, std::wstring& err)
     {
         if (!ch_ready(err)) return 0;
         int psys = 0;
@@ -436,7 +437,7 @@ namespace
         const int32_t c[3] = {static_cast<int32_t>(c3[0]), static_cast<int32_t>(c3[1]), static_cast<int32_t>(c3[2])};
         const auto old = g_ch.owners.find(owner);
         // unchanged cube: 2, unless pending chunks were just added (then the cube changed: 1)
-        if (old != g_ch.owners.end() && old->second.sys == sys && old->second.c[0] == c[0] && old->second.c[1] == c[1] && old->second.c[2] == c[2])
+        if (old != g_ch.owners.end() && old->second.sys == sys && old->second.c[0] == c[0] && old->second.c[1] == c[1] && old->second.c[2] == c[2] && old->second.r == rr)
             return own_added > 0 ? 1 : 2;
         UObject* S = find_by_id(STR("SolarSystem"), sys);
         if (!alive(S))
@@ -451,9 +452,9 @@ namespace
         // the cube: 27 chunks, only those with a Chunk object; the player's own zone is never set
         std::vector<ChKey> want, pend;
         int no_obj = 0, zone = 0;
-        for (int dz = -1; dz <= 1; ++dz)
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx)
+        for (int dz = -rr; dz <= rr; ++dz)
+            for (int dy = -rr; dy <= rr; ++dy)
+                for (int dx = -rr; dx <= rr; ++dx)
                 {
                     ChKey key;
                     key.sys = sys;
@@ -482,6 +483,7 @@ namespace
         // set the new cube first (a chunk another owner already holds only gets one more reference)
         ChRec rec;
         rec.sys = sys;
+        rec.r = rr;
         for (int i = 0; i < 3; ++i) rec.c[i] = c[i];
         rec.pend = pend;
         int set_n = 0, shared = 0;
@@ -524,19 +526,20 @@ namespace
             if (!ch_drop(old_rec, cleared, kept)) { err = STR("level 0 failed while moving the cube"); return 0; }
         }
         g_ch.owners[owner] = rec;
-        msc_log(STR("CHUNKHOLD set owner=") + std::to_wstring(owner) + STR(" sys=") + std::to_wstring(sys) + STR(" centre=") + ch_key_text(c) + from +
+        msc_log(STR("CHUNKHOLD set owner=") + std::to_wstring(owner) + STR(" sys=") + std::to_wstring(sys) + STR(" r=") + std::to_wstring(rr) + STR(" centre=") + ch_key_text(c) + from +
                 STR(" cube=") + std::to_wstring(want.size()) + STR(" new=") + std::to_wstring(set_n) + STR(" shared=") + std::to_wstring(shared) +
                 STR(" no_object=") + std::to_wstring(no_obj) + STR(" player_zone=") + std::to_wstring(zone) + STR(" cleared=") + std::to_wstring(cleared) +
                 STR(" held=") + std::to_wstring(g_ch.refs.size()) + STR(" deferred=") + std::to_wstring(g_ch.deferred.size()));
         return 1;
     }
 
-    // WHAT: sets (or moves) the owner's cube of 27 chunks centred on c in system sys. Returns 0 fail (err says why), 1 set, 2 unchanged.
+    // WHAT: sets (or moves) the owner's cube centred on c in system sys: rr 1 = 3x3x3 chunks, rr 0 = centre chunk only.
+    //       Returns 0 fail (err says why), 1 set, 2 unchanged.
     // WHY: runs ch_set under ch_guard (SEH): a fault turns the feature off instead of crashing the game.
-    int chunk_hold(int owner, int sys, const int64_t c3[3], std::wstring& err)
+    int chunk_hold(int owner, int sys, const int64_t c3[3], std::wstring& err, int rr = 1)
     {
         int r = 0;
-        if (!ch_guard([&] { r = ch_set(owner, sys, c3, err); })) { err = STR("fault inside chunk hold"); return 0; }
+        if (!ch_guard([&] { r = ch_set(owner, sys, c3, rr, err); })) { err = STR("fault inside chunk hold"); return 0; }
         return r;
     }
 }
