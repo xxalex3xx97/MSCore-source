@@ -250,8 +250,7 @@ namespace
                 if (!alive(cmd)) err = STR("cmd is not alive");
                 else
                 {
-                    fix_type_id(cmd);
-                    ok = add_input(receiver, cmd, err);
+                    if (fix_type_id(cmd, err)) ok = add_input(receiver, cmd, err);
                 }
             }
         }
