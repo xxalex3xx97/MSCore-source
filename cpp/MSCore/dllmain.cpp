@@ -55,12 +55,12 @@ namespace
 
     // runs fn(err) for an export: exceptions become a failure, err goes to the caller buffer, returns 1 on success
     template <typename F>
-    int export_call(F fn, wchar_t* err, int errlen)
+    int export_call(F fn, wchar_t* err, int errlen, const std::wstring& mod = STR("misc"))
     {
         std::wstring e;
         bool ok = false;
         try { ok = fn(e); }
-        catch (...) { ok = false; e = STR("exception"); }
+        catch (...) { ok = false; e = STR("exception"); module_disable(mod, STR("exception")); }
         copy_err(e, err, errlen);
         return ok ? 1 : 0;
     }
@@ -1158,13 +1158,13 @@ public:
 #define MSCORE_API __declspec(dllexport)
 extern "C"
 {
-    MSCORE_API RC::CppUserModBase* start_mod() { return new MSCoreMod(); }
-    MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { delete mod; }
+    MSCORE_API RC::CppUserModBase* start_mod() { try { return new MSCoreMod(); } catch (...) { module_disable(STR("misc"), STR("start_mod exception")); return nullptr; } }
+    MSCORE_API void uninstall_mod(RC::CppUserModBase* mod) { try { delete mod; } catch (...) { module_disable(STR("misc"), STR("uninstall_mod exception")); } }
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
     // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius).
-    MSCORE_API int MSCore_api() { return 7; }   // 7 = MSCore_chunk_hold2
+    MSCORE_API int MSCore_api() { try { return 7; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 7 = MSCore_chunk_hold2
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1195,7 +1195,7 @@ extern "C"
             if (res) o = find_item(res, w);
             else w = STR("null resource");
         }
-        catch (...) { o = nullptr; w = STR("exception"); }
+        catch (...) { o = nullptr; w = STR("exception"); module_disable(STR("misc"), STR("find_item exception")); }
         copy_err(w, why, len);
         return o;
     }
@@ -1210,7 +1210,7 @@ extern "C"
             if (name) id = find_dock_by_name(name, w);
             else w = STR("null dock name");
         }
-        catch (...) { id = -1; w = STR("exception"); }
+        catch (...) { id = -1; w = STR("exception"); module_disable(STR("misc"), STR("find_dock exception")); }
         copy_err(w, why, len);
         return id;
     }
@@ -1266,7 +1266,7 @@ extern "C"
     {
         std::vector<MsFilterRow> rows;
         try { if (!filters_read(static_cast<UObject*>(ship), rows)) return -1; }
-        catch (...) { return -1; }
+        catch (...) { module_disable(STR("misc"), STR("filters_read exception")); return -1; }
         const int n = static_cast<int>(rows.size());
         if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
         return n;
@@ -1305,7 +1305,7 @@ extern "C"
     MSCORE_API int MSCore_chunk_of(void* obj, long long* ch3)
     {
         try { return ch3 && get_chunk(static_cast<UObject*>(obj), ch3) ? 1 : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("chunkhold"), STR("chunk_of exception")); return 0; }
     }
 
     // 1 + out3 = struct property prop (X, Y, Z) of obj, raw; 0 when missing
@@ -1314,14 +1314,14 @@ extern "C"
         UObject* o = static_cast<UObject*>(obj);
         if (!alive(o) || !prop || !out3) return 0;
         try { return sec_axes(o, prop, out3) ? 1 : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("misc"), STR("axes_of exception")); return 0; }
     }
 
     MSCORE_API int MSCore_sys_id(void* obj)
     {
         UObject* o = static_cast<UObject*>(obj);
         try { return alive(o) ? sys_id(o) : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("misc"), STR("sys_id exception")); return 0; }
     }
 
     // 1 + out = GenParams.WarpArrivalDistance of a sector (raw); 0 when missing
@@ -1329,25 +1329,25 @@ extern "C"
     {
         if (!out) return 0;
         try { return sec_warp_dist(static_cast<UObject*>(sec), *out) ? 1 : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("misc"), STR("sec_warp_dist exception")); return 0; }
     }
 
     // sectors into out[0..max); returns the total found (-1 on exception). out = nullptr or max = 0: count only.
     MSCORE_API int MSCore_sectors(MsSector* out, int max)
     {
         try { return sectors_fill(out, max); }
-        catch (...) { return -1; }
+        catch (...) { module_disable(STR("misc"), STR("sectors exception")); return -1; }
     }
 
     // 1 when the map-pin hook is armed (call every tick until it returns 1)
     MSCORE_API int MSCore_pin_ensure()
     {
         try { return pin_hook_ensure() ? 1 : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("misc"), STR("pin_ensure exception")); return 0; }
     }
 
     // last map-pinned sector id, 0 = none
-    MSCORE_API int MSCore_pinned() { return g_pinned_sector; }
+    MSCORE_API int MSCore_pinned() { try { return g_pinned_sector; } catch (...) { module_disable(STR("misc"), STR("pinned exception")); return 0; } }
 
     // scanned rows of kind (0 ship, 1 asteroid, 2 station) that pass type and sys filters: returns the total, or -1 on exception.
     // out gets min(total, max) rows; out = nullptr or max = 0 counts only. loaded_only: asteroid kind = loaded rock actors only.
@@ -1361,11 +1361,11 @@ extern "C"
             if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
             return n;
         }
-        catch (...) { return -1; }
+        catch (...) { module_disable(STR("misc"), STR("scan exception")); return -1; }
     }
 
     // 1 = native scan on, 0 = off for this session (a walk faulted: MSCore_scan returns 0 rows; MSCore.scan uses its Lua fallback).
-    MSCORE_API int MSCore_scan_ok() { return g_scan_off ? 0 : 1; }
+    MSCORE_API int MSCore_scan_ok() { try { return g_scan_off ? 0 : 1; } catch (...) { module_disable(STR("misc"), STR("scan_ok exception")); return 0; } }
 
     // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
     MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)
@@ -1377,7 +1377,7 @@ extern "C"
             if (!ch3) e = STR("null chunk");
             else r = chunk_hold(owner, sys, ch3, e);
         }
-        catch (...) { r = 0; e = STR("exception"); }
+        catch (...) { r = 0; e = STR("exception"); module_disable(STR("chunkhold"), STR("chunk_hold exception")); }
         copy_err(e, err, errlen);
         return r;
     }
@@ -1393,7 +1393,7 @@ extern "C"
             else if (radius != 0 && radius != 1) e = STR("radius must be 0 or 1");
             else r = chunk_hold(owner, sys, ch3, e, radius);
         }
-        catch (...) { r = 0; e = STR("exception"); }
+        catch (...) { r = 0; e = STR("exception"); module_disable(STR("chunkhold"), STR("chunk_hold2 exception")); }
         copy_err(e, err, errlen);
         return r;
     }
@@ -1402,7 +1402,7 @@ extern "C"
     MSCORE_API int MSCore_chunk_release(int owner)
     {
         try { return chunk_hold_release_owner(owner) ? 1 : 0; }
-        catch (...) { return 0; }
+        catch (...) { module_disable(STR("chunkhold"), STR("chunk_release exception")); return 0; }
     }
 
     // 1 when the chunk-hold natives are found (why gets the reason otherwise). Read-only.
@@ -1411,7 +1411,7 @@ extern "C"
         std::wstring w;
         int ok = 0;
         try { ok = chunk_ready(w) ? 1 : 0; }
-        catch (...) { ok = 0; w = STR("exception"); }
+        catch (...) { ok = 0; w = STR("exception"); module_disable(STR("chunkhold"), STR("chunk_ready exception")); }
         copy_err(w, why, len);
         return ok;
     }
@@ -1439,7 +1439,7 @@ extern "C"
                 return nullptr;
             }
         }
-        catch (...) { return nullptr; }
+        catch (...) { module_disable(STR("misc"), STR("find_buildable exception")); return nullptr; }
         return o;
     }
 
@@ -1487,7 +1487,7 @@ extern "C"
     {
         return export_call([&](std::wstring& e) {
             return factory_guard([&] { return inv_split(inv_id, src_slot, amount, dst_slot, e); }, e);
-        }, err, errlen);
+        }, err, errlen, STR("split"));
     }
 
     // InventoryInput at receiver = the player object id (the game applies it there). action 2 = quick move.
