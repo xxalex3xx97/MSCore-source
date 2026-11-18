@@ -30,49 +30,28 @@ namespace
             if (!item) { err = why; return false; }
         }
 
-        UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.StationConsoleInput"));
-        if (!c) { err = STR("StationConsoleInput class not found"); return false; }
-        UObject* cdo = c->GetClassDefaultObject();
-        if (!alive(cdo)) { err = STR("StationConsoleInput default object missing"); return false; }
+        // the game itself does this (vault dock-block-filters): spawn a StationConsoleInput object, call its instance setter
+        // SetFilter(index, Item, bLoading), AddInputCommand(dock id, cmd). There is no static factory, so make_input builds the object.
+        UObject* cmd = make_input(STR("StationConsoleInput"), err);
+        if (!cmd) return false;
+        UFunction* fn = cmd->GetFunctionByNameInChain(STR("SetFilter"));
+        if (!fn) { err = STR("StationConsoleInput has no SetFilter function"); return false; }
 
-        UFunction* fn = nullptr;
-        for (const TCHAR* nm : { STR("CreateInputSetFilter"), STR("SetFilter"), STR("CreateInputSetFilterItem") })
-        {
-            fn = cdo->GetFunctionByNameInChain(nm);
-            if (fn) break;
-        }
-        if (!fn)
-        {
-            // NEEDS-THINKING: report what exists instead of guessing
-            std::wstring names;
-            for (UFunction* f : c->ForEachFunction())
-            {
-                const std::wstring n = f->GetName();
-                if (n.find(STR("Filter")) != std::wstring::npos) names += n + STR(" ");
-            }
-            err = STR("no SetFilter factory on StationConsoleInput; Filter functions: ") + (names.empty() ? std::wstring(STR("(none)")) : names);
-            return false;
-        }
-
-        // params by type: first int = index, first object = Item, first bool = bLoading, object return = command
-        FProperty* rp = fn->GetReturnProperty();
-        if (!rp || !CastField<FObjectProperty>(rp)) { err = STR("SetFilter factory has no object return value (instance method?)"); return false; }
+        // params by type: first int = index, first object = Item, first bool = bLoading
         FProperty *ip = nullptr, *op = nullptr, *bp = nullptr;
         for (FProperty* p : fn->ForEachProperty())
         {
-            if (p == rp) continue;
             if (!ip && CastField<FIntProperty>(p)) ip = p;
             else if (!op && CastField<FObjectProperty>(p)) op = p;
             else if (!bp && CastField<FBoolProperty>(p)) bp = p;
         }
-        if (!ip || !op || !bp) { err = STR("SetFilter factory params not found (need int, Item object, bool)"); return false; }
+        if (!ip || !op || !bp) { err = STR("SetFilter params not found (need int, Item object, bool)"); return false; }
 
         const size_t psize = static_cast<size_t>(fn->GetParmsSize());
         const size_t ioff = static_cast<size_t>(ip->GetOffset_Internal());
         const size_t ooff = static_cast<size_t>(op->GetOffset_Internal());
         const size_t boff = static_cast<size_t>(bp->GetOffset_Internal());
-        const size_t roff = static_cast<size_t>(rp->GetOffset_Internal());
-        if (ioff >= 0x400 || ooff >= 0x400 || boff >= 0x400 || roff >= 0x400) { err = STR("SetFilter param offsets out of range"); return false; }
+        if (ioff >= 0x400 || ooff >= 0x400 || boff >= 0x400) { err = STR("SetFilter param offsets out of range"); return false; }
 
         std::vector<uint8_t> buf(psize + 64, 0);
         const int32_t idx = index;
@@ -80,10 +59,7 @@ namespace
         std::memcpy(buf.data() + ooff, &item, sizeof(item));
         buf[boff] = bLoading ? 1 : 0;
 
-        cdo->ProcessEvent(fn, buf.data());
-        UObject* cmd = *reinterpret_cast<UObject**>(buf.data() + roff);
-        if (!alive(cmd)) { err = STR("SetFilter factory returned a null command"); return false; }
-
+        cmd->ProcessEvent(fn, buf.data());
         return send_typed(receiver, cmd, kStationConsoleTypeId, err);
     }
 }
