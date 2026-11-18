@@ -42,6 +42,7 @@
 #include <unordered_map>
 #include "msc_natives.hpp"
 #include "msc_caps.hpp"
+#include "msc_contract.hpp"
 
 namespace
 {
@@ -53,7 +54,7 @@ namespace
     constexpr size_t REF_SITES = 4;
     constexpr size_t REF_RING = 200;
     constexpr const char* REF_CONTAINER_CLASS = "BP_BPUnitStoreObj_01_C";
-    constexpr const char* REF_STATION_CLASS = "BP_StationObject_C";
+    constexpr const char* REF_STATION_CLASS = kClsPlayerStation;
     constexpr const char* REF_PAT_GCTOR = "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 81 EC B0 00 00 00 48 8B 05 ? ? ? ? 48 33 C4 48 89 84 24 A0 00 00 00 48 8B EA 48 8B F1 E8";
     constexpr int REF_LOG_FIRST = 20;                  // REDIRECT lines: first N, then every REF_LOG_EVERY-th
     constexpr int REF_LOG_EVERY = 25;

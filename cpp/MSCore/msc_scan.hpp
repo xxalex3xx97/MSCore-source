@@ -18,9 +18,12 @@
 // SAFETY: game thread only (Lua and MSCore_scan). The whole walk runs under scan_guard (SEH). A fault turns native scan OFF for the session
 //         (logged once, g_scan_off): scans return no rows and lua_scan reports ok = false, so MSCore.scan falls back to its Lua scan.
 //         Every read on a cached pointer goes through alive_seh / cached_ok / seh_run (row_live, actor_ok, row_clean).
+//         The rocks cap (scan_resolve) is turned off by a native fault or when the first SmallResourceAsteroidObject has no ResourceItems
+//         (layout_changed): asteroid scans (kind 1) then return no rows. Class names come from msc_contract.hpp (kCls*).
 // LOG: every walk logs "SCAN walk <kind>" on entry, so a crash log shows the last step.
 // USED BY: dllmain.cpp (MSCore_scan, MSCoreNative_scan, check "scan").
 #pragma once
+#include "msc_contract.hpp"
 #include <map>
 #include <string>
 #include <vector>
@@ -54,8 +57,12 @@ namespace
         if (seh_run(f)) return true;
         g_scan_off = true;
         msc_log(STR("SCAN native fault: native scan OFF for this session (Lua fallback in MSCore.scan). The last 'SCAN walk' line is the step that faulted."));
+        module_disable(STR("rocks"), STR("native_fault"));
         return false;
     }
+
+    // WHAT: registers the rocks cap (ok) once. The class names are checked by the selftest (check "rocks"): the world may not be loaded at startup.
+    void scan_resolve() { static bool done = false; if (done) return; done = true; caps_add("rocks", true, ""); }
 
     // WHAT: writes s into a wide char array of n chars, always NUL-terminated.
     void set_wstr(wchar_t* dst, size_t n, const std::wstring& s) { wcsncpy_s(dst, n, s.c_str(), _TRUNCATE); }
@@ -204,14 +211,16 @@ namespace
         msc_log(STR("SCAN walk asteroid-all"));
         std::map<int, UObject*> actor_by_id;
         std::vector<UObject*> acts;
-        UObjectGlobals::FindAllOf(STR("BP_GenericResourceAsteroid_C"), acts);
+        UObjectGlobals::FindAllOf(widen(kClsAsteroidActor).c_str(), acts);
         for (UObject* a : acts)
         {
             int32_t id = 0;
             if (alive_seh(a) && get_int_prop(a, STR("ObjectId"), id) && id > 0) actor_by_id[id] = a;
         }
         std::vector<UObject*> saves;
-        UObjectGlobals::FindAllOf(STR("SmallResourceAsteroidObject"), saves);
+        UObjectGlobals::FindAllOf(widen(kClsAsteroid).c_str(), saves);
+        static bool probed = false;
+        if (!probed && !saves.empty() && alive_seh(saves[0])) { probed = true; if (!saves[0]->GetPropertyByNameInChain(STR("ResourceItems"))) module_disable(STR("rocks"), STR("layout_changed")); }
         for (UObject* o : saves)
         {
             try
@@ -244,7 +253,7 @@ namespace
     {
         msc_log(STR("SCAN walk asteroid-loaded"));
         std::vector<UObject*> acts;
-        UObjectGlobals::FindAllOf(STR("BP_GenericResourceAsteroid_C"), acts);
+        UObjectGlobals::FindAllOf(widen(kClsAsteroidActor).c_str(), acts);
         for (UObject* a : acts)
         {
             try
@@ -403,6 +412,7 @@ namespace
         else if (kind == 1) slot = loaded_only ? SLOT_ROCK_LOADED : SLOT_ROCK_ALL;
         else if (kind == 2) slot = SLOT_STATION;
         if (slot < 0) return {};
+        if (kind == 1 && !module_ok(STR("rocks"))) return {};
         std::vector<MsScanRow> out;
         if (!scan_guard([&] { scan_rows_walk(slot, max_age_ms, type, sys, out); })) out.clear();
         return out;
