@@ -107,3 +107,10 @@ The TArray append (`BuildingBlockRegistry` category `Classes`) is unproven: it m
 - Mining Unit and Blueprint Unit still ship their own registry and research overrides (chunk 100 registry). They are **not migrated yet**.
 - After P1-P4 pass: remove their `DAT_BuildingBlockRegistry` and `RSC_*` entries from the pak and call `MSCore.blocks.register` from their Lua instead. Set `allow_research` only if the research step is needed and the co-op rule above is met.
 - Until then, keep the legacy one-registry rule in [Patching paks]({{ site.baseurl }}{% link mod-authors/patching-paks.md %}).
+
+## Caps, kill switch, names (0.8.10)
+
+- Caps row: `blocks=ok` or `blocks=off:why`.
+- Kill switch: `MSCore.module_disable("blocks")`. Blocks calls then do nothing and return their failure value.
+- Registry, research and category names come from `mscore_contract.lua`. The research dir is looked up by its name in the contract, not by a hard-coded path.
+- Selfcheck: `blocks.contract`, `world.rocks`, `rocks.caps`.
