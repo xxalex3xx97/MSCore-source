@@ -313,5 +313,33 @@ do
     if not sec_ok then check("rename_dock section ran without error: " .. tostring(sec_err), false) end
 end
 
+-- ===== factory_native.set_dock_filter: fake native, same stub setup as rename_dock
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local r1, w1 = MSC.factory_native.set_dock_filter(2325, 1, "waterice", 1)
+        check("set_dock_filter: missing native gives nil, 'missing' text", r1 == nil and tostring(w1):find("missing", 1, true) ~= nil)
+        local seen
+        _G.MSCoreNative_set_dock_filter = function(id, ix, it, l) seen = { id, ix, it, l } return false, "refused" end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r2, w2 = MSC2.factory_native.set_dock_filter(2325, 1, "waterice", 1)
+        check("set_dock_filter: native refusal text is passed through", r2 == nil and w2 == "refused")
+        check("set_dock_filter: args reach the native", seen and seen[1] == 2325 and seen[2] == 1 and seen[3] == "waterice" and seen[4] == 1)
+        _G.MSCoreNative_set_dock_filter = function() return true, "" end
+        local MSC3 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r3, w3 = MSC3.factory_native.set_dock_filter(2325, 1, "waterice", 1)
+        check("set_dock_filter: ok gives true, no reason", r3 == true and w3 == nil)
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_set_dock_filter = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("set_dock_filter section ran without error: " .. tostring(sec_err), false) end
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
