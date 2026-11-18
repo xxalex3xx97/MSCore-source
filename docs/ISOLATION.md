@@ -4,7 +4,7 @@ How MSCore keeps game-fragile code contained. Source of truth for the rules: the
 
 ## Layers
 
-- **L0 game binding**: the only code that knows game names, offsets, patterns and /Game paths (msc_pattern, msc_natives, msc_scan, msc_ue, msc_cmd, msc_factory, msc_rename, msc_refund, msc_station, msc_chunks, msc_pin, msc_warp, msc_orders; Lua mscore_wbp, mscore_blocks, mscore_factory).
+- **L0 game binding**: the only code that knows game names, offsets, patterns and /Game paths (msc_pattern, msc_natives, msc_scan, msc_ue, msc_cmd, msc_factory, msc_rename, msc_refund, msc_station, msc_chunks, msc_pin, msc_warp, msc_orders; Lua mscore_wbp, mscore_blocks, mscore_factory, mscore_contract (the only Lua file with widget names)).
 - **L1 module registry**: msc_caps.hpp. One cap row per module: `name`, ok or off with `why`.
 - **L2 stable API**: C exports (`MSCore_api`) and Lua API (`mscore`). Logical names and caps, no game names.
 - **L3 mods** (MiningBenchMod, MiningUnitUI, BPU, MSDevMenu, BlockPak): no game coupling. They call L2 only.
@@ -18,6 +18,7 @@ Shared infrastructure, not modules: msc_pattern, msc_ue, msc_caps, msc_loader, m
 | chunkhold | chunkhold (natives + chunks) |
 | refund | refund, refund_groups, refund_lookup, refund_offsets |
 | split | split |
+| widgets | widgets (Lua, mscore_wbp + mscore_contract; resolve by contract path, then by name; module_disable("widgets")) |
 | misc | exports without a module of their own |
 
 ## Module contract

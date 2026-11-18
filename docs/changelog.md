@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.9 - Widgets by logical name
+- **New:** mscore_wbp resolves game widgets by logical name (inventory_grid, item_amount, fleet_ship_entry, pause_menu) from one contract table (mscore_contract.lua), then by name. caps widgets=ok|off:why, kill switch MSCore.module_disable("widgets"), COMPAT CAPS line, selfcheck widgets.contract.
+- Lua API stays 3 (additions only). Native API 7. Mods feature-detect wbp.widget.
+
 ## 0.8.8 - Dock filters
 - **New:** Lua native `MSCore.factory_native.set_dock_filter(receiverId, index, itemName, bLoading)` sets a dock item filter: it spawns a `StationConsoleInput`, calls its `SetFilter(index, Item, bLoading)` and sends it to the dock, the way the game's own dock window does. Item name with or without the `item_` prefix, empty name clears the slot.
 - No C export and no API change: native API 7, Lua API 3. Run in game through a Blueprint Unit paste.

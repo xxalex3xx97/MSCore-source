@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 6).
-local MSCore = { api = 3, version = "0.8.8", verified_build = 149299200 }
+local MSCore = { api = 3, version = "0.8.9", verified_build = 149299200 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
 local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
@@ -986,6 +986,19 @@ function MSCore.hook(name, path, cb, post)
     local why = ok and "not found" or tostring(pre)
     MSCore.hook_caps[name] = "off:" .. why
     print("[MSCore] COMPAT hook " .. name .. " off: " .. why .. "\n")
+    return false
+end
+
+function MSCore.caps()
+    local t = {}
+    for k, v in pairs(MSCore.hook_caps or {}) do t["hook:" .. k] = v end
+    if MSCore.wbp and MSCore.wbp.caps then
+        local s, c = pcall(MSCore.wbp.caps); t.widgets = s and c or "off:error"
+    end
+    return t
+end
+function MSCore.module_disable(name, why)
+    if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
     return false
 end
 

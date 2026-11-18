@@ -81,3 +81,19 @@ wbp.close(h)
 7. **Use the game's inventory grid.** `WBP_Inventory_C` with `SetupInventory(inv, other, pc)`. Do not build your own grid.
 8. **No invalid calls.** Check `IsValid` before every method call on a UObject. Never call `KismetSystemLibrary` soft-path functions from Lua: it crashes UE4SS.
 9. **Headless authoring limits.** An "Is Variable" flag cannot be set from Python. Borrow the variable widgets from a donor asset that already has them, and keep the names the Lua side looks up (`GetWidgetFromName`).
+
+## Widgets by logical name (0.8.9)
+
+Get the game's widgets by logical name. The asset path lives in MSCore's contract table, so mods never see it.
+
+- `wbp.widget(name)`: widget class, or `nil, why`.
+- `wbp.instance(name)`: live instance of the widget, or nil.
+- `wbp.on_open(name, cb)`: `cb(self)` runs on the game thread after the widget's open function. Returns true when hooked or armed.
+- `wbp.close_pause(w)`: closes the pause menu. Returns how it closed, or `nil, why`.
+- `wbp.is_window(o)`: true for a WBP_ window instance.
+- `wbp.caps()`: `ok`, or `off:why`.
+- `MSCore.module_disable("widgets")`: kill switch for the widgets module.
+
+Names: `inventory_grid`, `item_amount`, `fleet_ship_entry`, `pause_menu`.
+
+Check `type(wbp.widget)=='function'`; if absent show 'MSCore too old (needs 0.8.9)' and turn the feature off.

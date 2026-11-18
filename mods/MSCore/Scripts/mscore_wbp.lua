@@ -19,12 +19,25 @@ local function try(tag, f, ...) local s, r = pcall(f, ...) if not s then L("FAIL
 local function inVp(o) local s, v = pcall(function() return o:IsInViewport() end) return s and v == true end
 local function live(o) if o == nil then return false end local s, v = pcall(function() return o:IsValid() end) return s and v == true end   -- no userdata check (fakes in tests)
 local function guard(tag, f) return function(...) local s, r = pcall(f, ...) if not s then L(tag .. " FAIL: " .. tostring(r)) return nil end return r end end
+local okC, C = pcall(require, "mscore_contract")
+local CW = okC and C.widgets or {}
+local state = { off = nil, fail = {}, cache = {} }
+local function compat(m) print("[MSCore] COMPAT CAPS widgets=" .. m .. "\n") end
+function M.disable(why)
+  if state.off then return end
+  state.off = tostring(why or "disabled"); compat("off:" .. state.off .. " (runtime)")
+end
+-- pcall wrapper for the contract API: a throw switches the widgets module off (R5), never propagates
+local function gd(tag, f)
+  return function(...)
+    if state.off then return nil, "off:" .. state.off end
+    local r = table.pack(pcall(f, ...))
+    if not r[1] then M.disable("error in " .. tag .. ": " .. tostring(r[2])); return nil, "off:" .. state.off end
+    return table.unpack(r, 2, r.n)
+  end
+end
 
 local LIB = "/Script/UMG.Default__WidgetBlueprintLibrary"
-local INV_PKG = "/Game/Blueprints/Widgets/Display/Inventory/WBP_Inventory"
-local INV_CLS = INV_PKG .. ".WBP_Inventory_C"
-local AMT_PKG = "/Game/Blueprints/Widgets/Display/Inventory/WBP_ItemAmount"   -- game's cost row (WBP_ItemTotals rows)
-local AMT_CLS = AMT_PKG .. ".WBP_ItemAmount_C"
 local COST_RED = { R = 0.705208, G = 0.031587, B = 0.031587, A = 1 }          -- game's own
 local COST_WHITE = { R = 1, G = 1, B = 1, A = 1 }
 local COST_GREEN = { R = 0.1, G = 0.6, B = 0.2, A = 1 }
@@ -87,7 +100,7 @@ local function widget(wbp, name)
 end
 
 local function localCtl()
-  for _, c in ipairs(FindAllOf("DMSPlayerController") or {}) do
+  for _, c in ipairs(FindAllOf(okC and C.controller_class or "") or {}) do
     if ok(c) then
       local sl, loc = pcall(function() return c:IsLocalPlayerController() end)
       if sl and loc then return c end
@@ -95,6 +108,15 @@ local function localCtl()
   end
   return nil
 end
+
+-- game's own close first, then widget CloseSelf, then HideWidget. returns how | nil, why
+M.close_pause = gd("close_pause", function(w)
+  local p = localCtl()
+  if ok(p) and pcall(function() p[C.close_ctl](p) end) then return C.close_ctl end
+  if ok(w) and pcall(function() w[C.close_self](w) end) then return C.close_self end
+  if ok(p) and ok(w) and pcall(function() p[C.hide](p, w, false) end) then return C.hide end
+  return nil, "all close paths failed"
+end)
 
 -- "pkg.Name_C" (class path), or a bare package path "/Game/X/WBP_A" (-> WBP_A_C), or a UClass userdata
 local function classOf(spec)
@@ -105,6 +127,67 @@ local function classOf(spec)
   local c = StaticFindObject(spec)
   if ok(c) then return c end
   return getAsset(pkg, name)
+end
+
+local function resolve_impl(name)
+  local e = CW[name]
+  if not e then return nil, "unknown widget " .. tostring(name) end
+  local c = state.cache[name]
+  if ok(c) then return c end
+  c = StaticFindObject(e.path .. "." .. e.cls)
+  if not ok(c) then c = getAsset(e.path, e.cls) end
+  if not ok(c) then local s, f = pcall(FindObject, "WidgetBlueprintGeneratedClass", e.cls); if s then c = f end end
+  if not ok(c) then
+    local s, i = pcall(FindFirstOf, e.cls)
+    if s and ok(i) then local s2, k = pcall(function() return i:GetClass() end); if s2 then c = k end end
+  end
+  if ok(c) then state.cache[name] = c; state.fail[name] = nil; return c end
+  state.fail[name] = "not found"
+  return nil, "not found"
+end
+M.widget = gd("widget", resolve_impl)
+M.instance = gd("instance", function(name)
+  local e = CW[name]; if not e then return nil end
+  local i = FindFirstOf(e.cls); return ok(i) and i or nil
+end)
+M.is_window = gd("is_window", function(o)
+  if not ok(o) then return false end
+  local cn = o:GetClass():GetFName():ToString()
+  return cn:sub(-2) == "_C" and cn ~= "WidgetBlueprintGeneratedClass" and nm(o):find("^" .. ((C and C.window_prefix) or "\0")) ~= nil
+end)
+-- cb(self) runs on the game thread after the widget's open function. true = hooked now or armed for retry
+M.on_open = gd("on_open", function(name, cb)
+  local e = CW[name]
+  if not e or not e.open_fn then return false end
+  local full = e.path .. "." .. e.cls
+  local s = pcall(RegisterHook, full .. ":" .. e.open_fn, function() end, function(self) pcall(cb, self) end)
+  if s then return true end
+  local armed = false
+  for _, n in ipairs({ full, e.cls }) do
+    if pcall(NotifyOnNewObject, n, function() pcall(ExecuteInGameThread, function() M.on_open(name, cb) end) end) then armed = true end
+  end
+  L("COMPAT hook " .. name .. (armed and " armed (class not loaded yet)" or " off"))
+  return armed
+end)
+function M.caps()
+  if state.off then return "off:" .. state.off end
+  local bad = {}
+  for n in pairs(state.fail) do bad[#bad + 1] = n end
+  table.sort(bad)
+  if #bad > 0 then return "off:unresolved " .. table.concat(bad, ",") end
+  return "ok"
+end
+-- read-only: resolve every contract widget, print the COMPAT line. allok, detail
+function M.selftest()
+  if state.off then return false, "killed: " .. state.off end
+  local names = {}
+  for n in pairs(CW) do names[#names + 1] = n end
+  table.sort(names)
+  local bad = {}
+  for _, n in ipairs(names) do local c = M.widget(n); if not c then bad[#bad + 1] = n end end
+  compat(M.caps())
+  if #bad == 0 then return true, #names .. " widgets resolved" end
+  return false, "unresolved: " .. table.concat(bad, ",")
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -163,12 +246,10 @@ end
 -- ---------------------------------------------------------------------------------------------
 -- inventory grid (the game's WBP_Inventory). Argument order = vanilla: unit grid (inv, player), mirror (player, unit).
 -- ---------------------------------------------------------------------------------------------
-local invCls
 local function inventory_grid_impl(h, host, inv, other, columns)
   if type(h) ~= "table" or not ok(h.wbp) then L("inventory_grid: window closed"); return nil end
-  if not ok(invCls) then invCls = StaticFindObject(INV_CLS) end
-  if not ok(invCls) then invCls = getAsset(INV_PKG, "WBP_Inventory_C") or StaticFindObject(INV_CLS) end
-  if not ok(invCls) then L("inventory_grid: WBP_Inventory class not found"); return nil end
+  local invCls = M.widget("inventory_grid")
+  if not ok(invCls) then L("inventory_grid: widget class not found"); return nil end
   local p = h.pc
   local g
   try("CreateGrid " .. host, function() g = StaticFindObject(LIB):Create(p, invCls, p) end)
@@ -194,12 +275,10 @@ function M.fmt_int(n)   -- 1595 -> "1,595", -1595 -> "-1,595"
   return (n < 0 and "-" or "") .. (s:gsub("^,", ""))
 end
 
-local amtCls
 local function cost_row_impl(host, item, need, have, opts)
   opts = opts or {}
-  if not ok(amtCls) then amtCls = StaticFindObject(AMT_CLS) end
-  if not ok(amtCls) then amtCls = getAsset(AMT_PKG, "WBP_ItemAmount_C") or StaticFindObject(AMT_CLS) end
-  if not ok(amtCls) then L("cost_row: WBP_ItemAmount class not found"); return nil end
+  local amtCls = M.widget("item_amount")
+  if not ok(amtCls) then L("cost_row: widget class not found"); return nil end
   local p = ok(opts.pc) and opts.pc or localCtl()
   if not ok(p) then L("cost_row: no PlayerController"); return nil end
   if not ok(host) or not ok(item) then L("cost_row: host or item invalid"); return nil end
