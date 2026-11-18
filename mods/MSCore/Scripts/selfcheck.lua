@@ -69,6 +69,15 @@ function M.run(MSCore)
         if tostring(W.caps()):find("^off:error") or tostring(detail):find("^killed") then return "BROKEN", detail end
         return "SKIP", detail
     end)
+    check("blocks.contract", function()
+        local B = MSCore.blocks
+        if not (B and B.selftest and B.caps) then return "BROKEN", "blocks API missing in mscore_blocks" end
+        local allok, detail = B.selftest()
+        if allok then return "OK", detail .. " caps=" .. B.caps() end
+        if tostring(detail):find("^killed") then return "BROKEN", detail end
+        return "SKIP", detail
+    end)
+    check("rocks.caps", function() local c = MSCore.caps().rocks return yes(c == "ok", tostring(c)) end)
     check("native.check_offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, d = N.check_offsets()
@@ -146,7 +155,7 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "chunks" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "chunks" }) do
         check("world." .. n, nativeCheck(n))
     end
     check("scan.api", function()

@@ -29,6 +29,9 @@ function MSCore.require(n)
 end
 
 -- every game class/path name lives here; wrappers and consumers read it from here
+local okCtr, CTR = pcall(require, "mscore_contract")
+local CL = (okCtr and CTR.classes) or {}
+
 MSCore.resolve = {
     player = { "DMSPlayerObject", "BP_PlayerObject_C" },
     controller = { "DMSPlayerController", "BP_PlayerController_C" },
@@ -36,7 +39,7 @@ MSCore.resolve = {
     invWidget = "WBP_CharacterStatus_C",
     missionsWidget = "WBP_MissionsPanel_C",
     item = "Item",
-    research = "ResearchTechnology",
+    research = (okCtr and CTR.blocks and CTR.blocks.research_class) or nil,
     umg = "/Script/UMG.",
     clickHook = "/Script/UMG.Widget:ForceLayoutPrepass",
     ship = { "DMSPlayerShipObject" },
@@ -812,7 +815,7 @@ local function luaRows(kind)
         end
     elseif kind == 1 or kind == 3 then
         local acts = {}   -- loaded rock actors by ObjectId (ids > 0, like native)
-        for _, a in ipairs(findAll("BP_GenericResourceAsteroid_C")) do
+        for _, a in ipairs(findAll(CL.asteroid_actor)) do
             if safe.valid(a) then
                 local id = prop(a, "ObjectId")
                 if kind == 3 then
@@ -825,7 +828,7 @@ local function luaRows(kind)
             end
         end
         if kind == 1 then
-            for _, o in ipairs(findAll("SmallResourceAsteroidObject")) do
+            for _, o in ipairs(findAll(CL.asteroid)) do
                 if safe.valid(o) and prop(o, "bAlive") ~= false then
                     local id = prop(o, "ID") or -1
                     local a = acts[id]
@@ -892,6 +895,33 @@ function MSCore.scan(kind, f)
         if row then out[#out + 1] = row end
     end
     return out
+end
+
+-- game class name by logical name. nil, why when unknown. Never throws.
+function MSCore.class(name)
+    local n = CL[name]
+    if type(n) ~= "string" then return nil, "unknown class " .. tostring(name) end
+    return n
+end
+local rocksOff
+local function nativeCap(name)
+    local N = MSCore.native
+    if not (N and N.offsets) then return "off:no native" end
+    local ok, s = pcall(N.offsets)
+    local v = ok and tostring(s):match(name .. "=(%S+)")
+    return v or "off:native too old (needs 0.8.10)"
+end
+-- asteroid rows of solar system sys (0 = all). f as in MSCore.scan. nil, "off:<why>" when off.
+function MSCore.rocks(sys, f)
+    if rocksOff then return nil, "off:" .. rocksOff end
+    local c = nativeCap("rocks")
+    if c ~= "ok" then return nil, c end
+    local g = {}
+    for k, v in pairs(f or {}) do g[k] = v end
+    g.sys = sys or 0
+    local ok, rows, why = pcall(MSCore.scan, "asteroid", g)
+    if not ok then MSCore.module_disable("scan", "error in rocks: " .. tostring(rows)); return nil, "off:" .. rocksOff end
+    return rows, why
 end
 
 -- chunk hold: a 3x3x3 cube of chunks around ch (raw {X,Y,Z}) stays loaded for owner (integer). Returns ok, err.
@@ -995,10 +1025,16 @@ function MSCore.caps()
     if MSCore.wbp and MSCore.wbp.caps then
         local s, c = pcall(MSCore.wbp.caps); t.widgets = s and c or "off:error"
     end
+    if MSCore.blocks and MSCore.blocks.caps then
+        local s, c = pcall(MSCore.blocks.caps); t.blocks = s and c or "off:error"
+    end
+    t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
     return t
 end
 function MSCore.module_disable(name, why)
     if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
+    if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
+    if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end
 
