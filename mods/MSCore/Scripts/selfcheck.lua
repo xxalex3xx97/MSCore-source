@@ -61,6 +61,14 @@ function M.run(MSCore)
     check("native.caps no runtime off", function()   -- module_disable adds "<module> exception" to the caps text
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local s = tostring(N.offsets()) return yes(not s:find("exception", 1, true), s) end)
+    check("widgets.contract", function()
+        local W = MSCore.wbp
+        if not (W and W.selftest and W.widget) then return "BROKEN", "widgets API missing in mscore_wbp" end
+        local allok, detail = W.selftest()
+        if allok then return "OK", detail .. " caps=" .. W.caps() end
+        if tostring(W.caps()):find("^off:error") or tostring(detail):find("^killed") then return "BROKEN", detail end
+        return "SKIP", detail
+    end)
     check("native.check_offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, d = N.check_offsets()

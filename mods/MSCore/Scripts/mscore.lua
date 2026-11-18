@@ -980,4 +980,17 @@ function MSCore.hook(name, path, cb, post)
     return false
 end
 
+function MSCore.caps()
+    local t = {}
+    for k, v in pairs(MSCore.hook_caps or {}) do t["hook:" .. k] = v end
+    if MSCore.wbp and MSCore.wbp.caps then
+        local s, c = pcall(MSCore.wbp.caps); t.widgets = s and c or "off:error"
+    end
+    return t
+end
+function MSCore.module_disable(name, why)
+    if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
+    return false
+end
+
 return MSCore
