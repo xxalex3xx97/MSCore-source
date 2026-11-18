@@ -6,6 +6,7 @@
 --      M.status() -> {[class] = 'pending' | 'block' | 'block+research' | 'failed:<why>'}
 --      M.debug_dump()   console only, bound nowhere: registry categories and the first Unlocks element fields (probes)
 --      M.install(MSCore) -> MSCore.blocks = M. Defines the API only. The 250 ms tick starts on the first successful register().
+--      M.caps() -> 'ok' | 'off:<why>'; M.disable(why) kill switch (runtime); M.selftest() -> allok, detail (read-only)
 -- Timing: retried every tick until every class is found and appended, then re-checked every 20th tick (5 s).
 -- Failure is sticky: a write (append) that throws or does not grow the array by exactly one marks that part dead.
 --   A dead part is never written again (no retry, no repeat log). The block and research parts are independent.
@@ -16,6 +17,22 @@ local M = {}
 M.allow_research = false
 local TAG = "[MSCore.blocks] "
 local function L(m) print(TAG .. m .. "\n") end
+local okC, C = pcall(require, "mscore_contract")
+local CB = (okC and C.blocks) or {}
+local state = {}
+if not (okC and C.blocks) then state.off = "contract missing" end
+function M.disable(why)
+  if state.off then return end
+  state.off = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS blocks=off:" .. state.off .. " (runtime)\n")
+end
+local function gd(tag, f)
+  return function(...)
+    if state.off then return nil, "off:" .. state.off end
+    local r = table.pack(pcall(f, ...))
+    if not r[1] then M.disable("error in " .. tag .. ": " .. tostring(r[2])); return nil, "off:" .. state.off end
+    return table.unpack(r, 2, r.n)
+  end
+end
 local function valid(o)
     if type(o) ~= "userdata" and type(o) ~= "table" then return false end
     local s, v = pcall(function() return o:IsValid() end)
@@ -26,7 +43,7 @@ local function count(a) local s, n = pcall(function() return #a end) if s and ty
 local function fullname(o) if not valid(o) then return nil end local s, v = pcall(function() return o:GetFullName() end) return s and v or nil end
 local function sfo(path) local s, o = pcall(StaticFindObject, path) if s and valid(o) then return o end return nil end
 local function find_all(cls) local s, l = pcall(FindAllOf, cls) if s and type(l) == "table" then return l end return {} end
-local function find_reg() local s, r = pcall(FindFirstOf, "BuildingBlockRegistry") if s and valid(r) then return r end return nil end
+local function find_reg() local s, r = pcall(FindFirstOf, CB.registry) if s and valid(r) then return r end return nil end
 
 -- AssetRegistryHelpers fallback, same as mscore_wbp.lua (class not loaded yet)
 local ARH
@@ -49,7 +66,7 @@ local function research_path(r)
         if r:find(".", 1, true) then return r end
         return r .. "." .. r:match("([^/]+)$")
     end
-    return "/Game/Data/Research/" .. r .. "." .. r
+    return CB.research_dir .. r .. "." .. r
 end
 
 local function find_category(reg, name)
@@ -102,7 +119,7 @@ local function unlock_enum()
     enum_calls = enum_calls + 1
     if enum_calls < enum_next then return nil end
     enum_tries = enum_tries + 1
-    for _, rt in ipairs(find_all("ResearchTechnology")) do
+    for _, rt in ipairs(find_all(CB.research_class)) do
         local u = rd(rt, "Unlocks")
         local n = count(u) or 0
         for i = 1, n do
@@ -151,6 +168,20 @@ local function research_step(s, cls)
 end
 
 local specs, order = {}, {}
+function M.caps()
+  if state.off then return "off:" .. state.off end
+  for _, s in ipairs(order) do if s.bdead then return "off:block append failed" end end
+  return "ok"
+end
+-- read-only: allok, detail
+function M.selftest()
+  if state.off then return false, "killed: " .. state.off end
+  local reg = find_reg()
+  if not reg then return false, "SKIP registry not found (main menu?)" end
+  if not find_category(reg, CB.category) then return false, "default category missing" end
+  print("[MSCore] COMPAT CAPS blocks=" .. M.caps() .. "\n")
+  return true, "registry and default category found"
+end
 local tickN, anyPending, ticking = 0, false, false
 local MS -- set by install()
 
@@ -190,6 +221,7 @@ local function pass_one(s, reg)
 end
 
 local function step()
+    if state.off then return end
     if #order == 0 then return end
     tickN = tickN + 1
     if not anyPending and tickN % 20 ~= 0 then return end
@@ -212,7 +244,7 @@ local function ensure_tick()
     return true
 end
 
-function M.register(opts)
+local function register_impl(opts)
     if type(opts) ~= "table" then return nil, "register: opts must be a table" end
     local class = opts.class
     if type(class) ~= "string" or not class:match("^/Game/.+%.[%w_]+_C$") then
@@ -220,7 +252,7 @@ function M.register(opts)
     end
     local research = opts.research
     if research ~= nil and type(research) ~= "string" then return nil, "register: research must be a string or nil" end
-    local category = opts.category or "Functional Blocks"
+    local category = opts.category or CB.category
     if type(category) ~= "string" then return nil, "register: category must be a string" end
     if specs[class] then return true end
     if not ensure_tick() then return nil, "register: MSCore.events missing, tick not started (call install first)" end
@@ -231,16 +263,18 @@ function M.register(opts)
     anyPending = true
     return true
 end
+M.register = gd("register", register_impl)
 
-function M.status()
+local function status_impl()
     local t = {}
     for _, s in ipairs(order) do t[s.class] = status_of(s) end
     return t
 end
+M.status = gd("status", status_impl)
 
-function M.debug_dump()
+local function dump_impl()
     local reg = find_reg()
-    if not reg then L("dump: BuildingBlockRegistry not found (main menu?)") return end
+    if not reg then L("dump: block registry not found (main menu?)") return end
     pcall(function()
         reg.Categories:ForEach(function(i, e)
             local s1, c = pcall(function() return e:get() end)
@@ -250,7 +284,7 @@ function M.debug_dump()
             return false
         end)
     end)
-    for _, rt in ipairs(find_all("ResearchTechnology")) do
+    for _, rt in ipairs(find_all(CB.research_class)) do
         local u = rd(rt, "Unlocks")
         local n = count(u) or 0
         if n > 0 then
@@ -264,8 +298,9 @@ function M.debug_dump()
             return
         end
     end
-    L("dump: no ResearchTechnology with Unlocks")
+    L("dump: no research with Unlocks")
 end
+M.debug_dump = gd("debug_dump", dump_impl)
 
 function M.install(MSCore)
     MS = MSCore

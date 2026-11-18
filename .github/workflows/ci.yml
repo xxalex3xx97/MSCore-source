@@ -14,3 +14,8 @@ jobs:
           sudo apt-get install -y lua5.4
           sudo ln -s /usr/bin/luac5.4 /usr/local/bin/luac
           pwsh scripts/check.ps1
+      - name: Contract and blocks tests
+        run: |
+          lua5.4 mods/MSCore/tests/test_blocks_contract.lua
+          lua5.4 mods/MSCore/tests/test_widgets.lua
+          python3 -I tests/test_class_contract.py

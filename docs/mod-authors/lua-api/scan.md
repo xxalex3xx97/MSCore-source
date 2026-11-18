@@ -106,3 +106,12 @@ Rules:
 - Known limits: MSCore has no timer, so a pending chunk is only added on a later `hold` or `release` call; a consumer that stops calling `hold` does not get it. A cube chunk with no Chunk object when the cube is set is not retried (only zone chunks are). A clear that falls in the player's zone is deferred the same way.
 
 Check it with selfcheck. The `chunks` check only reads: it does not set anything.
+
+## Rocks (0.8.10)
+
+`MSCore.rocks(sys, f)` returns the asteroid rows of one solar system, or `nil, reason`. Rows use the same asteroid fields as `MSCore.scan("asteroid")`. `f.loaded_only` keeps only rock actors in the world.
+
+- Native export: `MSCore_scan_rocks(sys, loaded_only, out, max)`. Returns `-2` when the scan is off (kill switch), `-1` on an exception, else the total row count.
+- Caps: `rocks=ok` or `rocks=off:why`. Kill switch: `MSCore.module_disable("scan")`.
+- Class names come from the contract: `MSCore.class(name)` (and C export `MSCore_class(logical, out, n)`, `1` found, `0` unknown or too small) for `asteroid`, `asteroid_actor`, `floating_ore`, `station`, `player_station`, `container`, `container_actor`, `item_crate`.
+- Too old check: `if type(MSCore.class) ~= "function" then` show "MSCore too old (needs 0.8.10)" and turn the rocks feature off. Do not call `MSCore.rocks` in that case.

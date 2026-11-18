@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 #include "msc_caps.hpp"
+#include "msc_contract.hpp"
 
 namespace
 {
@@ -222,7 +223,7 @@ namespace
     bool read_station(int station_id, std::string& out, std::wstring& err)
     {
         std::vector<UObject*> all;
-        UObjectGlobals::FindAllOf(STR("StationObject"), all);
+        UObjectGlobals::FindAllOf(widen(kClsStation).c_str(), all);
         UObject* st = nullptr;
         for (UObject* s : all)
             if (!st && alive(s) && s->GetName().rfind(STR("Default__"), 0) != 0 && obj_id(s) == station_id) st = s;

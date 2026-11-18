@@ -6,6 +6,9 @@
 --      M.stage_moves(slots, shortfall) -> indices, remaining; M.moveout_slots(slots, items) -> indices, short
 --      M.room_from_slots(slots, item, max) -> n
 
+local okCt, CT = pcall(require, "mscore_contract")
+local MS_CL = okCt and CT.classes or nil
+
 local M = {}
 
 local function valid(o)
@@ -101,7 +104,7 @@ end
 
 -- ContainerObject with ParentID == parent_id and class name == class_name (FindAllOf each call)
 function M.find_container(parent_id, class_name)
-    local ok, all = pcall(FindAllOf, "ContainerObject")
+    local ok, all = pcall(FindAllOf, (MS_CL and MS_CL.container) or "")
     if not ok or not all then return nil end
     for _, o in ipairs(all) do
         if valid(o) then

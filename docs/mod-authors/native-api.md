@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`6`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`8`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -109,6 +109,13 @@ Notes:
 
 {: .warning }
 **Not for mods:** `start_mod` and `uninstall_mod` are the UE4SS entry points of the DLL. Do not call them.
+
+## API 8: class names and rocks (0.8.10)
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_class` | `const char* logical, wchar_t* out, int n` | `int` (`1` found, `0` unknown or too small) | Game class name for a logical name (asteroid, asteroid_actor, floating_ore, station, player_station, container, container_actor, item_crate). Names live in msc_contract.hpp. |
+| `MSCore_scan_rocks` | `int sys, int loaded_only, out, int max` | `int` (`-2` scan off, `-1` exception, else total rows) | Asteroid rows of one solar system, as `MsScanRow`. Kill switch: `module_disable("scan")`. |
 
 ## Error convention
 

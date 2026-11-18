@@ -69,6 +69,15 @@ function M.run(MSCore)
         if tostring(W.caps()):find("^off:error") or tostring(detail):find("^killed") then return "BROKEN", detail end
         return "SKIP", detail
     end)
+    check("blocks.contract", function()
+        local B = MSCore.blocks
+        if not (B and B.selftest and B.caps) then return "BROKEN", "blocks API missing in mscore_blocks" end
+        local allok, detail = B.selftest()
+        if allok then return "OK", detail .. " caps=" .. B.caps() end
+        if tostring(detail):find("^killed") then return "BROKEN", detail end
+        return "SKIP", detail
+    end)
+    check("rocks.caps", function() local c = MSCore.caps().rocks return yes(c == "ok", tostring(c)) end)
     check("native.check_offsets", function()
         local N = MSCore.native if not N then return "BROKEN", "native DLL not loaded" end
         local ok, d = N.check_offsets()
@@ -79,7 +88,8 @@ function M.run(MSCore)
         local ok, why = N.send_cmd(1, nil) return yes(ok == false, tostring(why)) end)
     -- API 4 factory exports: C exports resolve by GetProcAddress (export_ok), Lua natives are globals. Sends nothing.
     for _, n in ipairs({ "MSCore_send_typed", "MSCore_find_buildable", "MSCore_build_place", "MSCore_disassemble",
-                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move", "MSCore_inv_move_to", "MSCore_inv_split", "MSCore_chunk_hold2" }) do
+                         "MSCore_set_recipe", "MSCore_port_toggle", "MSCore_inv_move", "MSCore_inv_move_to", "MSCore_inv_split", "MSCore_chunk_hold2",
+                         "MSCore_class", "MSCore_scan_rocks" }) do
         check("export." .. n, function()
             local N = MSCore.native if not N or not N.export_ok then return "BROKEN", "native DLL not loaded or API < 4" end
             return yes(N.export_ok(n) == true, "GetProcAddress") end)
@@ -146,7 +156,7 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "chunks" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "chunks" }) do
         check("world." .. n, nativeCheck(n))
     end
     check("scan.api", function()

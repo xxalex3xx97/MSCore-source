@@ -44,7 +44,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.9";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.10";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -109,6 +109,15 @@ namespace
             const auto rows = scan_rows(0, 0, std::string(), 0, false);
             if (rows.empty()) { detail = "SKIP no ships"; return false; }
             detail = std::to_string(rows.size()) + " ships";
+            return true;
+        }
+        if (name == "rocks")
+        {
+            if (!module_ok(STR("rocks"))) { detail = "rocks off: " + caps_text(); return false; }
+            const auto rows = scan_rows(1, 0, std::string(), 0, false);
+            if (rows.empty()) { detail = "SKIP no asteroids (world not loaded)"; return false; }
+            if (!module_ok(STR("rocks"))) { detail = "rocks turned off by the walk: " + caps_text(); return false; }
+            detail = std::to_string(rows.size()) + " asteroids";
             return true;
         }
         if (name == "chunks")
@@ -1159,7 +1168,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.9");
+        ModVersion = STR("0.8.10");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1179,7 +1188,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1196,8 +1205,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 7; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 7 = MSCore_chunk_hold2
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks. set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 8; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1399,6 +1408,27 @@ extern "C"
 
     // 1 = native scan on, 0 = off for this session (a walk faulted: MSCore_scan returns 0 rows; MSCore.scan uses its Lua fallback).
     MSCORE_API int MSCore_scan_ok() { try { return g_scan_off ? 0 : 1; } catch (...) { module_disable(STR("misc"), STR("scan_ok exception")); return 0; } }
+
+    // class name of a logical name (API 8): 1 = found (out = ASCII, NUL-terminated), 0 = unknown name or out too small.
+    MSCORE_API int MSCore_class(const char* logical, char* out, int outlen)
+    {
+        try { if (!logical || !out || outlen <= 0) return 0; const char* n = cls_name(logical);
+              if (!n || static_cast<int>(std::strlen(n)) >= outlen) return 0;
+              strcpy_s(out, static_cast<size_t>(outlen), n); return 1; }
+        catch (...) { module_disable(STR("misc"), STR("class exception")); return 0; }
+    }
+
+    // asteroid rows of solar system sys (0 = all; loaded_only 1 = rock actors in the world only, cached up to 1000 ms).
+    // returns the total, -1 on exception, -2 when the rocks module is off. out gets min(total, max) rows; out = nullptr or max = 0 counts only.
+    MSCORE_API int MSCore_scan_rocks(int sys, int loaded_only, MsScanRow* out, int max)
+    {
+        try { if (!module_ok(STR("rocks")) || g_scan_off) return -2;
+              const auto rows = scan_rows(1, 1000, std::string(), sys, loaded_only != 0);
+              const int n = static_cast<int>(rows.size());
+              if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
+              return n; }
+        catch (...) { module_disable(STR("rocks"), STR("scan_rocks_exception")); return -1; }
+    }
 
     // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
     MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)

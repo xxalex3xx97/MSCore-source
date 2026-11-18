@@ -5,6 +5,12 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.10 - Class names, rocks and blocks by logical name
+- **New:** `MSCore.class(name)` and C export `MSCore_class(logical, out, n)` return the game class name for asteroid, asteroid_actor, floating_ore, station, player_station, container, container_actor, item_crate. The names live only in mscore_contract.lua and msc_contract.hpp.
+- **New:** `MSCore.rocks(sys, f)` and C export `MSCore_scan_rocks(sys, loaded_only, out, max)`: asteroid rows of one solar system. caps rocks=ok|off:why. Kill switch `MSCore.module_disable("scan")`.
+- **Changed:** mscore_blocks takes its registry, research and category names from the contract. caps blocks=ok|off:why, kill switch `MSCore.module_disable("blocks")`, selfcheck blocks.contract, world.rocks, rocks.caps.
+- Lua API stays 3 (additions only). Native API 7 -> 8. Mods feature-detect `MSCore.class` / `MSCore_class`.
+
 ## 0.8.9 - Widgets by logical name
 - **New:** mscore_wbp resolves game widgets by logical name (inventory_grid, item_amount, fleet_ship_entry, pause_menu) from one contract table (mscore_contract.lua), then by name. caps widgets=ok|off:why, kill switch MSCore.module_disable("widgets"), COMPAT CAPS line, selfcheck widgets.contract.
 - Lua API stays 3 (additions only). Native API 7. Mods feature-detect wbp.widget.
