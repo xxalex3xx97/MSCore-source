@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.11 - Hook crash fix
+- **Fixed:** a crash when a mod window and the dev menu were opened in turn. The UMG layout hook is now registered once and kept (it returns at once when no button is listed) instead of being removed and registered again on every open.
+- Includes everything in 0.8.10 (class names and rock scan in MSCore; native API 8, Lua API 3).
+
 ## 0.8.10 - Class names, rocks and blocks by logical name
 - **New:** `MSCore.class(name)` and C export `MSCore_class(logical, out, n)` return the game class name for asteroid, asteroid_actor, floating_ore, station, player_station, container, container_actor, item_crate. The names live only in mscore_contract.lua and msc_contract.hpp.
 - **New:** `MSCore.rocks(sys, f)` and C export `MSCore_scan_rocks(sys, loaded_only, out, max)`: asteroid rows of one solar system. caps rocks=ok|off:why. Kill switch `MSCore.module_disable("scan")`.
