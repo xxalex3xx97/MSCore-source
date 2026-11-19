@@ -343,14 +343,14 @@ int main(int argc, char** argv) {
     Paths EP = paths_from_win64(gwin);
 
     // mod_req: requires= written into the zip's mscore.mod; man_req: requires= in manifest.txt
-    auto publish = [&](const std::string& repo, const std::string& name, const std::string& mod_req,
-                       const std::string& man_req) {
+    auto publish = [&](const std::string& repo, const std::string& name, const std::string& ver,
+                       const std::string& mod_req, const std::string& man_req) {
         std::string d = repo;
         std::replace(d.begin(), d.end(), '/', '_');
         fs::path out = src / to_wide(d);
         fs::create_directories(out);
         fs::path stg = src / L"stg";
-        std::string kv = "name=" + name + "\nrepo=" + repo + "\nversion=1.0.0\n";
+        std::string kv = "name=" + name + "\nrepo=" + repo + "\nversion=" + ver + "\n";
         if (!mod_req.empty()) kv += "requires=" + mod_req + "\n";
         write_text(stg / L"Mods" / to_wide(name) / L"mscore.mod", kv);
         write_text(stg / L"Mods" / to_wide(name) / L"dlls" / L"main.dll", name);
@@ -358,7 +358,7 @@ int main(int argc, char** argv) {
         CHECK(run_tar({L"-a", L"-cf", (out / L"p.zip").wstring(), L"-C", stg.wstring(), L"Mods"}, o, pe));
         std::string sha;
         CHECK(sha256_file(out / L"p.zip", sha));
-        std::string man = "name=" + name + "\nversion=1.0.0\nzip=p.zip\nsha256=" + sha + "\nsize=" +
+        std::string man = "name=" + name + "\nversion=" + ver + "\nzip=p.zip\nsha256=" + sha + "\nsize=" +
                           std::to_string(fs::file_size(out / L"p.zip")) + "\n";
         if (!man_req.empty()) man += "requires=" + man_req + "\n";
         write_text(out / L"manifest.txt", man);
@@ -371,12 +371,13 @@ int main(int argc, char** argv) {
         return std::system(cmd.c_str());
     };
 
-    publish("owner/dep", "Dep", "", "");
-    publish("owner/parent", "Parent", "owner/dep@1.0.0", "owner/dep@1.0.0");
-    publish("owner/orphan", "Orphan", "owner/missing@1.0.0", "owner/missing@1.0.0");  // dep has no source
-    publish("owner/bad", "Bad", "owner/dep@1.0.0", "");                               // zip vs manifest requires differ
-    publish("owner/cyc_a", "CycA", "owner/cyc_b@1.0.0", "owner/cyc_b@1.0.0");         // cycle: depth guard
-    publish("owner/cyc_b", "CycB", "owner/cyc_a@1.0.0", "owner/cyc_a@1.0.0");
+    publish("owner/dep", "Dep", "1.0.0", "", "");
+    publish("owner/parent", "Parent", "1.0.0", "owner/dep@1.0.0", "owner/dep@1.0.0");
+    publish("owner/orphan", "Orphan", "1.0.0", "owner/missing@1.0.0", "owner/missing@1.0.0");  // dep has no source
+    publish("owner/bad", "Bad", "1.0.0", "owner/dep@1.0.0", "");                  // zip vs manifest requires differ
+    publish("owner/cyc_a", "CycA", "1.0.0", "owner/cyc_b@1.0.0", "owner/cyc_b@1.0.0");  // cycle: depth guard
+    publish("owner/cyc_b", "CycB", "1.0.0", "owner/cyc_a@1.0.0", "owner/cyc_a@1.0.0");
+    publish("owner/upd", "Upd", "1.0.0", "", "");
 
     CHECK(run_mgr("--add owner/parent") == 0);
     CHECK(fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
@@ -390,6 +391,18 @@ int main(int argc, char** argv) {
     CHECK(run_mgr("--remove Dep") == 0);  // a required mod can still be removed (warn only)
     CHECK(!fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
+
+    // update: Upd installed without its dep; release 1.1.0 requires it -> --update installs the dep, then 1.1.0
+    CHECK(run_mgr("--add owner/upd") == 0);
+    publish("owner/upd", "Upd", "1.1.0", "owner/dep@1.0.0", "owner/dep@1.0.0");
+    CHECK(run_mgr("--update Upd") == 0);
+    CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
+    CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
+    // needs: Upd is 1.1.0 (up to date) but its dep was removed -> --update reinstalls the dep only
+    CHECK(run_mgr("--remove Dep") == 0);
+    CHECK(run_mgr("--update Upd") == 0);
+    CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
+    CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
     fs::remove_all(e2e, dec);
 
     std::printf("ALL OK\n");
