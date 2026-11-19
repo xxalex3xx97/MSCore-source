@@ -61,7 +61,7 @@ static bool zip_ok(std::vector<std::string> v) {
     return zip_entries_ok(v, e);
 }
 
-int main() {
+int main(int argc, char** argv) {
     // ---- versions
     CHECK(ver_cmp("1.2.10", "1.2.9") == 1);
     CHECK(ver_cmp("1.0", "1.0.0") == 0);
@@ -275,6 +275,122 @@ int main() {
     CHECK(cu.https && cu.host == L"github.com");
     CHECK(cu.path == L"/o/r/releases/latest/download/manifest.txt?t=1234");
     CHECK(crack(L"https://github.com/o/r/releases/download/v1/x.zip", cu) && cu.path == L"/o/r/releases/download/v1/x.zip");
+
+    // ---- requires: parse_deps
+    std::vector<Dep> deps;
+    std::string derr;
+    CHECK(parse_deps("", deps, derr) && deps.empty());
+    CHECK(parse_deps("owner/a@1.2.3, Owner2/b-c@0.1.0", deps, derr));
+    CHECK(deps.size() == 2 && deps[0].repo == "owner/a" && deps[0].min_ver == "1.2.3");
+    CHECK(deps[1].repo == "Owner2/b-c" && deps[1].min_ver == "0.1.0");
+    for (const char* bad : {"owner/a", "owner/a@1.2", "owner/a@v1.2.3", "owner/a@x.y.z", "../x@1.0.0", "owner/a@1.0.0,", "a/..@1.0.0"}) {
+        CHECK(!parse_deps(bad, deps, derr));
+        CHECK(deps.empty());
+    }
+
+    // ---- requires: parse_manifest (unknown keys are ignored by parse_kv, bad requires is an error)
+    Manifest rq;
+    std::string rerr;
+    const std::string mhead = "name=P\nversion=1.0.0\nzip=p.zip\nsha256=abc\n";
+    CHECK(parse_manifest(mhead + "requires=owner/a@1.2.3,owner/b@0.1.0\n", rq, rerr) && rq.requires_.size() == 2);
+    CHECK(parse_manifest(mhead, rq, rerr) && rq.requires_.empty());
+    CHECK(!parse_manifest(mhead + "requires=owner/a\n", rq, rerr) && rerr.find("requires") != std::string::npos);
+
+    // ---- requires: scan_mods, dep_ok, dependents_of (installed mods in a temp game)
+    fs::path dt = fs::temp_directory_path() / (std::string(nm) + "_dep");
+    Paths DP = paths_from_win64(dt / L"game" / L"Windows" / L"MainSequence" / L"Binaries" / L"Win64");
+    write_text(DP.mods / L"Dep" / L"mscore.mod", "name=Dep\nrepo=Owner/Dep\nversion=1.0.0\n");
+    write_text(DP.mods / L"X" / L"mscore.mod", "name=X\nrepo=o/x\nversion=2.0.0\nrequires=owner/dep@1.0.0\n");
+    std::vector<Mod> sm = scan_mods(DP);
+    CHECK(sm.size() == 2 && sm[1].name == "X" && sm[1].requires_.size() == 1 && sm[1].requires_[0].repo == "owner/dep");
+    std::string why;
+    CHECK(dep_ok(DP, Dep{"owner/dep", "1.0.0"}, why));  // repo is case-insensitive
+    CHECK(!dep_ok(DP, Dep{"owner/dep", "1.0.1"}, why) && why == "owner/dep 1.0.0 < 1.0.1");
+    CHECK(!dep_ok(DP, Dep{"owner/none", "1.0.0"}, why) && why == "owner/none not installed");
+    CHECK(dependents_of(DP, "Dep") == std::vector<std::string>{"X"});
+    CHECK(dependents_of(DP, "X").empty());
+    CHECK(dependents_of(DP, "Nope").empty());
+
+    // check_mod: installed mod whose dependency is missing -> needs:<repo>; without Paths the state is unchanged
+    write_text(DP.mods / L"Y" / L"mscore.mod", "name=Y\nrepo=o/x\nversion=1.0.0\nrequires=owner/missing@1.0.0\n");
+    fs::path dsrc = dt / L"src";
+    write_text(dsrc / L"manifest.txt", "name=X\nversion=2.0.0\nzip=x.zip\nsha256=abc\n");
+    g_allow_local = true;
+    g_local_root = dsrc.string();
+    Mod ym;
+    for (const Mod& m : scan_mods(DP))
+        if (m.name == "Y") ym = m;
+    CHECK(ym.name == "Y");
+    CHECK(check_mod(ym, "0.5.0", &DP).state == "needs:owner/missing");
+    CHECK(check_mod(ym, "0.5.0").state == "update");
+    g_allow_local = false;
+    g_local_root.clear();
+    std::error_code dec;
+    fs::remove_all(dt, dec);
+
+    // ---- requires: end to end through MSCoreManager.exe --source (argv[1] = built manager)
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: msc_loader_test <MSCoreManager.exe>\n");
+        return 1;
+    }
+    fs::path mgr = argv[1];
+    fs::path e2e = fs::temp_directory_path() / (std::string(nm) + "_e2e");
+    fs::path src = e2e / L"src";
+    fs::path game = e2e / L"game";
+    fs::path gwin = game / L"Windows" / L"MainSequence" / L"Binaries" / L"Win64";
+    fs::create_directories(game / L"Windows" / L"MainSequence" / L"Content" / L"Paks");
+    fs::create_directories(gwin);
+    Paths EP = paths_from_win64(gwin);
+
+    // mod_req: requires= written into the zip's mscore.mod; man_req: requires= in manifest.txt
+    auto publish = [&](const std::string& repo, const std::string& name, const std::string& mod_req,
+                       const std::string& man_req) {
+        std::string d = repo;
+        std::replace(d.begin(), d.end(), '/', '_');
+        fs::path out = src / to_wide(d);
+        fs::create_directories(out);
+        fs::path stg = src / L"stg";
+        std::string kv = "name=" + name + "\nrepo=" + repo + "\nversion=1.0.0\n";
+        if (!mod_req.empty()) kv += "requires=" + mod_req + "\n";
+        write_text(stg / L"Mods" / to_wide(name) / L"mscore.mod", kv);
+        write_text(stg / L"Mods" / to_wide(name) / L"dlls" / L"main.dll", name);
+        std::string o, pe;
+        CHECK(run_tar({L"-a", L"-cf", (out / L"p.zip").wstring(), L"-C", stg.wstring(), L"Mods"}, o, pe));
+        std::string sha;
+        CHECK(sha256_file(out / L"p.zip", sha));
+        std::string man = "name=" + name + "\nversion=1.0.0\nzip=p.zip\nsha256=" + sha + "\nsize=" +
+                          std::to_string(fs::file_size(out / L"p.zip")) + "\n";
+        if (!man_req.empty()) man += "requires=" + man_req + "\n";
+        write_text(out / L"manifest.txt", man);
+        std::error_code ec;
+        fs::remove_all(stg, ec);
+    };
+    auto run_mgr = [&](const std::string& args) {
+        std::string cmd = "\"\"" + mgr.string() + "\" --game \"" + gwin.string() + "\" --source \"" + src.string() +
+                          "\" " + args + "\"";
+        return std::system(cmd.c_str());
+    };
+
+    publish("owner/dep", "Dep", "", "");
+    publish("owner/parent", "Parent", "owner/dep@1.0.0", "owner/dep@1.0.0");
+    publish("owner/orphan", "Orphan", "owner/missing@1.0.0", "owner/missing@1.0.0");  // dep has no source
+    publish("owner/bad", "Bad", "owner/dep@1.0.0", "");                               // zip vs manifest requires differ
+    publish("owner/cyc_a", "CycA", "owner/cyc_b@1.0.0", "owner/cyc_b@1.0.0");         // cycle: depth guard
+    publish("owner/cyc_b", "CycB", "owner/cyc_a@1.0.0", "owner/cyc_a@1.0.0");
+
+    CHECK(run_mgr("--add owner/parent") == 0);
+    CHECK(fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
+    CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));  // dependency installed first
+    CHECK(run_mgr("--add owner/orphan") != 0);
+    CHECK(!fs::exists(EP.mods / L"Orphan" / L"mscore.mod"));  // parent not staged when a dep fails
+    CHECK(run_mgr("--add owner/bad") != 0);
+    CHECK(!fs::exists(EP.mods / L"Bad" / L"mscore.mod"));
+    CHECK(run_mgr("--add owner/cyc_a") != 0);
+    CHECK(!fs::exists(EP.mods / L"CycA" / L"mscore.mod"));
+    CHECK(run_mgr("--remove Dep") == 0);  // a required mod can still be removed (warn only)
+    CHECK(!fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
+    CHECK(fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
+    fs::remove_all(e2e, dec);
 
     std::printf("ALL OK\n");
     return 0;

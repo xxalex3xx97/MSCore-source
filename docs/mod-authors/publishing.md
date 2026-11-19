@@ -26,8 +26,29 @@ version=0.1.0
 | `name` | Mod name. Used as the folder name and in `mods.txt`. |
 | `repo` | GitHub `owner/repo`. Used for update checks. |
 | `version` | Installed version, semver `x.y.z`. |
+| `requires` | no | Mods this one needs, `owner/repo@x.y.z` joined by commas. See [Required mods](#required-mods). |
 
 The DLL scans every `Mods\<Mod>\mscore.mod`. The old `force_install` key is ignored.
+
+Example with a required mod:
+
+```text
+name=MyMod
+repo=owner/MyMod
+version=0.1.0
+requires=owner/ShipControl@0.1.0,owner/Other@1.2.0
+```
+
+### Required mods
+
+`requires` lists the mods your mod needs, each as `owner/repo@min_version`. Comma-separated, no spaces needed.
+
+- Before your mod installs or updates, the manager installs each missing (or too old) required mod from its latest release. Required mods are installed first, and their own requirements too.
+- If a required mod cannot be installed, your mod is not installed either.
+- Removing a required mod is allowed. The manager warns that the mods which need it will stop working.
+- The `requires` in the zip's `mscore.mod` must equal the `requires` in `manifest.txt`. The manager refuses the release otherwise.
+- Chains deeper than 4 levels are refused (`dependency chain too deep`).
+- Managers older than this release ignore `requires`. Make your mod fail closed when a required mod is missing.
 
 ## manifest.txt
 
@@ -41,6 +62,7 @@ Attach `manifest.txt` to the release. Keys, one per line, `key=value`:
 | `sha256` | yes | SHA-256 of the zip, lower case hex. |
 | `size` | recommended | Zip size in bytes. The download must match it. |
 | `min_mscore_native` | no | Oldest MSCore native version allowed. Older installs are shown as `skipped:min_native`. |
+| `requires` | no | Required mods, `owner/repo@x.y.z,...`. Same value as in `mscore.mod`. See [Required mods](#required-mods). |
 
 Example for a mod (the release script writes the real values):
 
@@ -51,6 +73,7 @@ zip=MyMod-0.1.0.zip
 sha256=<64 lowercase hex characters>
 size=<zip size in bytes>
 min_mscore_native=0.5.0
+requires=owner/ShipControl@0.1.0
 ```
 
 MSCore's own manifest also has `ue4ss_version`, `ue4ss_zip`, `ue4ss_sha256` and `ue4ss_size` for the UE4SS zip. Your mod does not need them.

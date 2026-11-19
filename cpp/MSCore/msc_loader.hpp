@@ -572,9 +572,56 @@ inline bool zip_extract(const fs::path& zip, const fs::path& dest, std::string& 
 
 // ---------- mods / manifest / check ----------
 
+// owner/repo with GitHub name chars; "." and ".." segments refused (they would change the URL path).
+inline bool valid_repo(const std::string& r) {
+    static const std::regex re("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+    if (!std::regex_match(r, re)) return false;
+    size_t s = r.find('/');
+    auto dots = [](const std::string& x) { return x == "." || x == ".."; };
+    return !dots(r.substr(0, s)) && !dots(r.substr(s + 1));
+}
+
+// mscore.mod / manifest "requires=owner/repo@1.2.3,owner2/repo2@0.1.0". Empty value = no deps.
+// Bad repo or version (x.y.z) -> false, err set, out empty.
+struct Dep {
+    std::string repo, min_ver;
+};
+
+inline bool parse_deps(const std::string& text, std::vector<Dep>& out, std::string& err) {
+    static const std::regex ver_re("^[0-9]+\\.[0-9]+\\.[0-9]+$");
+    out.clear();
+    std::string t = trim(text);
+    if (t.empty()) return true;
+    for (size_t pos = 0;;) {
+        size_t comma = t.find(',', pos);
+        std::string e = trim(t.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos));
+        size_t at = e.find('@');
+        std::string repo = at == std::string::npos ? "" : e.substr(0, at);
+        std::string ver = at == std::string::npos ? "" : e.substr(at + 1);
+        if (!valid_repo(repo) || !std::regex_match(ver, ver_re)) {
+            err = "bad requires entry '" + e + "' (want owner/repo@x.y.z)";
+            out.clear();
+            return false;
+        }
+        out.push_back({repo, ver});
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return true;
+}
+
+// same deps (repo case-insensitive, same min version), same order
+inline bool same_deps(const std::vector<Dep>& a, const std::vector<Dep>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (lower(a[i].repo) != lower(b[i].repo) || a[i].min_ver != b[i].min_ver) return false;
+    return true;
+}
+
 struct Mod {
     std::string name, repo, version;
     fs::path dir;
+    std::vector<Dep> requires_;
 };
 
 inline std::vector<Mod> scan_mods(const Paths& p) {
@@ -590,6 +637,8 @@ inline std::vector<Mod> scan_mods(const Paths& p) {
         m.name = kv["name"].empty() ? to_utf8(d.path().filename().wstring()) : kv["name"];
         m.repo = kv["repo"];
         m.version = kv["version"];
+        std::string derr;  // unparsable requires in an installed mod: ignored (scan has no error channel)
+        if (!parse_deps(kv["requires"], m.requires_, derr)) m.requires_.clear();
         mods.push_back(m);
     }
     std::sort(mods.begin(), mods.end(), [](const Mod& a, const Mod& b) { return a.name < b.name; });
@@ -599,6 +648,7 @@ inline std::vector<Mod> scan_mods(const Paths& p) {
 struct Manifest {
     std::string name, version, zip, sha256, min_native, ue4ss_version, ue4ss_zip, ue4ss_sha256;
     long long size = 0, ue4ss_size = 0;
+    std::vector<Dep> requires_;
 };
 
 inline bool parse_manifest(const std::string& text, Manifest& m, std::string& err) {
@@ -610,6 +660,7 @@ inline bool parse_manifest(const std::string& text, Manifest& m, std::string& er
             return false;
         }
     }
+    if (!parse_deps(kv["requires"], m.requires_, err)) return false;
     m.name = kv["name"];
     m.version = kv["version"];
     m.zip = kv["zip"];
@@ -623,13 +674,46 @@ inline bool parse_manifest(const std::string& text, Manifest& m, std::string& er
     return true;
 }
 
+// Installed mod with repo == d.repo (case-insensitive) and version >= d.min_ver. why = reason when false.
+inline bool dep_ok(const Paths& p, const Dep& d, std::string& why) {
+    bool found = false;
+    for (const auto& m : scan_mods(p)) {
+        if (lower(m.repo) != lower(d.repo)) continue;
+        found = true;
+        if (ver_cmp(m.version, d.min_ver) >= 0) return true;
+        why = d.repo + " " + m.version + " < " + d.min_ver;
+    }
+    if (!found) why = d.repo + " not installed";
+    return false;
+}
+
+// Names of other installed mods that require mod (matched by its repo). Empty if mod is not installed.
+inline std::vector<std::string> dependents_of(const Paths& p, const std::string& mod) {
+    std::vector<std::string> out;
+    std::vector<Mod> mods = scan_mods(p);
+    std::string repo;
+    for (const auto& m : mods)
+        if (lower(m.name) == lower(mod)) repo = m.repo;
+    if (repo.empty()) return out;
+    for (const auto& m : mods) {
+        if (lower(m.name) == lower(mod)) continue;
+        for (const auto& d : m.requires_)
+            if (lower(d.repo) == lower(repo)) {
+                out.push_back(m.name);
+                break;
+            }
+    }
+    return out;
+}
+
 struct Check {
     Mod mod;
     Manifest m;
-    std::string state;  // uptodate | update | error:<msg> | skipped:min_native
+    std::string state;  // uptodate | update | needs:<repo> | error:<msg> | skipped:min_native
 };
 
-inline Check check_mod(const Mod& mod, const std::string& core_native_ver) {
+// p (optional): when set, an installed mod whose requires_ is not satisfied gets state needs:<repo>.
+inline Check check_mod(const Mod& mod, const std::string& core_native_ver, const Paths* p = nullptr) {
     Check c;
     c.mod = mod;
     std::string text, err;
@@ -646,6 +730,14 @@ inline Check check_mod(const Mod& mod, const std::string& core_native_ver) {
         return c;
     }
     c.state = ver_cmp(c.m.version, mod.version) > 0 ? "update" : "uptodate";
+    if (p)
+        for (const auto& d : mod.requires_) {
+            std::string why;
+            if (!dep_ok(*p, d, why)) {
+                c.state = "needs:" + d.repo;
+                break;
+            }
+        }
     return c;
 }
 
@@ -835,15 +927,6 @@ inline bool rollback(const Paths& p, const std::string& mod, std::string& err) {
 }
 
 // ---------- repo ----------
-
-// owner/repo with GitHub name chars; "." and ".." segments refused (they would change the URL path).
-inline bool valid_repo(const std::string& r) {
-    static const std::regex re("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
-    if (!std::regex_match(r, re)) return false;
-    size_t s = r.find('/');
-    auto dots = [](const std::string& x) { return x == "." || x == ".."; };
-    return !dots(r.substr(0, s)) && !dots(r.substr(s + 1));
-}
 
 // owner/repo, or a github.com URL: http(s)://[www.]github.com/owner/repo[.git][/][/releases[/tag/x]|/tree/...][?q][#f],
 // or github.com/owner/repo / www.github.com/owner/repo without scheme. Any other host (userinfo, port,
