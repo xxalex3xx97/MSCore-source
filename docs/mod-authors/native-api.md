@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 9.** `MSCore_api()` returns `9`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`.
+**Native API version: 10.** `MSCore_api()` returns `10`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`9`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`10`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -122,6 +122,45 @@ Notes:
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
 | `MSCore_ship_shields` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Shield in whole units (raw PNum Value / 65536, floored). `cur` / `max` get `-1` when unreadable. Reads `Shields` / `MaxShields` PNum first, `GetShields` / `GetMaxShields` double when the PNum is missing. Negative or NaN = unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. |
+
+## API 10: flight (0.8.13)
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_flight` | `int sid, int mask, MsFlight* out` | `int` `1` read, `0` ship gone, `-1` exception or a group faulted (module off), `-2` flight module off, `-3` bad size or null out | `out->size` must be `sizeof(MsFlight)` (264). `mask`: `1` POSE, `2` STATE, `4` LIMITS, `8` POWER (OR them). Each value is written only when its read worked; `flags` says which (see the MsFlight table). Kill switch: `module_disable("flight")`. Source `cpp\MSCore\msc_flight.hpp`. |
+| `MSCore_ship_set_throttle` | `int sid, int step, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Writes the `Throttle` IntProperty of ship `sid`. |
+| `MSCore_ship_zero` | `int sid, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | `Throttle = 0` and `RotationImpulseInput` X, Y, Z = 0. |
+| `MSCore_ship_console` | `int sid` | `int` (`>0` PilotConsoleObject id, `0` none, `-2` flight off, `-1` exception) | Console matched by `ShipID`, then `ParentID`. |
+| `MSCore_actor_loc` | `void* actor, double* out3` | `int` (`1` ok, `0` fail, `-2` flight off, `-1` exception) | `K2_GetActorLocation` of the actor, in uu. |
+
+### MsFlight (264 bytes)
+
+| Off | Field | Type | Group | Meaning |
+|---|---|---|---|---|
+| 0 | size | int32 | - | set by the caller to `sizeof(MsFlight)` |
+| 4 | flags | int32 | - | `FF_*` bits (below) |
+| 8 | sid | int32 | - | ship id |
+| 12 | sys | int32 | POSE | solar system id (0 when unreadable) |
+| 16 | throttle | int32 | STATE | `Throttle` |
+| 20 | steps | int32 | STATE | `GetThrottleSteps` |
+| 24 | lp_thr | int32 | POWER | `FlightModel.LowPowerThrottle` |
+| 28 | pad | int32 | - | |
+| 32 | ch[3] | int64 | POSE | chunk location |
+| 56 | max_mod_raw | int64 | LIMITS | `GetModifiedMaxSpeed`, raw |
+| 64 | max_base_raw | int64 | LIMITS | `GetMaxSpeed`, raw |
+| 72 | coll_radius_raw | int64 | STATE | `CollisionRadius`, raw |
+| 80 | act_loc[3] | double | POSE | actor location, uu |
+| 104 | fw[3] | double | POSE | actor forward axis |
+| 128 | R[3] | double | POSE | actor right axis |
+| 152 | U[3] | double | POSE | actor up axis |
+| 176 | loc_raw[3] | double | POSE | ship object `Location`, raw (chunk-relative) |
+| 200 | quat[4] | double | POSE | ship `Quat` W, X, Y, Z, divided by 65536 |
+| 232 | grid_prod | double | POWER | `PowerGrid.TotalProduction` |
+| 240 | grid_cons | double | POWER | `PowerGrid.TotalConsumption` |
+| 248 | grid_eff | double | POWER | `PowerGrid.ConsumerEfficiency` |
+| 256 | lp_frac | double | POWER | `FlightModel.MaxLowPowerSpeed` (fraction) |
+
+Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_POSE (ch, loc_raw, quat), 16 AUTOPILOT (`bAutopilot` true), 32 DOCK_AP (`bDockingAutopilot` true), 64 TRAVELLING (`bTravelling` true), 128 GRID, 256 LP_KNOWN, 512 LP_ON, 1024 LP_LIMITS, 2048 THROTTLE, 4096 STEPS, 8192 COLL (`CollisionRadius` > 0). The three bool bits are set only when true, so a false bool and an unreadable bool look the same.
 
 ## Error convention
 
