@@ -35,6 +35,7 @@ using namespace RC::Unreal;
 #include "msc_pin.hpp"
 #include "msc_chunks.hpp"
 #include "msc_scan.hpp"
+#include "msc_ships.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
 #include "msc_rename.hpp"
@@ -44,7 +45,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.11";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.12";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -119,6 +120,15 @@ namespace
             if (!module_ok(STR("rocks"))) { detail = "rocks turned off by the walk: " + caps_text(); return false; }
             detail = std::to_string(rows.size()) + " asteroids";
             return true;
+        }
+        if (name == "ships")
+        {
+            if (!module_ok(STR("ships"))) { detail = "ships off: " + caps_text(); return false; }
+            if (!alive(ship)) { detail = "SKIP no ships"; return false; }
+            int32_t cur = -1, max = -1;
+            const int r = ship_shields_read(ship, cur, max);
+            detail = "shields cur=" + std::to_string(cur) + " max=" + std::to_string(max);
+            return (r & 1) != 0;
         }
         if (name == "chunks")
         {
@@ -1168,7 +1178,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.11");
+        ModVersion = STR("0.8.12");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1188,7 +1198,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1205,8 +1215,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks. set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 8; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields. set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 9; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1416,6 +1426,19 @@ extern "C"
               if (!n || static_cast<int>(std::strlen(n)) >= outlen) return 0;
               strcpy_s(out, static_cast<size_t>(outlen), n); return 1; }
         catch (...) { module_disable(STR("misc"), STR("class exception")); return 0; }
+    }
+
+    // ship shields (API 9): cur / max in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive).
+    // -2 when the ships module is off, -1 on exception. cur / max may be NULL.
+    MSCORE_API int MSCore_ship_shields(void* ship, int* cur, int* max)
+    {
+        try { if (!module_ok(STR("ships"))) return -2;
+              int32_t c = -1, m = -1;
+              const int r = ship_shields_read(static_cast<UObject*>(ship), c, m);
+              if (cur) *cur = c;
+              if (max) *max = m;
+              return r; }
+        catch (...) { module_disable(STR("ships"), STR("ship_shields exception")); return -1; }
     }
 
     // asteroid rows of solar system sys (0 = all; loaded_only 1 = rock actors in the world only, cached up to 1000 ms).

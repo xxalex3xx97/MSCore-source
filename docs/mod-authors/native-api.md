@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 7.** `MSCore_api()` returns `7`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below).
+**Native API version: 9.** `MSCore_api()` returns `9`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`.
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`8`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`9`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -114,8 +114,14 @@ Notes:
 
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
-| `MSCore_class` | `const char* logical, wchar_t* out, int n` | `int` (`1` found, `0` unknown or too small) | Game class name for a logical name (asteroid, asteroid_actor, floating_ore, station, player_station, container, container_actor, item_crate). Names live in msc_contract.hpp. |
+| `MSCore_class` | `const char* logical, wchar_t* out, int n` | `int` (`1` found, `0` unknown or too small) | Game class name for a logical name (asteroid, asteroid_actor, floating_ore, station, player_station, container, container_actor, item_crate, ship). Names live in msc_contract.hpp. |
 | `MSCore_scan_rocks` | `int sys, int loaded_only, out, int max` | `int` (`-2` scan off, `-1` exception, else total rows) | Asteroid rows of one solar system, as `MsScanRow`. Kill switch: `module_disable("scan")`. |
+
+## API 9: ship shields (0.8.12)
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_shields` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Shield in whole units (raw PNum Value / 65536, floored). `cur` / `max` get `-1` when unreadable. Reads `Shields` / `MaxShields` PNum first, `GetShields` / `GetMaxShields` double when the PNum is missing. Negative or NaN = unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. |
 
 ## Error convention
 
