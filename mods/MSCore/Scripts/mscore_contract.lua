@@ -19,6 +19,7 @@ C.classes = {
   container       = "ContainerObject",
   container_actor = "BP_Container_2_C",
   item_crate      = "BP_ItemCrateObject_C",
+  ship            = "DMSPlayerShipObject",
 }
 -- blocks module names (registry class, research class and dir, default category)
 C.blocks = { registry = "BuildingBlockRegistry", research_class = "ResearchTechnology", research_dir = "/Game/Data/Research/", category = "Functional Blocks" }

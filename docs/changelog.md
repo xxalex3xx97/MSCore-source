@@ -5,7 +5,10 @@ nav_order: 6
 
 # Changelog
 
-## Unreleased
+## 0.8.12 - Ship shields
+- **New:** C export `MSCore_ship_shields(ship, cur, max)`: current and max shield of a ship in whole units, read from the Shields / MaxShields PNum (GetShields / GetMaxShields when missing). Returns bitmask 1 = cur ok, 2 = max ok. caps ships=ok|off:why, kill switch `MSCore.module_disable("ships")`, selfcheck `world.ships`.
+- **New:** class `ship` (DMSPlayerShipObject) in `MSCore.class("ship")` and `MSCore_class`.
+- Native API 8 -> 9. Lua API stays 3 (additions only).
 - **New:** factory_native.rename_ship(shipId, text): renames a ship (same command as rename_dock, ship id as receiver). Lua-only wrapper.
 
 ## 0.8.11 - Hook crash fix

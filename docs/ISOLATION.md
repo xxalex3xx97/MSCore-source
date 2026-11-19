@@ -21,6 +21,7 @@ Shared infrastructure, not modules: msc_pattern, msc_ue, msc_caps, msc_loader, m
 | widgets | widgets (Lua, mscore_wbp + mscore_contract; resolve by contract path, then by name; module_disable("widgets")) |
 | blocks | blocks (Lua, mscore_blocks + contract; module_disable("blocks")) |
 | rocks | rocks (native scan of asteroids, class names from the contract; module_disable("scan")) |
+| ships | ships (native ship shields, msc_ships.hpp; module_disable("ships")) |
 | misc | exports without a module of their own |
 
 ## Module contract

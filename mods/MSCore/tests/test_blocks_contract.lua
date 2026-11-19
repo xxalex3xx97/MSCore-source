@@ -21,7 +21,7 @@ StaticFindObject = function() return nil end
 
 -- contract names
 local C = require("mscore_contract")
-for _, k in ipairs({ "asteroid", "asteroid_actor", "floating_ore", "station", "player_station", "container", "container_actor", "item_crate" }) do
+for _, k in ipairs({ "asteroid", "asteroid_actor", "floating_ore", "station", "player_station", "container", "container_actor", "item_crate", "ship" }) do
     check("classes." .. k .. " non-empty string", type(C.classes[k]) == "string" and C.classes[k] ~= "")
 end
 check("blocks.research_dir starts /Game/", type(C.blocks.research_dir) == "string" and C.blocks.research_dir:sub(1, 6) == "/Game/")
