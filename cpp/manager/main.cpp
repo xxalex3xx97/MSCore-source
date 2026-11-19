@@ -2,6 +2,7 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
+//      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
 #include "msc_loader.hpp"
 
@@ -295,9 +296,43 @@ int install_cli(const fs::path& win64) {
 
 // ---------- add mod (latest GitHub release of owner/repo) ----------
 
-// Game must be closed (caller checks). manifest -> min_native -> zip (hash, entries, Mods/<Name>/mscore.mod repo
-// must equal repo) -> pending -> apply (same backup logic as updates). mods.txt is never edited here.
-bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& msg, std::string& err) {
+bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& msg, std::string& err, int depth = 0);
+
+// Installs each required dep of m that is not satisfied (add_mod_core, depth + 1; applies immediately, so the game
+// must be closed). Aborts with "needs <repo>: <why>" before the caller stages anything. installed: repos added.
+bool install_deps(const mscl::Paths& p, const std::vector<mscl::Dep>& deps, std::string& err, int depth,
+                  std::string& installed) {
+    for (const auto& d : deps) {
+        std::string why;
+        if (mscl::dep_ok(p, d, why)) continue;
+        std::string dmsg;
+        if (!add_mod_core(p, d.repo, dmsg, err, depth + 1)) {
+            err = "needs " + d.repo + ": " + err;
+            return false;
+        }
+        if (!mscl::dep_ok(p, d, why)) {
+            err = "needs " + d.repo + ": " + why;
+            return false;
+        }
+        installed += (installed.empty() ? "" : ", ") + d.repo;
+    }
+    return true;
+}
+
+std::string join_names(const std::vector<std::string>& v) {
+    std::string s;
+    for (const auto& n : v) s += (s.empty() ? "" : ", ") + n;
+    return s;
+}
+
+// Game must be closed (caller checks). manifest -> min_native -> required deps (install_deps) -> zip (hash, entries,
+// Mods/<Name>/mscore.mod repo must equal repo and its requires must equal the manifest's) -> pending -> apply (same
+// backup logic as updates). mods.txt is never edited here. depth: 0 = user request, each dependency hop +1.
+bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& msg, std::string& err, int depth) {
+    if (depth >= 4) {
+        err = "dependency chain too deep";
+        return false;
+    }
     if (!mscl::valid_repo(repo)) {
         err = "repo must be owner/repo";
         return false;
@@ -318,6 +353,9 @@ bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& ms
         return false;
     }
 
+    std::string installed_deps;
+    if (!install_deps(p, m.requires_, err, depth, installed_deps)) return false;
+
     bool enabled_txt = false;
     std::string dir = "Mods/" + m.name;  // zip-relative
     auto check = [&](const fs::path& stage, std::string& e) {
@@ -327,9 +365,15 @@ bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& ms
             e = "zip has no " + dir + "/mscore.mod";
             return false;
         }
-        std::string got = mscl::parse_kv(mscl::read_text(mf))["repo"];
-        if (mscl::lower(got) != mscl::lower(repo)) {
-            e = "mscore.mod repo '" + got + "' is not " + repo;
+        mscl::KV kv = mscl::parse_kv(mscl::read_text(mf));
+        if (mscl::lower(kv["repo"]) != mscl::lower(repo)) {
+            e = "mscore.mod repo '" + kv["repo"] + "' is not " + repo;
+            return false;
+        }
+        std::vector<mscl::Dep> zreq;
+        std::string rerr;
+        if (!mscl::parse_deps(kv["requires"], zreq, rerr) || !mscl::same_deps(zreq, m.requires_)) {
+            e = "mscore.mod requires does not match the manifest";
             return false;
         }
         enabled_txt = fs::is_regular_file(stage / mscl::to_wide(dir) / L"enabled.txt", ec);
@@ -344,6 +388,7 @@ bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& ms
         return false;
     }
     msg = "Added " + m.name + " " + m.version + ".";
+    if (!installed_deps.empty()) msg += " Required mods installed: " + installed_deps + ".";
     if (!enabled_txt) msg += " No enabled.txt in zip: add '" + m.name + " : 1' to mods.txt to load it.";
     return true;
 }
@@ -374,8 +419,11 @@ int remove_cli(const fs::path& win64, const std::string& mod) {
         log_line("remove: game is running - close it first");
         return 1;
     }
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    std::vector<std::string> deps = mscl::dependents_of(p, mod);
+    if (!deps.empty()) log_line("remove: warning: required by " + join_names(deps) + ": they will stop working");
     std::string err;
-    if (!mscl::remove_mod(mscl::paths_from_win64(win64), mod, err)) {
+    if (!mscl::remove_mod(p, mod, err)) {
         log_line("remove: FAILED " + err);
         return 1;
     }
@@ -396,7 +444,7 @@ void start_check() {
             std::string core = "0.0.0";
             for (const auto& m : mods)
                 if (m.name == "MSCore") core = m.version;
-            for (const auto& m : mods) out->push_back(mscl::check_mod(m, core));
+            for (const auto& m : mods) out->push_back(mscl::check_mod(m, core, &p));
         } catch (const std::exception& e) {
             log_line(std::string("check: ") + e.what());
         }
@@ -457,36 +505,105 @@ void update_ui() {
     SetWindowTextW(g_game_lbl, mscl::to_wide(t).c_str());
 }
 
+// Rows the Update button acts on: a newer release (update) or a missing/too old dependency (needs:<repo>).
+bool actionable(const std::string& state) { return state == "update" || state.compare(0, 6, "needs:") == 0; }
+
+// Installs the missing deps (installed + new manifest requires), stages the release when it is newer, applies when
+// the game is closed. msg = status text; returns false when anything failed. Shared by the Update button and --update.
+bool update_picks(const mscl::Paths& p, const std::vector<mscl::Check>& picks, std::string& msg) {
+    int ok = 0;
+    bool all_ok = true;
+    const bool running = game_running_under(p.win64);
+    for (const auto& c : picks) {
+        std::vector<mscl::Dep> want = c.mod.requires_;
+        want.insert(want.end(), c.m.requires_.begin(), c.m.requires_.end());
+        std::string err, dmsg;
+        bool deps = true;
+        if (running) {  // add_mod_core applies at once: never while the game runs
+            for (const auto& d : want) {
+                std::string why;
+                if (!mscl::dep_ok(p, d, why)) {
+                    err = "needs " + d.repo + " (close the game, then install it)";
+                    deps = false;
+                    break;
+                }
+            }
+        } else {
+            deps = install_deps(p, want, err, 0, dmsg);
+        }
+        if (!dmsg.empty()) msg += c.mod.name + " installed required: " + dmsg + ". ";
+        if (!deps) {
+            msg += c.mod.name + " " + err + ". ";
+            all_ok = false;
+        } else if (mscl::ver_cmp(c.m.version, c.mod.version) > 0) {
+            if (mscl::stage_update(p, c.mod, c.m, err)) ++ok;
+            else {
+                msg += c.mod.name + " " + err + ". ";
+                all_ok = false;
+            }
+        }
+    }
+    if (!running) {
+        int n = mscl::apply_pending(p, log_line);
+        msg += "Applied " + std::to_string(n) + ". ";
+    } else {
+        msg += "Staged " + std::to_string(ok) + "; game running, applies next launch. ";
+    }
+    return all_ok;
+}
+
+// Headless update of one installed mod: same check and install as the Update button. Game must be closed.
+int update_cli(const fs::path& win64, const std::string& mod) {
+    if (game_running_under(win64)) {
+        log_line("update: game is running - close it first");
+        return 1;
+    }
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    std::string core = "0.0.0";
+    std::vector<mscl::Mod> mods = mscl::scan_mods(p);
+    for (const auto& m : mods)
+        if (m.name == "MSCore") core = m.version;
+    const mscl::Mod* target = nullptr;
+    for (const auto& m : mods)
+        if (mscl::lower(m.name) == mscl::lower(mod)) target = &m;
+    if (!target || mscl::lower(mod) == "mscore") {
+        log_line("update: FAILED " + mod + " is not an installed mod (MSCore: use --install)");
+        return 1;
+    }
+    mscl::Check c = mscl::check_mod(*target, core, &p);
+    if (c.state.compare(0, 6, "error:") == 0 || c.state.compare(0, 8, "skipped:") == 0) {
+        log_line("update: FAILED " + mod + " " + c.state);
+        return 1;
+    }
+    if (!actionable(c.state)) {
+        log_line("update: " + mod + " " + c.state + ", nothing to do");
+        return 0;
+    }
+    std::string msg;
+    bool ok = update_picks(p, {c}, msg);
+    log_line(std::string(ok ? "update: OK " : "update: FAILED ") + msg);
+    return ok ? 0 : 1;
+}
+
 void do_update(bool all) {
     if (g_busy) return;
     std::vector<mscl::Check> picks;
     if (all) {
         for (const auto& c : g_rows)
-            if (c.state == "update") picks.push_back(c);
+            if (actionable(c.state)) picks.push_back(c);
     } else {
         for (int i = ListView_GetNextItem(g_list, -1, LVNI_SELECTED); i >= 0;
              i = ListView_GetNextItem(g_list, i, LVNI_SELECTED))
-            if (g_rows[i].state == "update") picks.push_back(g_rows[i]);
+            if (actionable(g_rows[i].state)) picks.push_back(g_rows[i]);
     }
     if (picks.empty()) {
-        set_status("Nothing to update - select rows whose status is update");
+        set_status("Nothing to update - select rows whose status is update or needs:");
         return;
     }
     mscl::Paths p = g_paths;
     run_work([p, picks]() -> std::string {
         std::string msg;
-        int ok = 0;
-        for (const auto& c : picks) {
-            std::string err;
-            if (mscl::stage_update(p, c.mod, c.m, err)) ++ok;
-            else msg += c.mod.name + " " + err + ". ";
-        }
-        if (!game_running_under(p.win64)) {
-            int n = mscl::apply_pending(p, log_line);
-            msg += "Applied " + std::to_string(n) + ". ";
-        } else {
-            msg += "Staged " + std::to_string(ok) + "; game running, applies next launch. ";
-        }
+        update_picks(p, picks, msg);
         return msg;
     });
 }
@@ -597,10 +714,12 @@ void do_remove() {
         set_status("Remove " + name + ": " + err);
         return;
     }
+    std::vector<std::string> deps = mscl::dependents_of(p, name);
     std::string q = "Remove " + name + "?\n\nThis deletes " + std::to_string(items.size()) +
                     " file(s) installed by " + name +
                     ", its backup and its mods.txt line.\n"
                     "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
+    if (!deps.empty()) q += "\n\nRequired by " + join_names(deps) + ": they will stop working";
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;
     run_work([p, name]() -> std::string {
         if (game_running_under(p.win64)) return "Game is running - close it first";
@@ -727,7 +846,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     INITCOMMONCONTROLSEX ic{sizeof ic, ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&ic);
 
-    std::wstring game_arg, source_arg, add_arg, remove_arg;
+    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg;
     bool headless = false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -736,11 +855,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         if (a == L"--install") headless = true;
         else if (a == L"--add" && i + 1 < argc) add_arg = argv[++i];
         else if (a == L"--remove" && i + 1 < argc) remove_arg = argv[++i];
+        else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
         else if (a == L"--source" && i + 1 < argc) source_arg = argv[++i];
     }
     LocalFree(argv);
-    if (!add_arg.empty() || !remove_arg.empty()) headless = true;
+    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty()) headless = true;
     if (!source_arg.empty()) {
         mscl::g_allow_local = true;
         mscl::g_local_root = mscl::to_utf8(source_arg);
@@ -761,6 +881,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         }
         if (!add_arg.empty()) return add_cli(g_paths.win64, mscl::to_utf8(add_arg));  // owner/repo or GitHub URL, parsed in add_cli
         if (!remove_arg.empty()) return remove_cli(g_paths.win64, mscl::to_utf8(remove_arg));
+        if (!update_arg.empty()) return update_cli(g_paths.win64, mscl::to_utf8(update_arg));
         return install_cli(g_paths.win64);
     }
 
