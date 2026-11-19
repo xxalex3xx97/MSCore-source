@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.13 - Flight module
+- **New:** C exports `MSCore_ship_flight(sid, mask, MsFlight*)` (one read of the ship state: actor frame, chunk / Location / Quat, Throttle and steps, bAutopilot / bDockingAutopilot / bTravelling, collision radius, max speeds, power grid, low-power flag and limits), `MSCore_ship_set_throttle`, `MSCore_ship_zero` (Throttle 0 and RotationImpulseInput 0), `MSCore_ship_console` (PilotConsoleObject id) and `MSCore_actor_loc` (K2_GetActorLocation). caps flight=ok|off:why, kill switch `MSCore.module_disable("flight")`, selfcheck `world.flight`.
+- Native API 9 -> 10. Lua API stays 3.
+- **Manager:** `requires=` dependencies are installed automatically, the warning is gone (PR #35).
+
 ## 0.8.12 - Ship shields
 - **New:** C export `MSCore_ship_shields(ship, cur, max)`: current and max shield of a ship in whole units, read from the Shields / MaxShields PNum (GetShields / GetMaxShields when missing). Returns bitmask 1 = cur ok, 2 = max ok. caps ships=ok|off:why, kill switch `MSCore.module_disable("ships")`, selfcheck `world.ships`.
 - **New:** class `ship` (DMSPlayerShipObject) in `MSCore.class("ship")` and `MSCore_class`.
