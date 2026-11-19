@@ -313,6 +313,34 @@ do
     if not sec_ok then check("rename_dock section ran without error: " .. tostring(sec_err), false) end
 end
 
+-- ===== factory_native.rename_ship: Lua wrapper over native rename_dock, same stub setup
+do
+    setmetatable(_G, { __index = function(_, k)
+        if type(k) == "string" and not k:match("^MSCore") then return function() end end
+        return nil
+    end })
+    local sec_ok, sec_err = pcall(function()
+        _G.MSCoreNative_version = function() return "stub" end
+        local MSC = dofile(dir .. "/../Scripts/mscore.lua")
+        local r1, w1 = MSC.factory_native.rename_ship(77, "Ship A")
+        check("rename_ship: missing native gives nil, 'missing' text", r1 == nil and tostring(w1):find("missing", 1, true) ~= nil)
+        local seen
+        _G.MSCoreNative_rename_dock = function(id, text) seen = { id, text } return true, "" end
+        local MSC2 = dofile(dir .. "/../Scripts/mscore.lua")
+        local r2, w2 = MSC2.factory_native.rename_ship(77, "Ship A")
+        check("rename_ship: ok gives true, no reason", r2 == true and w2 == nil)
+        check("rename_ship: id and text reach the native", seen and seen[1] == 77 and seen[2] == "Ship A")
+        local r3, w3 = MSC2.factory_native.rename_ship(0, "Ship A")
+        check("rename_ship: bad id gives nil + reason", r3 == nil and w3 == "ship id must be a positive number")
+        local r4, w4 = MSC2.factory_native.rename_ship(77, "")
+        check("rename_ship: empty name gives nil + reason", r4 == nil and w4 == "ship name is empty")
+    end)
+    _G.MSCoreNative_version = nil
+    _G.MSCoreNative_rename_dock = nil
+    setmetatable(_G, nil)
+    if not sec_ok then check("rename_ship section ran without error: " .. tostring(sec_err), false) end
+end
+
 -- ===== factory_native.set_dock_filter: fake native, same stub setup as rename_dock
 do
     setmetatable(_G, { __index = function(_, k)
