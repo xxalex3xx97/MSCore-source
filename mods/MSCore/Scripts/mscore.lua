@@ -444,6 +444,18 @@ function factory_native.rename_dock(receiverId, text)
     if not ok then return nil, err end
     return true
 end
+-- rename a ship: ships use the same SetTextInputCommand as docks (probe 2026-11-19: ship id as receiver
+-- renames the ship; the name shows up on the next scan): true | nil, reason
+function factory_native.rename_ship(shipId, text)
+    if type(shipId) ~= "number" or shipId <= 0 then return nil, "ship id must be a positive number" end
+    if type(text) ~= "string" or text == "" then return nil, "ship name is empty" end
+    local N = MSCore.native
+    if not N then return nil, NO_NATIVE end
+    if not N.rename_dock then return nil, "native rename_dock missing (MSCore 0.8.3 build 3 needed)" end
+    local ok, err = N.rename_dock(shipId, text)
+    if not ok then return nil, err end
+    return true
+end
 -- set a dock item filter (native StationConsoleInput SetFilter): true | nil, reason
 function factory_native.set_dock_filter(receiverId, index, itemName, bLoading)
     local N = MSCore.native
@@ -995,7 +1007,7 @@ load_optional("mscore_factory", function(mod, M) mod.install(M) end)
 -- keep both names: MSCore.factory.native and MSCore.factory_native; the module's own fields win over the natives
 if MSCore.factory then
     MSCore.factory.native = factory_native
-    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_docks", "rename_dock", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
+    for _, k in ipairs({ "find_buildable", "place", "disassemble", "set_recipe", "port", "inv_move", "read_station", "read_docks", "rename_dock", "rename_ship", "read_inventory", "inv_split", "add_block", "remove_block", "pending", "read_block_class" }) do
         if MSCore.factory[k] == nil then MSCore.factory[k] = factory_native[k] end
     end
 end

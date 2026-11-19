@@ -5,6 +5,9 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased
+- **New:** factory_native.rename_ship(shipId, text): renames a ship (same command as rename_dock, ship id as receiver). Lua-only wrapper.
+
 ## 0.8.11 - Hook crash fix
 - **Fixed:** a crash when a mod window and the dev menu were opened in turn. The UMG layout hook is now registered once and kept (it returns at once when no button is listed) instead of being removed and registered again on every open.
 - Includes everything in 0.8.10 (class names and rock scan in MSCore; native API 8, Lua API 3).
