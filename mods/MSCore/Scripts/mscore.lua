@@ -154,16 +154,13 @@ local function hookRemove(gen)
 end
 function ui.clearClicks()
     BTN = {}
-    if hookIds and not hookOff then
-        hookOff = true
-        hookGen = hookGen + 1   -- an older timer (close, reopen, close within 100 ms) must not remove the hook early
-        local gen = hookGen
-        pcall(ExecuteWithDelay, 100, function() pcall(ExecuteInGameThread, function() hookRemove(gen) end) end)
-    end
+    -- WHY no UnregisterHook: register/remove churn on one game function from several Lua states (a mod window plus the dev menu) crashed the game
+    -- (UE4SS access violation in a later tick, 2026-11-19). The hook stays registered once made; the callback returns at once while BTN is empty.
 end
 function ui.onClick(btn, fn)
     if not hookIds then
         local s, pre, post = pcall(RegisterHook, R.clickHook, function(self)
+            if next(BTN) == nil then return end
             local okn, key = pcall(function() return self:get():GetFullName() end)
             local f = okn and BTN[key]
             if f then pcall(ExecuteInGameThread, function() pcall(f) end) end
