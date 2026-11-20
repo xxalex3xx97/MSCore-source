@@ -528,7 +528,8 @@ local function fleetWinInst()   -- live instance or nil; never keep the handle
   local i = M.instance("fleet_window")
   if not ok(i) then return nil end
   local s, vp = pcall(function() return i:IsInViewport() end)
-  if s and vp == true then return i end
+  local sv, vis = pcall(function() return i:IsVisible() end)
+  if s and vp == true and (not sv or vis ~= false) then return i end   -- cached hidden WBP_Fleet_C stays in viewport
   return nil
 end
 M.fleets_window_open = gd("fleets_window_open", function() return fleetWinInst() ~= nil end)
