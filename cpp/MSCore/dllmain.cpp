@@ -37,6 +37,7 @@ using namespace RC::Unreal;
 #include "msc_scan.hpp"
 #include "msc_ships.hpp"
 #include "msc_flight.hpp"
+#include "msc_repair.hpp"
 #include "msc_world.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
@@ -156,6 +157,13 @@ namespace
                      " grid=" + ((f.flags & FF_GRID) ? "1" : "0") + " lpflag=" + ((f.flags & FF_LP_KNOWN) ? ((f.flags & FF_LP_ON) ? "1" : "0") : "n/a") +
                      " console=" + std::to_string(console);
             return (f.flags & FF_THROTTLE) && (f.flags & FF_STEPS) && (f.flags & FF_OBJ_POSE) && f.steps > 0;
+        }
+        if (name == "repair")
+        {
+            if (!module_ok(STR("repair"))) { detail = "repair off: " + caps_text(); return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = repair_selftest(detail); })) { detail = "repair selftest faulted"; module_disable(STR("repair"), STR("selfcheck fault")); return false; }
+            return ok;
         }
         if (name == "chunks")
         {
@@ -1225,7 +1233,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); world_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1242,8 +1250,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 10; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need. set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 11; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1506,6 +1514,24 @@ extern "C"
             if (!module_ok(STR("flight"))) { e = STR("flight module off"); return false; }
             return flight_zero(sid, e);
         }, err, errlen, STR("flight"));
+    }
+
+    // repair ship sid with the game's RepairFrameInputCommand(count, bCreative): creative 1 = free (no repair items used). 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_ship_repair(int sid, int count, int creative, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return ship_repair(sid, count, creative != 0, e); }, err, errlen, STR("repair"));
+    }
+
+    // repair items needed to fully repair ship sid: ceil((GetTotalHull - GetCurrentHull) / 10). 0 full, -1 unreadable or exception, -2 repair module off.
+    MSCORE_API int MSCore_ship_repair_need(int sid)
+    {
+        try {
+            if (!module_ok(STR("repair"))) return -2;
+            int r = -1;
+            if (!seh_run([&] { r = ship_repair_need(sid); })) { module_disable(STR("repair"), STR("repair_need fault")); return -1; }
+            return r;
+        }
+        catch (...) { module_disable(STR("repair"), STR("repair_need exception")); return -1; }
     }
 
     // PilotConsoleObject id of ship sid (ShipID first, then ParentID). >0 id, 0 none, -2 flight module off, -1 exception.

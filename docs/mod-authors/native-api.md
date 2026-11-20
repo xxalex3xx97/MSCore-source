@@ -123,6 +123,13 @@ Notes:
 |---|---|---|---|
 | `MSCore_ship_shields` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Shield in whole units (raw PNum Value / 65536, floored). `cur` / `max` get `-1` when unreadable. Reads `Shields` / `MaxShields` PNum first, `GetShields` / `GetMaxShields` double when the PNum is missing. Negative or NaN = unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. |
 
+## API 11: repair
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_repair` | `int sid, int count, int creative, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Sends the game's `RepairFrameInputCommand` (`CreateInputRepair(count, bCreative)`, receiver = ship id) through `AddInputCommand`. `creative` non-zero = free (no repair items used). One item heals 10 Health. Kill switch: `module_disable("repair")`. Source `cpp\MSCore\msc_repair.hpp`. |
+| `MSCore_ship_repair_need` | `int sid` | `int` (`>0` items needed, `0` full hull, `-1` unreadable or exception, `-2` repair module off) | `ceil((GetTotalHull - GetCurrentHull) / 10)`. |
+
 ## API 10: flight (0.8.13)
 
 | Export | Signature | Returns | Notes |

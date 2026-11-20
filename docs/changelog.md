@@ -6,6 +6,7 @@ nav_order: 6
 # Changelog
 
 ## Unreleased
+- **New:** MSCore_ship_repair / MSCore_ship_repair_need (game's RepairFrameInputCommand, bCreative = free), caps repair, kill switch module_disable('repair'), selfcheck world.repair. Native API 10 -> 11. C only (no Lua wrapper, like the flight exports).
 - **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): ship_hologram (primary, returns the texture; hologram_texture alias) + set_ship_hologram wrapper, item_icon + set_item_icon wrapper, texture lifetime rule, pictures need opts.host (widgets parented to the consumer's hidden panel so the GC keeps them), hologram_release(host) on close and at open; created once per ship per window (refresh OFF, C.holo_refresh=false: re-rendering an existing widget crashed the game; 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
 - **New:** mscore_wbp item_list() ({key,name} sorted, cached from the item map, no extra FindAllOf), selfcheck items.list. Lua API stays 3.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
