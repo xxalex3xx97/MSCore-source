@@ -163,6 +163,13 @@ end)
 -- Standalone (mod state, only mscore_wbp loaded, holo.core == nil): ships come from an own FindAllOf cache (max one per 5 s);
 -- no tick event exists there, so a gap > 8 s between calls (caller repaints ~1/s while pending) counts as a new open / stall => 3 s settle.
 local holo = { off = nil, ent = {}, miss = {}, hold = 0, buildAt = -math.huge, tickAt = nil, pc = nil, core = nil, shipAt = -math.huge, shipMap = {}, lastCall = nil }
+-- STEP markers for the crash hunt (C.holo_debug, read live); never on the cheap reuse path
+local function hstep(msg)
+  if not (C and C.holo_debug) then return end
+  pcall(print, "[MSCore] HOLO STEP " .. tostring(msg) .. "\n")
+end
+M._hstep = hstep
+M.refresh_enabled = (C and C.holo_refresh) == true   -- documented OFF constant; tests may toggle
 holo.gone = {}   -- standalone: consecutive successful scans a ship id with a widget was absent from
 -- shared stall guard (ships + items): standalone has no tick, so a gap > 8 s between calls = new open / stall => 3 s settle.
 -- returns true while FindAllOf / Create must not run. Every call counts as activity.
@@ -176,6 +183,7 @@ local function standaloneShips()
   if now - holo.shipAt >= 5 and now >= holo.hold then
     holo.shipAt = now
     local map, n = {}, 0
+    hstep("ship scan FindAllOf id=" .. tostring(holo.cur))
     local s, l = pcall(FindAllOf, C and C.ship_class or "")
     if s and l then
       for _, o in ipairs(l) do
@@ -212,18 +220,14 @@ holo.stats = { renders = 0, reuses = 0, created = 0, queued = 0, stale_reuses = 
 function M.hologram_stats() local s = holo.stats; return { renders = s.renders, reuses = s.reuses, created = s.created, queued = s.queued, stale_reuses = s.stale_reuses } end
 -- pure: is a picture due (never rendered = age nil, force, or age >= ttl)
 function M.holo_due(age, ttl, force) return force == true or age == nil or age >= (ttl or HOLO_TTL) end
--- pure: what to do with a ship's picture. 'create' = never rendered; 'render' = invalid texture (widget broken: one re-render through the
--- queue) or valid + due + refresh_ok; 'reuse' = valid texture, return it as is. SAFETY: an expired-but-valid picture is re-rendered in place
--- ONLY when the caller passes refresh_ok=true (its menu-open path); force is ignored without refresh_ok (in-place SetShip while brushes hold
--- the texture crashed the game).
+-- pure: what to do with a ship's picture. 'create' = never rendered, or the cached texture is INVALID (drop that widget, build a NEW one);
+-- 'reuse' = valid texture, return it as is. 'render' (SetShip again on the existing widget) only when M.refresh_enabled (C.holo_refresh,
+-- OFF: it crashed the game) AND refresh_ok AND due. ttl / force / refresh_ok are otherwise accepted and ignored.
 function M.holo_decide(age, ttl, force, refresh_ok, hasValidTex)
-  if age == nil then return "create" end
-  if not hasValidTex then return "render" end
-  if refresh_ok == true and M.holo_due(age, ttl, force) then return "render" end
+  if age == nil or not hasValidTex then return "create" end
+  if M.refresh_enabled and refresh_ok == true and M.holo_due(age, ttl, force) then return "render" end
   return "reuse"
 end
--- pure: FIFO render budget. queue = list of ids (not modified); returns allowed, newQueue. id may render when fewer than `max`
--- renders were used in this window and id is within the first (max - used) queued ids (older ids are served first). Deduped.
 -- pure: drop queued ids that are not alive or were queued longer than maxAge s ago (qat[id] = enqueue time)
 function M.holo_purge(queue, alive, qat, now, maxAge)
   local q = {}
@@ -245,6 +249,7 @@ local function hologram_texture_impl(id, opts)
   if holo.off then return nil, "off:" .. holo.off end
   if type(id) ~= "number" then return nil, "bad id" end
   opts = opts or {}
+  holo.cur = id
   local now = os.clock()
   stalled(now)
   local e, at = holo.ent[id], holo.at[id]
@@ -255,7 +260,7 @@ local function hologram_texture_impl(id, opts)
     if M.holo_due(at and now - at or nil, opts.ttl, false) then holo.stats.stale_reuses = holo.stats.stale_reuses + 1 end
     return tex
   end
-  if e and at and not tex then   -- texture missing or invalid right now: just rendered = wait, else treat as due (one re-render, queue/budget apply)
+  if e and at and not tex then   -- texture missing or invalid right now: just built = wait, else drop the widget and build a new one (below)
     if now - at <= 5 then return nil, "pending" end
   end
   if now < holo.hold or (holo.miss[id] or 0) > now then return nil, "pending" end
@@ -276,9 +281,15 @@ local function hologram_texture_impl(id, opts)
   end
   holo.queue = M.holo_purge(holo.queue, alive, holo.qat, now, 10)
   if not ok(ship) then holo.miss[id] = now + 5; return nil, "no ship" end
+  if e and dec == "create" then   -- invalid cached texture: never SetShip a second time on an old widget
+    hstep("drop widget id=" .. id)
+    holo.ent[id], holo.at[id], e = nil, nil, nil   -- drop the reference, no Destroy
+  end
   if not e then
+    hstep("resolve class id=" .. id)
     local cls = M.widget("fleet_ship_entry")
     if not ok(cls) then return nil, "no class" end
+    hstep("localCtl id=" .. id)
     if not ok(holo.pc) then holo.pc = localCtl() end
     if not ok(holo.pc) then return nil, "no controller" end
   end
@@ -292,14 +303,18 @@ local function hologram_texture_impl(id, opts)
   end
   holo.used = holo.used + 1
   if not e then
+    hstep("Create id=" .. id)
     try("holo create", function() e = StaticFindObject(LIB):Create(holo.pc, M.widget("fleet_ship_entry"), holo.pc) end)
     if not ok(e) then holo.miss[id] = now + 5; return nil, "pending" end
     holo.ent[id] = e
     holo.stats.created = holo.stats.created + 1
   end
+  -- SetShip runs only on a widget created in this call (or when refresh is enabled, dec == "render")
+  hstep("SetShip id=" .. id)
   try("holo SetShip", function() e:SetShip(ship) end)
   holo.at[id] = now
   holo.stats.renders = holo.stats.renders + 1
+  hstep("read ShipHologram texture id=" .. id)
   tex = holoTex(e)
   if tex then return tex end
   return nil, "pending"
@@ -313,8 +328,8 @@ local function hg(f)
   end
 end
 -- WBP.ship_hologram(shipId [, {ttl = 30, force = false, refresh_ok = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
--- REFRESH: an expired-but-valid picture is re-rendered in place ONLY with refresh_ok=true (pass it once, when your menu opens); force needs
--- refresh_ok too. Ordinary paint calls never re-render a valid picture.
+-- REFRESH IS OFF (C.holo_refresh=false): re-rendering an existing widget crashed the game. A picture is created once per ship per session;
+-- opts.ttl / force / refresh_ok are accepted and ignored. An INVALID cached texture drops that widget and builds a NEW one (queue/budget).
 -- OWNERSHIP / LIFETIME: the mod owns the picture. APPLY the returned texture to YOUR Image brush IMMEDIATELY, in the same call
 -- (SetBrushFromTexture / brush.ResourceObject, under pcall + IsValid). The Slate brush then holds a strong GC reference, so the picture
 -- stays alive even if MSCore drops its hidden widget; an MSCore refresh redraws INTO the same render target (SetShip again), so images
@@ -348,6 +363,7 @@ local ITEMS_REFRESH = (C and C.items_refresh) or 30
 local items = { off = nil, map = nil, at = -math.huge, tex = {} }
 local function itemMap(force)
   if (force or not items.map) and not stalled(os.clock()) then   -- stall guard: no FindAllOf, keep the cached map (may be nil)
+    hstep("items FindAllOf Item map")
     local s, all = pcall(FindAllOf, C and C.item_class or "")
     local map = {}
     if s and all then
@@ -376,6 +392,7 @@ function M.item_icon(key)
     local it = m[key]
     if not it and os.clock() - items.at >= ITEMS_REFRESH then it = (itemMap(true) or m)[key] end
     if not it then return nil, "no item " .. tostring(key) end
+    hstep("items read Icon key=" .. tostring(key))
     local t = rd(it, "Icon")
     if live(t) then items.tex[key] = t; return t end
     return nil, "no icon"

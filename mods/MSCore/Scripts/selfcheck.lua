@@ -111,8 +111,10 @@ function M.run(MSCore)
         local t, why = W.hologram_texture(sh.id, { force = true, refresh_ok = true })
         local b = W.hologram_stats()
         if tostring(why):find("^off:") then return "BROKEN", why end
-        if b.renders == a.renders + 1 and b.created == a.created then return "OK", "re-rendered, no new widget" end
-        return "SKIP", "render budget/hold: " .. tostring(why)
+        local flag = W.refresh_enabled and "ON" or "OFF"
+        if W.refresh_enabled then return "SKIP", "refresh constant is ON, not asserted" end
+        if b.renders == a.renders and b.created == a.created then return "OK", "no re-render (refresh " .. flag .. " by design)" end
+        return "BROKEN", "re-rendered although refresh is " .. flag
     end)
     check("wbp.hologram consumer", function()
         -- one Lua state only: a true second-state test (a mod requiring mscore_wbp alone) is not possible here; this calls the same module table a mod gets
@@ -122,8 +124,8 @@ function M.run(MSCore)
         local t, why = W.ship_hologram(sh.id)
         if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
         if not S.valid(t) then return "BROKEN", "returned texture not valid" end
-        local t2, why2 = W.ship_hologram(sh.id, { force = true, refresh_ok = true })
-        if not t2 then return "SKIP", "force refresh: " .. tostring(why2) end
+        local t2, why2 = W.ship_hologram(sh.id)
+        if not t2 then return "SKIP", "second call: " .. tostring(why2) end
         if not S.valid(t2) then return "BROKEN", "refreshed texture not valid" end
         return "OK", "old handle after refresh: " .. (S.valid(t) and "still valid" or "invalid (stale)")
     end)

@@ -92,12 +92,28 @@ check("purged head: full budget for live id", okb == true)
 -- M8: decide
 check("decide never rendered -> create", M.holo_decide(nil, 30, false, true, false) == "create")
 check("decide expired+valid, no refresh_ok -> reuse", M.holo_decide(99, 30, false, false, true) == "reuse")
-check("decide expired+valid, refresh_ok -> render", M.holo_decide(99, 30, false, true, true) == "render")
+check("refresh constant is OFF", M.refresh_enabled == false)
+check("decide never refreshes (age 1000, force, refresh_ok)", M.holo_decide(1000, 30, true, true, true) == "reuse")
+M.refresh_enabled = true
+check("decide expired+valid, refresh_ok, refresh enabled -> render", M.holo_decide(99, 30, false, true, true) == "render")
 check("decide young+valid, refresh_ok -> reuse", M.holo_decide(5, 30, false, true, true) == "reuse")
 check("decide force without refresh_ok ignored", M.holo_decide(5, 30, true, false, true) == "reuse")
-check("decide force with refresh_ok -> render", M.holo_decide(5, 30, true, true, true) == "render")
-check("decide invalid texture -> render even without refresh_ok", M.holo_decide(5, 30, false, false, false) == "render")
+check("decide force with refresh_ok, refresh enabled -> render", M.holo_decide(5, 30, true, true, true) == "render")
+M.refresh_enabled = false
+check("decide invalid texture -> create (drop widget, new one)", M.holo_decide(5, 30, false, false, false) == "create" and M.holo_decide(5, 30, true, true, false) == "create")
 check("stats has stale_reuses", type(M.hologram_stats().stale_reuses) == "number")
+
+-- M9: step markers
+do
+    local Cc = require("mscore_contract")
+    local lines, realPrint = {}, print
+    print = function(x) lines[#lines + 1] = tostring(x) end
+    Cc.holo_debug = true; M._hstep("a id=1")
+    Cc.holo_debug = false; M._hstep("b id=2")
+    print = realPrint
+    check("hstep prints when holo_debug", #lines == 1 and lines[1]:find("HOLO STEP a id=1", 1, true) ~= nil)
+    check("hstep silent when holo_debug=false", #lines == 1)
+end
 
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
