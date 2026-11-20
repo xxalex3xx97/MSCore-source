@@ -130,6 +130,12 @@ Notes:
 | `MSCore_ship_repair` | `int sid, int count, int creative, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Sends the game's `RepairFrameInputCommand` (`CreateInputRepair(count, bCreative)`, receiver = ship id) through `AddInputCommand`. `creative` non-zero = free (no repair items used). One item heals 10 Health. Kill switch: `module_disable("repair")`. Source `cpp\MSCore\msc_repair.hpp`. |
 | `MSCore_ship_repair_need` | `int sid` | `int` (`>0` items needed, `0` full hull, `-1` unreadable or exception, `-2` repair module off) | `ceil((GetTotalHull - GetCurrentHull) / 10)`. |
 
+## API 12: station names
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
+
 ## API 10: flight (0.8.13)
 
 | Export | Signature | Returns | Notes |

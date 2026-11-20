@@ -38,6 +38,7 @@ using namespace RC::Unreal;
 #include "msc_ships.hpp"
 #include "msc_flight.hpp"
 #include "msc_repair.hpp"
+#include "msc_stnames.hpp"
 #include "msc_world.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
@@ -132,6 +133,17 @@ namespace
             const int r = ship_shields_read(ship, cur, max);
             detail = "shields cur=" + std::to_string(cur) + " max=" + std::to_string(max);
             return (r & 1) != 0;
+        }
+        if (name == "stations")
+        {
+            if (!module_ok(STR("stations"))) { detail = "stations off: " + caps_text(); return false; }
+            std::vector<MsStationName> rows;
+            if (!stations_read(rows)) { detail = "stations read faulted (module stations off until reload)"; module_disable(STR("stations"), STR("selfcheck fault")); return false; }
+            if (rows.empty()) { detail = "SKIP no stations"; return false; }
+            int named = 0;
+            for (const auto& r : rows) if (r.name[0]) ++named;
+            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with DisplayName";
+            return named > 0;
         }
         if (name == "paused")
         {
@@ -1233,7 +1245,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); stnames_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1250,8 +1262,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need. set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 11; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations). set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 12; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1481,6 +1493,21 @@ extern "C"
     {
         try { if (!module_ok(STR("world"))) return -2; return world_paused_read(); }
         catch (...) { module_disable(STR("world"), STR("world_paused exception")); return -1; }
+    }
+
+    // station names (API 12): n stations written (at most max), or total count when out is null or max <= 0; -2 stations module off, -1 fault or exception.
+    MSCORE_API int MSCore_stations(MsStationName* out, int max)
+    {
+        try
+        {
+            if (!module_ok(STR("stations"))) return -2;
+            std::vector<MsStationName> rows;
+            if (!stations_read(rows)) { module_disable(STR("stations"), STR("stations read fault")); return -1; }
+            const int n = static_cast<int>(rows.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
+            return n;
+        }
+        catch (...) { module_disable(STR("stations"), STR("stations exception")); return -1; }
     }
 
     // flight state of ship sid (API 10): mask = FL_* groups, out = MsFlight with out->size = sizeof(MsFlight).
