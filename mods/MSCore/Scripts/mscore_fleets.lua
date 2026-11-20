@@ -162,6 +162,7 @@ local function dump(c, recv)
         end) end)
     end
 end
+-- M.on_fleet_cmd = function() (set/cleared by the caller): called when a FleetTagInput is sent, even with the log muted/capped
 function M.capture(on)
     if on == false then capOn = false; return false end
     if hooked then capOn = true; return true end
@@ -177,6 +178,7 @@ function M.capture(on)
             cls = tostring(cls)
             local recv = pv(recvp)
             if cls == "FleetTagInput" then
+                if type(M.on_fleet_cmd) == "function" then pcall(M.on_fleet_cmd) end   -- event: the game just sent a fleet command (before the dump cap)
                 if capDumps >= CAP_DUMP_MAX then return end
                 capDumps = capDumps + 1
                 dump(c, recv)
