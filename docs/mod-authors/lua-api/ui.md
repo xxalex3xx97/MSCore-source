@@ -73,6 +73,7 @@ local red = MSCore.ui.rgba(255, 0, 0)
 | `wbp.hologram_texture` | `shipId [, opts]` | same | Alias of `wbp.ship_hologram`. |
 | `wbp.set_ship_hologram` | `img, shipId [, opts]` | `true`, or `false, why` | Convenience: `ship_hologram` + `SetBrushFromTexture` under pcall. Extra `why`: `bad image`, `SetBrush failed`. |
 | `wbp.item_icon` | `key` | texture, or `nil, why` | Primary item icon (see warp-docks.md). Apply it to your brush immediately; see Ownership / lifetime. |
+| `wbp.item_list` | none | array of {key, name} sorted by name, or nil, why | All game items for pickers. Use wbp.item_icon(key) for each icon. nil,"pending" = not loaded yet, ask again on the next open. |
 | `wbp.set_item_icon` | `img, key` | `true`, or `false, why` | Convenience wrapper. |
 | `wbp.Z` | - | `1` | Window Z. Keep it below 2. |
 

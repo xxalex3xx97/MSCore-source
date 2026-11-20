@@ -51,6 +51,13 @@ function M.run(MSCore)
         if withIcon > 0 then return "OK", d end
         return "SKIP", d .. " (0: ores have no runtime Icon, Mining keeps its baked textures)"
     end)
+    check("items.list", function()
+        local W = MSCore.wbp
+        if not (W and W.item_list) then return "BROKEN", "wbp.item_list missing" end
+        local l, why = W.item_list()
+        if not l then if tostring(why):find("^off:") then return "BROKEN", tostring(why) end return "SKIP", tostring(why) end
+        return yes(#l > 0, #l .. " items, first=" .. tostring(l[1] and l[1].name))
+    end)
     check("ui.mk/setText", function()
         local c = live("controller") if not c then return "SKIP", "no controller" end
         local tb = UI.mk("TextBlock", c) UI.setText(tb, "selfcheck") return yes(S.valid(tb)) end)

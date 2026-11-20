@@ -44,6 +44,29 @@ check("standalone off", select(2, W.item_icon("x")) == "off:y" and W.items_caps(
 package.loaded["mscore_wbp"] = nil
 findCalls = 0
 
+-- item_list: fresh standalone module, fake items
+do
+    local function setmetatable_u(t) local u = io.tmpfile(); debug.setmetatable(u, { __index = t }); return u end  -- nm() needs userdata
+    local function fake(n, label) return setmetatable_u { GetFName = function() return { ToString = function() return n end } end, IsValid = function() return true end, DisplayName = { ToString = function() return label end } } end
+    local fl = 0
+    FindAllOf = function() fl = fl + 1 return { fake("ITEM_B", "Beta"), fake("ITEM_A", "alpha"), fake("ITEM_X_Filter", "Zed") } end
+    local W2 = require("mscore_wbp")
+    os.clock = function() return now end
+    now = now + 100
+    local l0, w0b = W2.item_list()
+    check("list hold: nil pending, 0 FindAllOf", l0 == nil and w0b == "pending" and fl == 0)
+    now = now + 4
+    local l1 = W2.item_list()
+    check("list sorted, Filter excluded", l1 and #l1 == 2 and l1[1].key == "ITEM_A" and l1[1].name == "alpha" and l1[2].name == "Beta" and fl == 1)
+    check("list cached", W2.item_list() == l1 and fl == 1)
+    W2.items_disable("z")
+    local l3, w3 = W2.item_list()
+    check("list off", l3 == nil and w3 == "off:z")
+    os.clock = realClock
+    package.loaded["mscore_wbp"] = nil
+    FindAllOf = function() findCalls = findCalls + 1 return {} end
+end
+
 local MSCore = require("mscore")
 local I = MSCore.items
 do

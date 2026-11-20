@@ -1,5 +1,6 @@
 -- mscore_wbp: helpers for cooked UMG windows (WBP) opened from Lua. Extracted from BlueprintUnitUI (bpu_window.lua).
 -- API: M.open(path_or_class, owner) -> handle {wbp=, pc=} | nil
+--      M.item_list() -> {{key=,name=},...} sorted by name | nil, why   (see item icons block)
 --      M.close(handle)                       idempotent, teardown order: CleanupInventory, RemoveFromParent, input restore
 --      M.inventory_grid(handle, host, inv, other_inv, columns) -> WBP_Inventory grid | nil
 --      M.cost_row(host, item, need, have, opts) -> WBP_ItemAmount row | nil   (opts.refund, opts.pc)
@@ -398,7 +399,7 @@ end
 -- key = item object name (e.g. ITEM_TitaniumOre). One FindAllOf builds the name map; textures are kept for the session, a missing key refreshes the map at most every C.items_refresh (30) s.
 -- ---------------------------------------------------------------------------------------------
 local ITEMS_REFRESH = (C and C.items_refresh) or 30
-local items = { off = nil, map = nil, at = -math.huge, tex = {} }
+local items = { off = nil, map = nil, at = -math.huge, tex = {}, list = nil, listMap = nil }
 local function itemMap(force)
   if (force or not items.map) and not stalled(os.clock()) then   -- stall guard: no FindAllOf, keep the cached map (may be nil)
     hstep("items FindAllOf Item map")
@@ -437,6 +438,29 @@ function M.item_icon(key)
   end)
   if not s then M.items_disable("error: " .. tostring(tex)) return nil, "off:" .. items.off end
   return tex, why
+end
+-- item_list() -> array of {key=, name=} sorted by name (lower-case), or nil, why. Built from itemMap (no extra FindAllOf), cached until the map is replaced.
+function M.item_list()
+  if items.off then return nil, "off:" .. items.off end
+  local s, r, why = pcall(function()
+    local m = itemMap(false)
+    if not m then return nil, "pending" end
+    if items.list and items.listMap == m then return items.list end
+    hstep("items read DisplayName list")
+    local out = {}
+    for key, it in pairs(m) do
+      if not key:find("Filter", 1, true) then
+        local sn, label = pcall(function() return it.DisplayName:ToString() end)
+        if not (sn and type(label) == "string" and label ~= "") then label = (key:gsub("^ITEM_", "")) end
+        out[#out + 1] = { key = key, name = label }
+      end
+    end
+    table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
+    items.list, items.listMap = out, m
+    return out
+  end)
+  if not s then M.items_disable("error: " .. tostring(r)) return nil, "off:" .. items.off end
+  return r, why
 end
 -- item_icon(key) -> texture | nil, why: same ownership/lifetime contract as ship_hologram (apply it to your brush immediately, ask again per paint)
 function M.set_item_icon(img, key)
