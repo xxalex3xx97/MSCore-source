@@ -94,6 +94,11 @@ function M.run(MSCore)
         local a, b = W.widget("fleet_window"), W.widget("fleet_tag_popup")
         local d = "fleet_window=" .. tostring(a ~= nil) .. " tag_popup=" .. tostring(b ~= nil) .. " assign=" .. tostring(W.fleet_assign_caps())
         if a and b then return "OK", d end
+        if a and not b then
+            local names = {}
+            for i, c in ipairs(W.fleet_popup_candidates() or {}) do names[i] = c.name end
+            return "SKIP", d .. " candidates=" .. (#names > 0 and table.concat(names, ",") or "none")
+        end
         return "SKIP", d
     end)
     check("wbp.hologram", function()

@@ -6,8 +6,8 @@
 --      M.cost_row(host, item, need, have, opts) -> WBP_ItemAmount row | nil   (opts.refund, opts.pc)
 --      M.fmt_int(n) -> "1,595"; M.geometry_log(widget); M.Z; M.install(MSCore) -> MSCore.wbp = M
 --      M.open_fleets_window() -> true | false, why        the game's own fleet window (ShowWidget(WBP_Fleet, PlayerObject))
---      M.open_fleet_assign(shipId) -> true | false, why   add-to-fleet popup; OFF (false,'unverified...') until C.fleet_assign is captured
---      M.fleet_assign_caps() -> 'ok' | 'off:unverified';  M.probe_fleet_popup() dev capture: logs PROBE lines to UE4SS.log, sends nothing
+--      M.open_fleet_assign(shipId) -> true | false, why   add-to-fleet popup (ShowPopup(cls, ship, nil, false))
+--      M.fleet_assign_caps() -> 'ok' | 'off:<why>';  M.probe_fleet_popup() dev capture: logs PROBE lines to UE4SS.log, sends nothing
 -- Call open / inventory_grid / cost_row on the game thread (ExecuteInGameThread). Every game call goes through pcall.
 -- Camera: open sets controller CharacterInputEnabled=false (AllowCharacterInput), close restores it only if it was true.
 -- Window rules (proven in BlueprintUnitUI): Z below 2 (WBP_CursorItemStack draws held items at Z 2), GameAndUIEx input
@@ -524,11 +524,51 @@ M.open_fleets_window = gd("open_fleets_window", function()
   return true
 end)
 
+-- popup class: contract widget first, else a loaded WidgetBlueprintGeneratedClass named *TagSelect* / *FleetTag* (scanned once, cached, logged)
+local popupCand
+function M.fleet_popup_candidates()
+  if popupCand then return popupCand end
+  local out = {}
+  local s, l = pcall(FindAllOf, "WidgetBlueprintGeneratedClass")
+  if s and l then
+    for _, c in ipairs(l) do
+      if live(c) then
+        local sn, n = pcall(function() return c:GetFName():ToString() end)
+        if sn and type(n) == "string" and (n:find("TagSelect", 1, true) or n:find("FleetTag", 1, true)) then out[#out + 1] = { name = n, cls = c } end
+      end
+    end
+    popupCand = out
+    local names = {}
+    for i, c in ipairs(out) do names[i] = c.name end
+    L("[MSCore.wbp] fleet popup candidates: " .. (#names > 0 and table.concat(names, ", ") or "none"))
+  end
+  return out
+end
+local function popupClass()
+  local c = M.widget("fleet_tag_popup")
+  if ok(c) then return c end
+  local best
+  for _, e in ipairs(M.fleet_popup_candidates()) do
+    if live(e.cls) and (not best or (e.name:find("TagSelect", 1, true) and not best.name:find("TagSelect", 1, true))) then best = e end
+  end
+  return best and best.cls or nil
+end
+local function widgetSub()
+  local s, o = pcall(FindFirstOf, "WidgetSubsystem")   -- live instance, never the CDO
+  if s and ok(o) then return o end
+  return nil
+end
+local function clsName(c)
+  local s, v = pcall(function() return c:GetFName():ToString() end)
+  return s and tostring(v) or "?"
+end
+
+-- recipe C.fleet_assign (captured in game): WidgetSubsystem:ShowPopup(popupClass, shipObject, nil, false). Do not call within ~10 s after a warp.
 M.open_fleet_assign = gd("open_fleet_assign", function(shipId)
   local R = C.fleet_assign
-  if not R then return false, "unverified: popup open recipe not captured (run MSCore.wbp.probe_fleet_popup)" end
+  if not R then return false, "no recipe" end
   if type(shipId) ~= "number" then return false, "bad ship id" end
-  local cls = M.widget("fleet_tag_popup")
+  local cls = popupClass()
   if not cls then return false, "no class" end
   local ship
   if holo.core and holo.core.ships then
@@ -537,39 +577,58 @@ M.open_fleet_assign = gd("open_fleet_assign", function(shipId)
     ship = standaloneShips()[shipId]
   end
   if not ok(ship) then return false, "no ship" end
-  local p = localCtl()
-  if not ok(p) then return false, "no controller" end
-  if R.how == "popup" then
-    local sub = StaticFindObject("/Script/MainSequence.Default__WidgetSubsystem")
-    if not ok(sub) then local s, o = pcall(FindFirstOf, "WidgetSubsystem"); sub = s and o or nil end
-    if not ok(sub) then return false, "no widget subsystem" end
-    local s, w = pcall(function() return sub[R.subsystem_fn](sub, cls, nil, nil, false) end)
-    if not s then return false, "popup failed" end
-    if R.setup_fn and w ~= nil and not pcall(function() w[R.setup_fn](w, ship) end) then return false, "setup failed" end
-    return true
-  end
-  local o1 = R.o1 == "ship" and ship or rd(p, C.player_obj_prop)
-  if not pcall(function() p[C.show_widget](p, cls, o1, nil) end) then return false, "ShowWidget failed" end
+  local sub = widgetSub()
+  if not sub then return false, "no widget subsystem" end
+  if not (ok(ship) and ok(sub) and ok(cls)) then return false, "stale object" end   -- re-validate right before the call
+  local s = pcall(function() sub[R.subsystem_fn](sub, cls, ship, nil, false) end)
+  L("[MSCore.wbp] open_fleet_assign ship=" .. shipId .. " class=" .. clsName(cls) .. " ok=" .. tostring(s))
+  if not s then return false, "popup failed" end
   return true
 end)
 
-function M.fleet_assign_caps() return C.fleet_assign and "ok" or "off:unverified" end
+function M.fleet_assign_caps()
+  if not C.fleet_assign then return "off:no recipe" end
+  local s, r = pcall(function()
+    if not popupClass() then return "off:no class" end
+    if not widgetSub() then return "off:no widget subsystem" end
+    return "ok"
+  end)
+  return s and r or "off:error"
+end
 
--- dev capture only, sends nothing: hooks log the popup class + setup args when the user opens add-to-fleet once. Remove after the recipe is known.
+-- dev capture only, logs and sends nothing: ShowPopup events log the widget class's OWN name + o1/o2 classes.
 -- Do not call within ~10 s after a warp (same as the hologram code).
+local probeArmed, tagHooked = false, false
 function M.probe_fleet_popup()
+  if probeArmed then return end
+  probeArmed = true
   local function cn(o)   -- a null object param still arrives as a wrapper: never call GetClass without IsValid
     local okv, valid = pcall(function() return o:get():IsValid() end)
     if not (okv and valid) then return "nil" end
     local s, v = pcall(function() return o:get():GetClass():GetFName():ToString() end)
     return s and v or "?"
   end
+  local function wn(o)   -- the widget class object itself
+    local okv, valid = pcall(function() return o:get():IsValid() end)
+    if not (okv and valid) then return "nil" end
+    local s, n = pcall(function() return o:get():GetFName():ToString() end)
+    local s2, f = pcall(function() return o:get():GetFullName() end)
+    return (s and n or "?") .. " full=" .. (s2 and tostring(f) or "?")
+  end
+  local function hookTag()
+    if tagHooked then return end
+    if pcall(RegisterHook, "/Game/Blueprints/Widgets/Popups/WBP_TagSelectPopup.WBP_TagSelectPopup_C:SetupWidget", function(self, o1, o2)
+      L("PROBE TagSelect SetupWidget o1=" .. cn(o1) .. " o2=" .. cn(o2))
+    end, function() end) then
+      tagHooked = true
+      L("PROBE hooked TagSelect SetupWidget")
+    end
+  end
   pcall(RegisterHook, "/Script/MainSequence.WidgetSubsystem:ShowPopup", function(self, wc, o1, o2)
-    L("PROBE ShowPopup class=" .. cn(wc) .. " o1=" .. cn(o1) .. " o2=" .. cn(o2))
+    L("PROBE ShowPopup widget=" .. wn(wc) .. " o1=" .. cn(o1) .. " o2=" .. cn(o2))
+    hookTag()   -- class may be loaded by now
   end, function() end)
-  pcall(RegisterHook, "/Game/Blueprints/Widgets/Popups/WBP_TagSelectPopup.WBP_TagSelectPopup_C:SetupWidget", function(self, o1, o2)
-    L("PROBE TagSelect SetupWidget o1=" .. cn(o1) .. " o2=" .. cn(o2))
-  end, function() end)
+  hookTag()
   L("PROBE armed: in the game open the add-to-fleet UI once, then read UE4SS.log lines PROBE")
 end
 -- dev: arm the capture at load when Mods/MSCore/probe_fleet_popup.flag exists (delete the flag to stop)

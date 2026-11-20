@@ -5,9 +5,8 @@ C.window_prefix = "WBP_"
 C.close_ctl, C.close_self, C.hide = "CloseWidgetOrPause", "CloseSelf", "HideWidget"
 C.show_widget = "ShowWidget"          -- DMSPlayerController::ShowWidget(WidgetClass, o1, o2): open without toggling
 C.player_obj_prop = "PlayerObject"    -- controller property (fallback FindFirstOf(C.classes.player_obj))
--- add-to-fleet popup recipe: OFF until a capture (MSCore.wbp.probe_fleet_popup) proves it. Shape when proven:
---   { how = 'popup', subsystem_fn = 'ShowPopup', setup_fn = '<fn from capture>', arg = 'ship' }  or  { how = 'setup', o1 = 'ship'|'player', o2 = ... }
-C.fleet_assign = nil
+-- add-to-fleet popup recipe (captured in game): WidgetSubsystem:ShowPopup(WBP_TagSelectPopup_C, shipObject, nil, false)
+C.fleet_assign = { how = 'popup', subsystem_fn = 'ShowPopup', arg = 'ship' }
 C.widgets = {
   inventory_grid   = { path = "/Game/Blueprints/Widgets/Display/Inventory/WBP_Inventory",  cls = "WBP_Inventory_C" },
   item_amount      = { path = "/Game/Blueprints/Widgets/Display/Inventory/WBP_ItemAmount", cls = "WBP_ItemAmount_C" },
