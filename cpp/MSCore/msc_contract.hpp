@@ -30,10 +30,11 @@ namespace
     constexpr const char* kClsContainerActor = "BP_Container_2_C";
     constexpr const char* kClsItemCrate = "BP_ItemCrateObject_C";
     constexpr const char* kClsShip = "DMSPlayerShipObject";
+    constexpr const char* kClsFleetTag = "FleetTag";
     struct ClassName { const char* logical; const char* name; };
     constexpr ClassName kClasses[] = {
         { "asteroid", kClsAsteroid }, { "asteroid_actor", kClsAsteroidActor }, { "floating_ore", kClsFloatingOre },
         { "station", kClsStation }, { "player_station", kClsPlayerStation }, { "container", kClsContainer },
-        { "container_actor", kClsContainerActor }, { "item_crate", kClsItemCrate }, { "ship", kClsShip } };
+        { "container_actor", kClsContainerActor }, { "item_crate", kClsItemCrate }, { "ship", kClsShip }, { "fleet_tag", kClsFleetTag } };
     inline const char* cls_name(const char* logical) { for (const ClassName& c : kClasses) if (std::strcmp(c.logical, logical) == 0) return c.name; return nullptr; }
 }
