@@ -39,6 +39,18 @@ function M.run(MSCore)
         local o = StaticFindObject(R.controllerPath) return yes(S.valid(o), R.controllerPath) end)
     check("resolve.item (FindAllOf)", function()
         local l = FindAllOf(R.item) return yes(l and #l > 0, l and (#l .. " items") or "nil") end)
+    check("items.icon", function()
+        local I = MSCore.items
+        if not (I and I.icon and I.set_icon) then return "BROKEN", "items API missing in mscore" end
+        local l = FindAllOf(R.item) if not (l and #l > 0) then return "SKIP", "no items" end
+        local withIcon = 0
+        for _, it in ipairs(l) do local ok, ic = pcall(function() return it.Icon end) if ok and S.valid(ic) then withIcon = withIcon + 1 end end
+        local t, why = I.icon("ITEM_TitaniumOre")
+        local d = withIcon .. "/" .. #l .. " items have Icon; ITEM_TitaniumOre=" .. (t and "icon" or tostring(why))
+        if tostring(why):find("^off:") then return "BROKEN", d end
+        if withIcon > 0 then return "OK", d end
+        return "SKIP", d .. " (0: ores have no runtime Icon, Mining keeps its baked textures)"
+    end)
     check("ui.mk/setText", function()
         local c = live("controller") if not c then return "SKIP", "no controller" end
         local tb = UI.mk("TextBlock", c) UI.setText(tb, "selfcheck") return yes(S.valid(tb)) end)
