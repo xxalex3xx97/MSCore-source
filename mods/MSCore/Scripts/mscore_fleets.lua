@@ -81,14 +81,14 @@ local function refresh(force)
     return cache
 end
 
-function M.list()
-    local c, why = refresh()
+function M.list(force)
+    local c, why = refresh(force)
     if not c then return nil, why end
     return c.list
 end
 
-function M.of_ship(id)
-    local c, why = refresh()
+function M.of_ship(id, force)
+    local c, why = refresh(force)
     if not c then return nil, why end
     local r = {}
     for i, v in ipairs(c.ofs[id] or {}) do r[i] = v end

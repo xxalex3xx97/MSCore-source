@@ -592,6 +592,11 @@ M.open_fleet_assign = gd("open_fleet_assign", function(shipId)
     for _, s in ipairs(holo.core.ships.list()) do if s.id == shipId then ship = s.obj end end
   else
     ship = standaloneShips()[shipId]
+    if not ok(ship) then   -- first click right after the window opened: scan throttle/settle hold; a user click may scan now (not during a warp/stall hold)
+      holo.shipAt = -math.huge
+      if holo.hold - os.clock() <= 3 then holo.hold = 0 end
+      ship = standaloneShips()[shipId]
+    end
   end
   if not ok(ship) then return false, "no ship" end
   local sub = widgetSub()
