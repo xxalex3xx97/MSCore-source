@@ -3,11 +3,18 @@ local C = {}
 C.controller_class = "DMSPlayerController"
 C.window_prefix = "WBP_"
 C.close_ctl, C.close_self, C.hide = "CloseWidgetOrPause", "CloseSelf", "HideWidget"
+C.show_widget = "ShowWidget"          -- DMSPlayerController::ShowWidget(WidgetClass, o1, o2): open without toggling
+C.player_obj_prop = "PlayerObject"    -- controller property (fallback FindFirstOf(C.classes.player_obj))
+-- add-to-fleet popup recipe: OFF until a capture (MSCore.wbp.probe_fleet_popup) proves it. Shape when proven:
+--   { how = 'popup', subsystem_fn = 'ShowPopup', setup_fn = '<fn from capture>', arg = 'ship' }  or  { how = 'setup', o1 = 'ship'|'player', o2 = ... }
+C.fleet_assign = nil
 C.widgets = {
   inventory_grid   = { path = "/Game/Blueprints/Widgets/Display/Inventory/WBP_Inventory",  cls = "WBP_Inventory_C" },
   item_amount      = { path = "/Game/Blueprints/Widgets/Display/Inventory/WBP_ItemAmount", cls = "WBP_ItemAmount_C" },
   fleet_ship_entry = { path = "/Game/Blueprints/Widgets/Display/WBP_FleetShipEntry",       cls = "WBP_FleetShipEntry_C" },
   pause_menu       = { path = "/Game/Blueprints/Widgets/Menus/WBP_PauseMenu",              cls = "WBP_PauseMenu_C", open_fn = "SetupWidget" },
+  fleet_window     = { path = "/Game/Blueprints/Widgets/Windows/WBP_Fleet",                 cls = "WBP_Fleet_C" },
+  fleet_tag_popup  = { path = "/Game/Blueprints/Widgets/Popups/WBP_TagSelectPopup",         cls = "WBP_TagSelectPopup_C" },
 }
 -- game class names by logical name. Mirror of kCls* in cpp/MSCore/msc_contract.hpp (tests/test_class_contract.py compares them). One entry per line.
 C.classes = {
@@ -21,6 +28,7 @@ C.classes = {
   item_crate      = "BP_ItemCrateObject_C",
   ship            = "DMSPlayerShipObject",
   fleet_tag       = "FleetTag",
+  player_obj      = "DMSPlayerObject",
 }
 -- blocks module names (registry class, research class and dir, default category)
 -- ship/item lookup for mscore_wbp standalone mode (a mod state loads only mscore_wbp): FindAllOf class + ship id property

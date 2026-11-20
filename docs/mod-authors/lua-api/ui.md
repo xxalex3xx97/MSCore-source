@@ -75,6 +75,10 @@ local red = MSCore.ui.rgba(255, 0, 0)
 | `wbp.item_icon` | `key` | texture, or `nil, why` | Primary item icon (see warp-docks.md). Apply it to your brush immediately; see Ownership / lifetime. |
 | `wbp.item_list` | none | array of {key, name} sorted by name, or nil, why | All game items for pickers. Use wbp.item_icon(key) for each icon. nil,"pending" = not loaded yet, ask again on the next open. |
 | `wbp.set_item_icon` | `img, key` | `true`, or `false, why` | Convenience wrapper. |
+| `wbp.open_fleets_window` | none | `true`, or `false, why` | Opens the game's own fleet window (ShowWidget of WBP_Fleet with the PlayerObject). Game thread. |
+| `wbp.open_fleet_assign` | `shipId` | `true`, or `false, why` | Add-to-fleet popup for one ship. Flag-gated: returns `false, "unverified: ..."` until the open recipe (`C.fleet_assign`) is captured. |
+| `wbp.fleet_assign_caps` | none | `"ok"` or `"off:unverified"` | Whether `open_fleet_assign` is enabled. |
+| `wbp.probe_fleet_popup` | none | nothing | Dev capture only, sends nothing: hooks the popup and logs `PROBE` lines to UE4SS.log when you open add-to-fleet once. Remove after the recipe is known. Do not call within ~10 s after a warp (same as the hologram code). |
 | `wbp.Z` | - | `1` | Window Z. Keep it below 2. |
 
 ## Example

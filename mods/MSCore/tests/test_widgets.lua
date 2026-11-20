@@ -52,7 +52,7 @@ end
 -- (e) contract table shape
 do
     local C = require("mscore_contract")
-    for _, n in ipairs({ "inventory_grid", "item_amount", "fleet_ship_entry", "pause_menu" }) do
+    for _, n in ipairs({ "inventory_grid", "item_amount", "fleet_ship_entry", "pause_menu", "fleet_window", "fleet_tag_popup" }) do
         local e = C.widgets[n]
         check(n .. " present", e ~= nil)
         check(n .. " path starts /Game/", e ~= nil and e.path:sub(1, 6) == "/Game/")
