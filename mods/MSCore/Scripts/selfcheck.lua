@@ -114,6 +114,19 @@ function M.run(MSCore)
         if b.renders == a.renders + 1 and b.created == a.created then return "OK", "re-rendered, no new widget" end
         return "SKIP", "render budget/hold: " .. tostring(why)
     end)
+    check("wbp.hologram consumer", function()
+        -- one Lua state only: a true second-state test (a mod requiring mscore_wbp alone) is not possible here; this calls the same module table a mod gets
+        local W = MSCore.wbp
+        if not (W and W.ship_hologram and W.hologram_texture) then return "BROKEN", "ship_hologram missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.ship_hologram(sh.id)
+        if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
+        if not S.valid(t) then return "BROKEN", "returned texture not valid" end
+        local t2, why2 = W.ship_hologram(sh.id, { force = true })
+        if not t2 then return "SKIP", "force refresh: " .. tostring(why2) end
+        if not S.valid(t2) then return "BROKEN", "refreshed texture not valid" end
+        return "OK", "old handle after refresh: " .. (S.valid(t) and "still valid" or "invalid (stale)")
+    end)
     check("blocks.contract", function()
         local B = MSCore.blocks
         if not (B and B.selftest and B.caps) then return "BROKEN", "blocks API missing in mscore_blocks" end

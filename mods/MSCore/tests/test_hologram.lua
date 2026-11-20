@@ -59,5 +59,26 @@ check("window full", ok1 == false)
 local st = M.hologram_stats()
 check("stats table", type(st.renders) == "number" and type(st.reuses) == "number" and type(st.created) == "number" and type(st.queued) == "number")
 
+-- M5: names, stale texture, wrapper
+check("alias identity", M.hologram_texture == M.ship_hologram and type(M.ship_hologram) == "function")
+local valid = true
+local ftex = { IsValid = function() return valid end }
+local fent = { ShipHologram = { Brush = { ResourceObject = ftex } } }
+check("holoTex valid", M._holoTex(fent) == ftex)
+valid = false
+check("stale texture not returned", M._holoTex(fent) == nil)
+local applied = nil
+local fimg = { IsValid = function() return true end, SetBrushFromTexture = function(_, t) applied = t end }
+local realSH = M.ship_hologram
+M.ship_hologram = function() return ftex end
+check("wrapper applies", M.set_ship_hologram(fimg, 1) == true and applied == ftex)
+M.ship_hologram = function() return nil, "pending" end
+local rr, ww = M.set_ship_hologram(fimg, 1)
+check("wrapper false,why", rr == false and ww == "pending")
+M.ship_hologram = function() return ftex end
+fimg.SetBrushFromTexture = function() error("x") end
+check("wrapper pcall", M.set_ship_hologram(fimg, 1) == false)
+M.ship_hologram = realSH
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

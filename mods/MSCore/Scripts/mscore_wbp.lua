@@ -180,7 +180,7 @@ local function standaloneShips()
 end
 local function holoTex(e)
   local s, t = pcall(function() return e.ShipHologram.Brush.ResourceObject end)
-  if s and ok(t) then return t end
+  if s and live(t) then return t end   -- re-validated on every read: never hand out a texture that is invalid right now
   return nil
 end
 function M.hologram_disable(why)
@@ -218,7 +218,7 @@ local function hologram_texture_impl(id, opts)
   local tex = e and holoTex(e) or nil
   local due = M.holo_due(at and now - at or nil, opts.ttl, opts.force)
   if tex and not due then holo.stats.reuses = holo.stats.reuses + 1; return tex end
-  if e and at and not due then   -- rendered, texture not there yet
+  if e and at and not tex then   -- texture missing or invalid right now: just rendered = wait, else treat as due (one re-render, queue/budget apply)
     if now - at <= 5 then return nil, "pending" end
   end
   if now < holo.hold or (holo.miss[id] or 0) > now then return nil, "pending" end
@@ -273,11 +273,16 @@ local function hg(f)
     return table.unpack(r, 2, r.n)
   end
 end
--- opts = { ttl = 30, force = false }
-M.hologram_texture = hg(hologram_texture_impl)
+-- WBP.ship_hologram(shipId [, {ttl = 30, force = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
+-- LIFETIME: the texture is only valid until MSCore re-renders or drops that ship (ttl or force refresh re-uses the same widget but the
+-- texture handle may change). Ask again on EVERY paint, check IsValid/ok() before use, never store it across ticks, and apply it with
+-- pcall(img.SetBrushFromTexture, ...) (set_ship_hologram does exactly that).
+M.ship_hologram = hg(hologram_texture_impl)
+M.hologram_texture = M.ship_hologram
+M._holoTex = holoTex   -- test hook
 function M.set_ship_hologram(img, id, opts)
-  if not ok(img) then return false, "bad image" end
-  local tex, why = M.hologram_texture(id, opts)
+  if not live(img) then return false, "bad image" end
+  local tex, why = M.ship_hologram(id, opts)
   if not tex then return false, why end
   if not pcall(function() img:SetBrushFromTexture(tex, true) end) then return false, "SetBrush failed" end
   return true
@@ -330,6 +335,7 @@ function M.item_icon(key)
   if not s then M.items_disable("error: " .. tostring(tex)) return nil, "off:" .. items.off end
   return tex, why
 end
+-- item_icon(key) -> texture | nil, why: same lifetime rule (ask again per paint, check validity, apply with pcall)
 function M.set_item_icon(img, key)
   if not live(img) then return false, "bad image" end
   local t, why = M.item_icon(key)
