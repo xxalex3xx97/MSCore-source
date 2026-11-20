@@ -14,13 +14,29 @@ FindAllOf = function() findCalls = findCalls + 1 return {} end
 FindFirstOf = function() return nil end
 StaticFindObject = function() return nil end
 RegisterHook = function() return nil end
+LoopAsync = function() end
+ExecuteInGameThread = function() end
+ExecuteWithDelay = function() end
+NotifyOnNewObject = function() end
 
 -- standalone: mscore_wbp alone (mod state), no mscore.lua loaded
 local W = require("mscore_wbp")
+-- fake clock (os.clock is CPU time): stall guard = first call in standalone holds 3 s
+local realClock, now = os.clock, 100
+os.clock = function() return now end
+local t00, w00 = W.item_icon("ITEM_Nope")
+check("stall hold: no FindAllOf, pending", t00 == nil and w00 == "pending" and findCalls == 0)
+now = now + 4
 local t0, w0 = W.item_icon("ITEM_Nope")
 check("standalone missing key nil", t0 == nil and w0 == "no item ITEM_Nope" and findCalls == 1)
 W.item_icon("ITEM_Nope")
 check("standalone rate limit", findCalls == 1)
+for _ = 1, 7 do now = now + 5; W.item_icon("ITEM_Nope") end   -- steady calls (gap < 8 s), 35 s pass
+check("30 s refresh: one more FindAllOf", findCalls == 2)
+now = now + 20
+W.item_icon("ITEM_Nope")
+check("gap > 8 s = new hold: no FindAllOf during hold", findCalls == 2)
+os.clock = realClock
 check("standalone set_icon(nil)", select(1, W.set_item_icon(nil, "x")) == false)
 check("standalone caps ok", W.items_caps() == "ok")
 W.items_disable("y")
@@ -30,6 +46,12 @@ findCalls = 0
 
 local MSCore = require("mscore")
 local I = MSCore.items
+do
+    local W0 = MSCore.wbp; MSCore.wbp = nil
+    local gi, gw = I.icon("x"); local gs, gsw = I.set_icon(nil, "x")
+    check("nil guard", gi == nil and gw == "off:missing" and gs == false and gsw == "off:missing")
+    MSCore.wbp = W0
+end
 
 -- missing key + rate limit
 local t, why = I.icon("ITEM_Nope")

@@ -670,7 +670,10 @@ function MSCore.find_item(res)
 end
 
 -- Item icons: implementation lives in mscore_wbp (mods load only that); MSCore.items = aliases for MSCore's own state.
-local items = { icon = function(k) return MSCore.wbp.item_icon(k) end, set_icon = function(i, k) return MSCore.wbp.set_item_icon(i, k) end }
+local items = {
+    icon = function(k) local W = MSCore.wbp; if not (W and W.item_icon) then return nil, "off:missing" end return W.item_icon(k) end,
+    set_icon = function(i, k) local W = MSCore.wbp; if not (W and W.set_item_icon) then return false, "off:missing" end return W.set_item_icon(i, k) end,
+}
 MSCore.items = items
 
 ---------------------------------------------------------------- world scan + chunk hold (native; see docs/mod-authors/lua-api/scan.md)

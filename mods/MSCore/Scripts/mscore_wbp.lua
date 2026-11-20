@@ -163,18 +163,35 @@ end)
 -- Standalone (mod state, only mscore_wbp loaded, holo.core == nil): ships come from an own FindAllOf cache (max one per 5 s);
 -- no tick event exists there, so a gap > 8 s between calls (caller repaints ~1/s while pending) counts as a new open / stall => 3 s settle.
 local holo = { off = nil, ent = {}, miss = {}, hold = 0, buildAt = -math.huge, tickAt = nil, pc = nil, core = nil, shipAt = -math.huge, shipMap = {}, lastCall = nil }
+holo.gone = {}   -- standalone: consecutive successful scans a ship id with a widget was absent from
+-- shared stall guard (ships + items): standalone has no tick, so a gap > 8 s between calls = new open / stall => 3 s settle.
+-- returns true while FindAllOf / Create must not run. Every call counts as activity.
+local function stalled(now)
+  if not holo.core and (not holo.lastCall or now - holo.lastCall > 8) then holo.hold = now + 3 end
+  holo.lastCall = now
+  return now < holo.hold
+end
 local function standaloneShips()
   local now = os.clock()
-  if now - holo.shipAt >= 5 then
+  if now - holo.shipAt >= 5 and now >= holo.hold then
     holo.shipAt = now
-    local map = {}
+    local map, n = {}, 0
     local s, l = pcall(FindAllOf, C and C.ship_class or "")
     if s and l then
       for _, o in ipairs(l) do
-        if live(o) then local id = rd(o, C.ship_id_prop); if type(id) == "number" then map[id] = o end end
+        if live(o) then local id = rd(o, C.ship_id_prop); if type(id) == "number" then map[id] = o; n = n + 1 end end
       end
     end
-    holo.shipMap = map
+    if n > 0 then   -- failed / empty scan: keep the last good map and every widget
+      holo.shipMap = map
+      for k in pairs(holo.ent) do
+        if map[k] then holo.gone[k] = nil
+        else
+          holo.gone[k] = (holo.gone[k] or 0) + 1
+          if holo.gone[k] >= 2 then holo.ent[k], holo.at[k], holo.gone[k] = nil, nil, nil end   -- drop the reference, no Destroy
+        end
+      end
+    end
   end
   return holo.shipMap
 end
@@ -190,13 +207,21 @@ end
 -- timings live in mscore_contract (C.holo_ttl / holo_per_window / holo_window); these are only fallbacks
 local HOLO_TTL, HOLO_MAX, HOLO_WIN = (C and C.holo_ttl) or 30, (C and C.holo_per_window) or 2, (C and C.holo_window) or 0.25
 M.HOLO_TTL = HOLO_TTL
-holo.at, holo.queue, holo.winAt, holo.used = {}, {}, -math.huge, 0     -- render time per id, FIFO of ids waiting for budget, window start, renders in window
+holo.at, holo.queue, holo.winAt, holo.used, holo.qat = {}, {}, -math.huge, 0, {}    -- render time per id, FIFO of ids waiting for budget, window start, renders in window
 holo.stats = { renders = 0, reuses = 0, created = 0, queued = 0 }
 function M.hologram_stats() local s = holo.stats; return { renders = s.renders, reuses = s.reuses, created = s.created, queued = s.queued } end
 -- pure: is a picture due (never rendered = age nil, force, or age >= ttl)
 function M.holo_due(age, ttl, force) return force == true or age == nil or age >= (ttl or HOLO_TTL) end
 -- pure: FIFO render budget. queue = list of ids (not modified); returns allowed, newQueue. id may render when fewer than `max`
 -- renders were used in this window and id is within the first (max - used) queued ids (older ids are served first). Deduped.
+-- pure: drop queued ids that are not alive or were queued longer than maxAge s ago (qat[id] = enqueue time)
+function M.holo_purge(queue, alive, qat, now, maxAge)
+  local q = {}
+  for _, v in ipairs(queue) do
+    if alive[v] and now - (qat[v] or now) <= maxAge then q[#q + 1] = v end
+  end
+  return q
+end
 function M.holo_take(queue, id, used, max)
   local q, has = {}, false
   for _, v in ipairs(queue) do q[#q + 1] = v; if v == id then has = true end end
@@ -211,9 +236,7 @@ local function hologram_texture_impl(id, opts)
   if type(id) ~= "number" then return nil, "bad id" end
   opts = opts or {}
   local now = os.clock()
-  -- standalone: no tick event, a gap > 8 s between calls = new open / stall => short settle
-  if not holo.core and (not holo.lastCall or now - holo.lastCall > 8) then holo.hold = now + 3 end
-  holo.lastCall = now
+  stalled(now)
   local e, at = holo.ent[id], holo.at[id]
   local tex = e and holoTex(e) or nil
   local due = M.holo_due(at and now - at or nil, opts.ttl, opts.force)
@@ -234,8 +257,10 @@ local function hologram_texture_impl(id, opts)
       if k == id then ship = o end
     end
   end
-  for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil; holo.at[k] = nil end end   -- drop the reference, no Destroy
-  for i = #holo.queue, 1, -1 do if not alive[holo.queue[i]] then table.remove(holo.queue, i) end end
+  if holo.core and next(alive) ~= nil then   -- (standalone prunes inside standaloneShips)
+    for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil; holo.at[k] = nil end end   -- drop the reference, no Destroy
+  end
+  holo.queue = M.holo_purge(holo.queue, alive, holo.qat, now, 10)
   if not ok(ship) then holo.miss[id] = now + 5; return nil, "no ship" end
   if not e then
     local cls = M.widget("fleet_ship_entry")
@@ -248,7 +273,7 @@ local function hologram_texture_impl(id, opts)
   local allowed, q = M.holo_take(holo.queue, id, holo.used, HOLO_MAX)
   holo.queue = q
   if not allowed then
-    if #q > was then holo.stats.queued = holo.stats.queued + 1 end
+    if #q > was then holo.stats.queued = holo.stats.queued + 1; holo.qat[id] = now end
     return nil, "pending"
   end
   holo.used = holo.used + 1
@@ -306,7 +331,7 @@ end
 local ITEMS_REFRESH = (C and C.items_refresh) or 30
 local items = { off = nil, map = nil, at = -math.huge, tex = {} }
 local function itemMap(force)
-  if force or not items.map then
+  if (force or not items.map) and not stalled(os.clock()) then   -- stall guard: no FindAllOf, keep the cached map (may be nil)
     local s, all = pcall(FindAllOf, C and C.item_class or "")
     local map = {}
     if s and all then
@@ -330,8 +355,10 @@ function M.item_icon(key)
   if items.off then return nil, "off:" .. items.off end
   local s, tex, why = pcall(function()
     if live(items.tex[key]) then return items.tex[key] end
-    local it = itemMap(false)[key]
-    if not it and os.clock() - items.at >= ITEMS_REFRESH then it = itemMap(true)[key] end
+    local m = itemMap(false)
+    if not m then return nil, "pending" end
+    local it = m[key]
+    if not it and os.clock() - items.at >= ITEMS_REFRESH then it = (itemMap(true) or m)[key] end
     if not it then return nil, "no item " .. tostring(key) end
     local t = rd(it, "Icon")
     if live(t) then items.tex[key] = t; return t end

@@ -80,5 +80,14 @@ fimg.SetBrushFromTexture = function() error("x") end
 check("wrapper pcall", M.set_ship_hologram(fimg, 1) == false)
 M.ship_hologram = realSH
 
+-- M7: purge
+local qa = M.holo_purge({ 1, 2, 3 }, { [1] = true, [3] = true }, { [1] = 0, [3] = 0 }, 5, 10)
+check("purge: dead id dropped", #qa == 2 and qa[1] == 1 and qa[2] == 3)
+qa = M.holo_purge({ 1, 2 }, { [1] = true, [2] = true }, { [1] = 0, [2] = 9 }, 12, 10)
+check("purge: old id dropped", #qa == 1 and qa[1] == 2)
+local qb = M.holo_purge({ 5, 6 }, { [6] = true }, {}, 0, 10)
+local okb, qb2 = M.holo_take(qb, 6, 1, 2)
+check("purged head: full budget for live id", okb == true)
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
