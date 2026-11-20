@@ -570,6 +570,12 @@ function M.probe_fleet_popup()
   end, function() end)
   L("PROBE armed: in the game open the add-to-fleet UI once, then read UE4SS.log lines PROBE")
 end
+-- dev: arm the capture at load when Mods/MSCore/probe_fleet_popup.flag exists (delete the flag to stop)
+do
+  local src = debug.getinfo(1, "S").source:match("^@(.*[/\\])")
+  local fh = src and io.open(src .. "../probe_fleet_popup.flag", "r")
+  if fh then fh:close(); pcall(M.probe_fleet_popup) end
+end
 
 -- ---------------------------------------------------------------------------------------------
 -- window
