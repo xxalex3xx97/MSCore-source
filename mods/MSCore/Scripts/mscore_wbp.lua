@@ -208,10 +208,20 @@ end
 local HOLO_TTL, HOLO_MAX, HOLO_WIN = (C and C.holo_ttl) or 30, (C and C.holo_per_window) or 2, (C and C.holo_window) or 0.25
 M.HOLO_TTL = HOLO_TTL
 holo.at, holo.queue, holo.winAt, holo.used, holo.qat = {}, {}, -math.huge, 0, {}    -- render time per id, FIFO of ids waiting for budget, window start, renders in window
-holo.stats = { renders = 0, reuses = 0, created = 0, queued = 0 }
-function M.hologram_stats() local s = holo.stats; return { renders = s.renders, reuses = s.reuses, created = s.created, queued = s.queued } end
+holo.stats = { renders = 0, reuses = 0, created = 0, queued = 0, stale_reuses = 0 }
+function M.hologram_stats() local s = holo.stats; return { renders = s.renders, reuses = s.reuses, created = s.created, queued = s.queued, stale_reuses = s.stale_reuses } end
 -- pure: is a picture due (never rendered = age nil, force, or age >= ttl)
 function M.holo_due(age, ttl, force) return force == true or age == nil or age >= (ttl or HOLO_TTL) end
+-- pure: what to do with a ship's picture. 'create' = never rendered; 'render' = invalid texture (widget broken: one re-render through the
+-- queue) or valid + due + refresh_ok; 'reuse' = valid texture, return it as is. SAFETY: an expired-but-valid picture is re-rendered in place
+-- ONLY when the caller passes refresh_ok=true (its menu-open path); force is ignored without refresh_ok (in-place SetShip while brushes hold
+-- the texture crashed the game).
+function M.holo_decide(age, ttl, force, refresh_ok, hasValidTex)
+  if age == nil then return "create" end
+  if not hasValidTex then return "render" end
+  if refresh_ok == true and M.holo_due(age, ttl, force) then return "render" end
+  return "reuse"
+end
 -- pure: FIFO render budget. queue = list of ids (not modified); returns allowed, newQueue. id may render when fewer than `max`
 -- renders were used in this window and id is within the first (max - used) queued ids (older ids are served first). Deduped.
 -- pure: drop queued ids that are not alive or were queued longer than maxAge s ago (qat[id] = enqueue time)
@@ -239,8 +249,12 @@ local function hologram_texture_impl(id, opts)
   stalled(now)
   local e, at = holo.ent[id], holo.at[id]
   local tex = e and holoTex(e) or nil
-  local due = M.holo_due(at and now - at or nil, opts.ttl, opts.force)
-  if tex and not due then holo.stats.reuses = holo.stats.reuses + 1; return tex end
+  local dec = M.holo_decide(at and now - at or nil, opts.ttl, opts.force, opts.refresh_ok, tex ~= nil)
+  if tex and dec == "reuse" then   -- no ship scan / SetShip / FindAllOf on this path
+    holo.stats.reuses = holo.stats.reuses + 1
+    if M.holo_due(at and now - at or nil, opts.ttl, false) then holo.stats.stale_reuses = holo.stats.stale_reuses + 1 end
+    return tex
+  end
   if e and at and not tex then   -- texture missing or invalid right now: just rendered = wait, else treat as due (one re-render, queue/budget apply)
     if now - at <= 5 then return nil, "pending" end
   end
@@ -298,7 +312,9 @@ local function hg(f)
     return table.unpack(r, 2, r.n)
   end
 end
--- WBP.ship_hologram(shipId [, {ttl = 30, force = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
+-- WBP.ship_hologram(shipId [, {ttl = 30, force = false, refresh_ok = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
+-- REFRESH: an expired-but-valid picture is re-rendered in place ONLY with refresh_ok=true (pass it once, when your menu opens); force needs
+-- refresh_ok too. Ordinary paint calls never re-render a valid picture.
 -- OWNERSHIP / LIFETIME: the mod owns the picture. APPLY the returned texture to YOUR Image brush IMMEDIATELY, in the same call
 -- (SetBrushFromTexture / brush.ResourceObject, under pcall + IsValid). The Slate brush then holds a strong GC reference, so the picture
 -- stays alive even if MSCore drops its hidden widget; an MSCore refresh redraws INTO the same render target (SetShip again), so images

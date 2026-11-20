@@ -108,7 +108,7 @@ function M.run(MSCore)
         local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
         if not W.hologram_texture(sh.id) then return "SKIP", "no picture yet" end
         local a = W.hologram_stats()
-        local t, why = W.hologram_texture(sh.id, { force = true })
+        local t, why = W.hologram_texture(sh.id, { force = true, refresh_ok = true })
         local b = W.hologram_stats()
         if tostring(why):find("^off:") then return "BROKEN", why end
         if b.renders == a.renders + 1 and b.created == a.created then return "OK", "re-rendered, no new widget" end
@@ -122,7 +122,7 @@ function M.run(MSCore)
         local t, why = W.ship_hologram(sh.id)
         if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
         if not S.valid(t) then return "BROKEN", "returned texture not valid" end
-        local t2, why2 = W.ship_hologram(sh.id, { force = true })
+        local t2, why2 = W.ship_hologram(sh.id, { force = true, refresh_ok = true })
         if not t2 then return "SKIP", "force refresh: " .. tostring(why2) end
         if not S.valid(t2) then return "BROKEN", "refreshed texture not valid" end
         return "OK", "old handle after refresh: " .. (S.valid(t) and "still valid" or "invalid (stale)")

@@ -89,5 +89,15 @@ local qb = M.holo_purge({ 5, 6 }, { [6] = true }, {}, 0, 10)
 local okb, qb2 = M.holo_take(qb, 6, 1, 2)
 check("purged head: full budget for live id", okb == true)
 
+-- M8: decide
+check("decide never rendered -> create", M.holo_decide(nil, 30, false, true, false) == "create")
+check("decide expired+valid, no refresh_ok -> reuse", M.holo_decide(99, 30, false, false, true) == "reuse")
+check("decide expired+valid, refresh_ok -> render", M.holo_decide(99, 30, false, true, true) == "render")
+check("decide young+valid, refresh_ok -> reuse", M.holo_decide(5, 30, false, true, true) == "reuse")
+check("decide force without refresh_ok ignored", M.holo_decide(5, 30, true, false, true) == "reuse")
+check("decide force with refresh_ok -> render", M.holo_decide(5, 30, true, true, true) == "render")
+check("decide invalid texture -> render even without refresh_ok", M.holo_decide(5, 30, false, false, false) == "render")
+check("stats has stale_reuses", type(M.hologram_stats().stale_reuses) == "number")
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
