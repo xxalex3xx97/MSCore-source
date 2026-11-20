@@ -90,7 +90,7 @@ function M.run(MSCore)
     end)
     check("wbp.fleet_open", function()   -- resolves only, never opens a window
         local W = MSCore.wbp
-        if not (W and W.open_fleets_window and W.open_fleet_assign and W.fleet_assign_caps and W.probe_fleet_popup) then return "BROKEN", "fleet open API missing in mscore_wbp" end
+        if not (W and W.open_fleets_window and W.fleets_window_open and W.close_fleets_window and W.open_fleet_assign and W.fleet_assign_caps and W.probe_fleet_popup) then return "BROKEN", "fleet open API missing in mscore_wbp" end
         local a, b = W.widget("fleet_window"), W.widget("fleet_tag_popup")
         local d = "fleet_window=" .. tostring(a ~= nil) .. " tag_popup=" .. tostring(b ~= nil) .. " assign=" .. tostring(W.fleet_assign_caps())
         if a and b then return "OK", d end

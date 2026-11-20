@@ -121,7 +121,7 @@ end
 -- DMSPlayerController:AddInputCommand(receiverId, cmd), max 20 dumps; other command classes = 1 line per class per 30 s. Sends nothing.
 -- capture(true) -> true armed | false (no RegisterHook / hook failed); capture(false) mutes the log (hook stays, cheap early return).
 local hooked, capOn, capDumps, capSeen = false, false, 0, {}
-local CAP_DUMP_MAX, CAP_RATE = 20, 30
+local CAP_DUMP_MAX, CAP_RATE = 40, 30
 local function nm(o) local ok, v = pcall(function() return o:GetFName():ToString() end); return ok and tostring(v) or "?" end
 local function pv(p) local ok, v = pcall(function() return p:get() end); if ok then return v end; return p end
 local function valStr(v)
@@ -153,6 +153,14 @@ local function dump(c, recv)
         depth = depth + 1
     end
     out(table.concat(parts, " | "))
+    -- delayed: fleets of the receiver ship 1.5 s later (did the game apply the command?)
+    local rid = tonumber(valStr(recv))
+    if rid and type(ExecuteWithDelay) == "function" then
+        pcall(ExecuteWithDelay, 1500, function() pcall(ExecuteInGameThread, function()
+            local f = M.of_ship(rid)
+            out("CAPTURE after 1.5s ship=" .. rid .. " fleets=" .. table.concat(f or {}, ","))
+        end) end)
+    end
 end
 function M.capture(on)
     if on == false then capOn = false; return false end

@@ -524,6 +524,22 @@ M.open_fleets_window = gd("open_fleets_window", function()
   return true
 end)
 
+local function fleetWinInst()   -- live instance or nil; never keep the handle
+  local i = M.instance("fleet_window")
+  if not ok(i) then return nil end
+  local s, vp = pcall(function() return i:IsInViewport() end)
+  if s and vp == true then return i end
+  return nil
+end
+M.fleets_window_open = gd("fleets_window_open", function() return fleetWinInst() ~= nil end)
+M.close_fleets_window = gd("close_fleets_window", function()
+  local w = fleetWinInst(); if not w then return true end
+  local p = localCtl()
+  if pcall(function() w[C.close_self](w) end) then L("[MSCore.wbp] close_fleets_window via CloseSelf"); return true end
+  if ok(p) and pcall(function() p[C.hide](p, w, false) end) then L("[MSCore.wbp] close_fleets_window via HideWidget"); return true end
+  return false, "close failed"
+end)
+
 -- popup class: contract widget first, else a loaded WidgetBlueprintGeneratedClass named *TagSelect* / *FleetTag* (scanned once, cached, logged)
 local popupCand
 function M.fleet_popup_candidates()
