@@ -1,5 +1,6 @@
 -- mscore_fleets: ship fleets (tags). Standalone: require("mscore_fleets") works without mscore.lua.
 -- Read = native MSCoreNative_fleets_read (text). Write = MSCoreNative_fleet_cmd, gated by caps fleets_write.
+-- capture(true) arms the FleetTagInput probe.
 local M = {}
 local TTL = 1.0
 local offReason, cache, cacheAt
@@ -116,26 +117,73 @@ function M.probe()
     return ok and r or nil
 end
 
--- dev tool: log the properties of FleetTagInput commands the game sends (never sends anything)
-local capturing
+-- dev tool: ARM ONCE. Logs every property (class chain, name:type=value) of each FleetTagInput the game sends to
+-- DMSPlayerController:AddInputCommand(receiverId, cmd), max 20 dumps; other command classes = 1 line per class per 30 s. Sends nothing.
+-- capture(true) -> true armed | false (no RegisterHook / hook failed); capture(false) mutes the log (hook stays, cheap early return).
+local hooked, capOn, capDumps, capSeen = false, false, 0, {}
+local CAP_DUMP_MAX, CAP_RATE = 20, 30
+local function nm(o) local ok, v = pcall(function() return o:GetFName():ToString() end); return ok and tostring(v) or "?" end
+local function pv(p) local ok, v = pcall(function() return p:get() end); if ok then return v end; return p end
+local function valStr(v)
+    if type(v) ~= "userdata" then return tostring(v) end
+    local ok, s = pcall(function() return v:ToString() end)
+    if ok and s ~= nil then return tostring(s) end
+    ok, s = pcall(function() return v:GetFullName() end)
+    if ok and s ~= nil then return tostring(s) end
+    ok, s = pcall(function() return "TArray#" .. tostring(v:GetArrayNum()) end)
+    if ok then return s end
+    return "userdata"
+end
+local function dump(c, recv)
+    local parts = { "CAPTURE FleetTagInput receiver=" .. valStr(recv) }
+    local k, depth = c:GetClass(), 0
+    while k and depth < 8 do
+        local okv, valid = pcall(function() return k:IsValid() end)
+        if not (okv and valid) then break end
+        local kn = nm(k)
+        if kn == "Object" then break end
+        pcall(function() k:ForEachProperty(function(p)
+            local n = nm(p)
+            local okt, tn = pcall(function() return p:GetClass():GetFName():ToString() end)
+            local okr, v = pcall(function() return c[n] end)
+            parts[#parts + 1] = kn .. "." .. n .. ":" .. (okt and tostring(tn) or "?") .. "=" .. (okr and valStr(v) or "?")
+        end) end)
+        local oks, sup = pcall(function() return k:GetSuperStruct() end)
+        k = oks and sup or nil
+        depth = depth + 1
+    end
+    out(table.concat(parts, " | "))
+end
 function M.capture(on)
-    if on == false or capturing then return end
-    capturing = true
-    pcall(RegisterHook, "/Script/MainSequence.DMSPlayerController:AddInputCommand", function(self, cmdp)
+    if on == false then capOn = false; return false end
+    if hooked then capOn = true; return true end
+    if type(RegisterHook) ~= "function" then return false end
+    local ok = pcall(RegisterHook, "/Script/MainSequence.DMSPlayerController:AddInputCommand", function(self, recvp, cmdp)
+        if not capOn then return end
         pcall(function()
-            local c = cmdp and cmdp.get and cmdp:get() or cmdp
-            local cls = c:GetClass()
-            if not tostring(cls:GetFName():ToString()):find("FleetTagInput") then return end
-            local recv = self and self.get and self:get() or self
-            local parts = { "CAPTURE FleetTagInput receiver=" .. tostring(recv) }
-            cls:ForEachProperty(function(p)
-                local n = p:GetFName():ToString()
-                local ok, v = pcall(function() return c[n] end)
-                parts[#parts + 1] = n .. "=" .. tostring(ok and v or "?")
-            end)
-            out(table.concat(parts, " "))
+            local c = pv(cmdp)
+            local okv, valid = pcall(function() return c:IsValid() end)
+            if not (okv and valid) then return end
+            local okc, cls = pcall(function() return c:GetClass():GetFName():ToString() end)
+            if not okc then return end
+            cls = tostring(cls)
+            local recv = pv(recvp)
+            if cls == "FleetTagInput" then
+                if capDumps >= CAP_DUMP_MAX then return end
+                capDumps = capDumps + 1
+                dump(c, recv)
+            else
+                local now = os.clock()
+                if capSeen[cls] and now - capSeen[cls] < CAP_RATE then return end
+                capSeen[cls] = now
+                out("CAPTURE cmd class=" .. cls .. " receiver=" .. valStr(recv))
+            end
         end)
     end, function() end)
+    if not ok then return false end
+    hooked, capOn = true, true
+    out("capture armed (FleetTagInput dumped, other commands 1 line/class/30 s)")
+    return true
 end
 
 function M.install(MSCore) MSCore.fleets = M end
