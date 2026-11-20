@@ -1020,6 +1020,7 @@ if MSCore.factory then
 end
 load_optional("mscore_inv", function(mod, M) mod.install(M) end)
 load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
+load_optional("mscore_fleets", function(mod, M) mod.install(M) end)
 load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
 
 ---------------------------------------------------------------- hook (never throws)
@@ -1046,6 +1047,8 @@ function MSCore.caps()
     end
     t.hologram = (MSCore.wbp and MSCore.wbp.hologram_caps) and MSCore.wbp.hologram_caps() or "off:missing"
     t.items_icon = (MSCore.wbp and MSCore.wbp.items_caps) and MSCore.wbp.items_caps() or "off:missing"
+    t.fleets = MSCore.fleets and MSCore.fleets.caps() or "off:missing"
+    t.fleets_write = MSCore.fleets and MSCore.fleets.write_caps() or "off:missing"
     t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
     return t
 end
@@ -1054,6 +1057,7 @@ function MSCore.module_disable(name, why)
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
     if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
     if name == "items" and MSCore.wbp and MSCore.wbp.items_disable then pcall(MSCore.wbp.items_disable, why) return true end
+    if name == "fleets" and MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") return true end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

@@ -22,6 +22,7 @@ Lua API version: **3** (separate counter from the native API, which is 5). Modul
 | `warp`, `docks`, `find_item` | Warp, sectors, docks and item lookup | [Warp and docks]({{ site.baseurl }}{% link mod-authors/lua-api/warp-docks.md %}) |
 | `scan`, `chunks` | World scan of ships, asteroids and stations; keep a chunk cube loaded (native) | [Scan and chunks]({{ site.baseurl }}{% link mod-authors/lua-api/scan.md %}) |
 | `blocks` | Add a block to the building registry and optionally a research unlock, at runtime (no pak; untested) | [Blocks and research]({{ site.baseurl }}{% link mod-authors/lua-api/blocks.md %}) |
+| `fleets` | List fleets and the fleets of a ship; write wrappers (gated) | [Fleets]({{ site.baseurl }}{% link mod-authors/lua-api/fleets.md %}) |
 | `native` | Raw wrappers for the native DLL | [Native bridge]({{ site.baseurl }}{% link mod-authors/lua-api/native-bridge.md %}) |
 | `units`, `hacks` | Coordinate helpers; registered workarounds | [Units and hacks]({{ site.baseurl }}{% link mod-authors/lua-api/units-hacks.md %}) |
 

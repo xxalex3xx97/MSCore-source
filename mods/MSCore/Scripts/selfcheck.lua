@@ -226,9 +226,17 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write" }) do
         check("world." .. n, nativeCheck(n))
     end
+    check("fleets.list", function()
+        if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end
+        local l, why = MSCore.fleets.list()
+        if not l then return "BROKEN", tostring(why) end
+        if #l == 0 then return "SKIP", "no fleets in this save" end
+        local o = MSCore.fleets.of_ship(l[1].ships[1] or 0)
+        return yes(type(o) == "table", #l .. " fleets, first=" .. l[1].name .. " ships=" .. #l[1].ships)
+    end)
     check("scan.api", function()
         if type(MSCore.scan) ~= "function" or type(MSCore.chunks.hold) ~= "function" or type(MSCore.chunks.release) ~= "function" then
             return "BROKEN", "MSCore.scan / chunks.hold / chunks.release missing"

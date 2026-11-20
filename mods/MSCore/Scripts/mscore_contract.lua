@@ -20,6 +20,7 @@ C.classes = {
   container_actor = "BP_Container_2_C",
   item_crate      = "BP_ItemCrateObject_C",
   ship            = "DMSPlayerShipObject",
+  fleet_tag       = "FleetTag",
 }
 -- blocks module names (registry class, research class and dir, default category)
 -- ship/item lookup for mscore_wbp standalone mode (a mod state loads only mscore_wbp): FindAllOf class + ship id property

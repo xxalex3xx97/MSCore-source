@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 10.** `MSCore_api()` returns `10`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section).
+**Native API version: 13.** `MSCore_api()` returns `13`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`10`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`13`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -135,6 +135,13 @@ Notes:
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
 | `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
+
+## API 13: fleets
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_fleet_tags` | `MsFleetTag* out, int max, int max_age_ms` | `int` (`n` tags, `-2` fleets module off, `-1` fault) | `MsFleetTag { int32 id; int32 parent; wchar_t name[96]; }` (200 B). Cached 3 s. Kill switch `module_disable("fleets")`. Source `cpp\MSCore\msc_fleets.hpp`. |
+| `MSCore_fleet_ships` | `MsFleetShip* out, int max, int max_age_ms` | `int` (`n` ships, `-2` fleets module off, `-1` fault) | `MsFleetShip { int32 ship; int32 count; int32 total; int32 pad; int32 tags[8]; }` (48 B). Cached 3 s. Same kill switch and source. |
 
 ## API 10: flight (0.8.13)
 
