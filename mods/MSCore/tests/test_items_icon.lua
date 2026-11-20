@@ -28,7 +28,7 @@ local t00, w00 = W.item_icon("ITEM_Nope")
 check("stall hold: no FindAllOf, pending", t00 == nil and w00 == "pending" and findCalls == 0)
 now = now + 4
 local t0, w0 = W.item_icon("ITEM_Nope")
-check("standalone missing key nil", t0 == nil and w0 == "no item ITEM_Nope" and findCalls == 1)
+check("standalone empty map = pending (not cached)", t0 == nil and w0 == "pending" and findCalls == 1)
 W.item_icon("ITEM_Nope")
 check("standalone rate limit", findCalls == 1)
 for _ = 1, 7 do now = now + 5; W.item_icon("ITEM_Nope") end   -- steady calls (gap < 8 s), 35 s pass
@@ -67,6 +67,40 @@ do
     FindAllOf = function() findCalls = findCalls + 1 return {} end
 end
 
+-- empty map is never cached: nil/empty first, throttled 30 s, then items
+do
+    local function fake(n, label) local u = io.tmpfile(); debug.setmetatable(u, { __index = { GetFName = function() return { ToString = function() return n end } end, IsValid = function() return true end, DisplayName = { ToString = function() return label end } } }); return u end
+    local fl, mode = 0, "nil"
+    FindAllOf = function() fl = fl + 1 if mode == "nil" then return nil elseif mode == "items" then return { fake("ITEM_A", "alpha") } end return {} end
+    local W3 = require("mscore_wbp")
+    os.clock = function() return now end
+    now = now + 100
+    W3.item_list()   -- stall hold
+    now = now + 4
+    local l1, w1 = W3.item_list()
+    check("empty nil: list pending, 1 FindAllOf", l1 == nil and w1 == "pending" and fl == 1)
+    mode = "items"
+    now = now + 5
+    local l2, w2 = W3.item_list(); local t2, tw2 = W3.item_icon("ITEM_A")
+    check("throttled: list+icon pending, no new FindAllOf", l2 == nil and w2 == "pending" and t2 == nil and tw2 == "pending" and fl == 1)
+    for _ = 1, 6 do now = now + 5; W3.item_list() end   -- steady calls (gap < 8 s) so the stall guard stays quiet
+    local l3 = W3.item_list()
+    check("after throttle: list built", l3 and #l3 == 1 and l3[1].key == "ITEM_A" and fl == 2)
+    package.loaded["mscore_wbp"] = nil
+    local W4 = require("mscore_wbp")   -- icon path: empty table then items
+    mode = "empty"; fl = 0
+    now = now + 100; W4.item_icon("ITEM_A"); now = now + 4
+    local ti, wi = W4.item_icon("ITEM_A")
+    check("empty {}: icon pending", ti == nil and wi == "pending" and fl == 1)
+    mode = "items"
+    for _ = 1, 7 do now = now + 5; W4.item_icon("ITEM_A") end
+    local _, wi2 = W4.item_icon("ITEM_A")
+    check("icon after throttle: map built (no icon on fake)", wi2 == "no icon" and fl == 2)
+    os.clock = realClock
+    package.loaded["mscore_wbp"] = nil
+    FindAllOf = function() findCalls = findCalls + 1 return {} end
+end
+
 local MSCore = require("mscore")
 local I = MSCore.items
 do
@@ -78,7 +112,7 @@ end
 
 -- missing key + rate limit
 local t, why = I.icon("ITEM_Nope")
-check("missing key nil", t == nil and why == "no item ITEM_Nope")
+check("empty map = pending", t == nil and why == "pending")
 local calls1 = findCalls
 I.icon("ITEM_Nope")
 check("2nd lookup within 10 s: no FindAllOf", findCalls == calls1)

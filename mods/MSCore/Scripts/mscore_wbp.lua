@@ -401,7 +401,7 @@ end
 local ITEMS_REFRESH = (C and C.items_refresh) or 30
 local items = { off = nil, map = nil, at = -math.huge, tex = {}, list = nil, listMap = nil }
 local function itemMap(force)
-  if (force or not items.map) and not stalled(os.clock()) then   -- stall guard: no FindAllOf, keep the cached map (may be nil)
+  if (force or (not items.map and os.clock() - items.at >= ITEMS_REFRESH)) and not stalled(os.clock()) then   -- stall guard: no FindAllOf, keep the cached map (may be nil); an empty map is never kept, retry at most every ITEMS_REFRESH s
     hstep("items FindAllOf Item map")
     local s, all = pcall(FindAllOf, C and C.item_class or "")
     local map = {}
@@ -413,7 +413,7 @@ local function itemMap(force)
         end
       end
     end
-    items.map, items.at = map, os.clock()
+    items.map, items.at = next(map) and map or nil, os.clock()
   end
   return items.map
 end
