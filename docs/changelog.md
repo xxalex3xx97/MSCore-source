@@ -6,7 +6,7 @@ nav_order: 6
 # Changelog
 
 ## Unreleased
-- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): ship_hologram (primary, returns the texture; hologram_texture alias) + set_ship_hologram wrapper, item_icon + set_item_icon wrapper, texture lifetime rule, picture created once per ship per session (refresh OFF, C.holo_refresh=false: re-rendering an existing widget crashed the game; 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
+- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): ship_hologram (primary, returns the texture; hologram_texture alias) + set_ship_hologram wrapper, item_icon + set_item_icon wrapper, texture lifetime rule, pictures need opts.host (widgets parented to the consumer's hidden panel so the GC keeps them), hologram_release(host) on close and at open; created once per ship per window (refresh OFF, C.holo_refresh=false: re-rendering an existing widget crashed the game; 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 
 ## 0.8.14 - Game update 2026-11-20 + pause query

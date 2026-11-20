@@ -22,10 +22,77 @@ check("set_ship_hologram(nil) false", r == false)
 local shipCalls = 0
 FindAllOf = function() shipCalls = shipCalls + 1 return { { IsValid = function() return true end, ID = 7 } } end
 local okc, tex, why = pcall(M.hologram_texture, 1)
-check("standalone missing ship no throw", okc and tex == nil and (why == "no class" or why == "no ship" or why == "no controller" or why == "pending"))
+check("standalone missing ship no throw", okc and tex == nil and (why == "no host" or why == "no class" or why == "no ship" or why == "no controller" or why == "pending"))
 pcall(M.hologram_texture, 1)
 check("standalone ship scan rate limited (<= 1 FindAllOf)", shipCalls <= 1)
-check("caps ok before disable", M.hologram_caps() == "ok")
+check("caps ok before disable", M.hologram_caps() == "ok n=0")
+
+-- M10: host-parented widgets (fakes are real userdata with a per-object metatable, so ok() accepts them)
+do
+    local Cc = require("mscore_contract")
+    local function mkud(methods) local u = io.tmpfile(); debug.setmetatable(u, { __index = methods }); return u end
+    local order, created, removed, vis = {}, 0, 0, nil
+    local texU = mkud({ IsValid = function() return true end })
+    local entry = mkud({ IsValid = function() return true end, ShipHologram = { Brush = { ResourceObject = texU } },
+        SetShip = function() order[#order + 1] = "SetShip" end, SetVisibility = function(_, v) vis = v end,
+        RemoveFromParent = function() removed = removed + 1 end })
+    local clsU = mkud({ IsValid = function() return true end })
+    local pcU = mkud({ IsValid = function() return true end, IsLocalPlayerController = function() return true end })
+    local shipU = mkud({ IsValid = function() return true end, ID = 7 })
+    local lib = { Create = function() created = created + 1 return entry end }
+    StaticFindObject = function(p) if p == "/Script/UMG.Default__WidgetBlueprintLibrary" then return lib end return clsU end
+    FindAllOf = function(c) if c == Cc.ship_class then return { shipU } end if c == Cc.controller_class then return { pcU } end return {} end
+    local hostLive = true
+    local function mkhost(name) return mkud({ IsValid = function() return hostLive end, GetFullName = function() return name end,
+        AddChild = function() order[#order + 1] = "AddChild" end }) end
+    local host, host2 = mkhost("H1"), mkhost("H2")
+    local now = 100
+    local realClock = os.clock
+    os.clock = function() return now end
+    local lines, realPrint = {}, print
+    print = function(x) lines[#lines + 1] = tostring(x) end
+
+    local nt, nw = M.ship_hologram(7)
+    check("no host -> nil,'no host', nothing created", nt == nil and nw == "no host" and created == 0)
+    nt, nw = M.ship_hologram(7, { host = {} })
+    check("invalid host -> 'no host'", nt == nil and nw == "no host" and created == 0)
+    M.ship_hologram(7, { host = host })          -- first call = stall settle
+    now = 104
+    local t1 = M.ship_hologram(7, { host = host })
+    check("created with host, texture returned", t1 == texU and created == 1)
+    check("AddChild before SetShip", order[1] == "AddChild" and order[2] == "SetShip" and #order == 2)
+    check("widget Collapsed", vis == 1)
+    check("caps shows cache size", M.hologram_caps() == "ok n=1")
+    Cc.holo_debug = true
+    local before = #lines
+    local t2 = M.ship_hologram(7, { host = host, force = true, refresh_ok = true })
+    local joined = table.concat(lines, "|", before + 1)
+    check("reuse returns same texture, no new widget, no SetShip", t2 == texU and created == 1 and #order == 2)
+    check("reuse markers with debug on", joined:find("holo reuse id=7", 1, true) and joined:find("holo reuse ok id=7", 1, true))
+    Cc.holo_debug = false
+    before = #lines
+    M.ship_hologram(7, { host = host })
+    check("no reuse markers with debug off", #lines == before)
+    M.hologram_release(host)
+    check("release: RemoveFromParent for live host, cache empty", removed == 1 and M.hologram_caps() == "ok n=0")
+    now = 105
+    check("after release a NEW widget is created", M.ship_hologram(7, { host = host }) == texU and created == 2)
+    hostLive = false
+    M.hologram_release(host)
+    check("release with dead host: no calls on widgets", removed == 1 and M.hologram_caps() == "ok n=0")
+    hostLive = true
+    now = 106
+    M.ship_hologram(7, { host = host })
+    local c3 = created
+    now = 107
+    M.ship_hologram(7, { host = host2 })
+    check("host change releases and recreates", created == c3 + 1)
+    print = realPrint
+    os.clock = realClock
+    StaticFindObject = function() return nil end
+    FindAllOf = function() return {} end
+    M.hologram_release(host2)
+end
 
 -- (b) kill switch
 M.hologram_disable("x")

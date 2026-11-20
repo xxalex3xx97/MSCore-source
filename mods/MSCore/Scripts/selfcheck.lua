@@ -90,6 +90,8 @@ function M.run(MSCore)
         if tostring(why):find("^off:") then return "BROKEN", why end
         return "SKIP", tostring(why)
     end)
+    -- the three wbp.hologram checks below need a consumer host (opts.host, a panel of a live window). The selfcheck state has none and MSCore never
+    -- creates unrooted widgets, so they SKIP with "no host" here; run them from a consumer that passes its host.
     check("wbp.hologram ttl", function()
         local W = MSCore.wbp
         if not (W and W.hologram_stats) then return "BROKEN", "hologram_stats missing" end

@@ -245,19 +245,46 @@ function M.holo_take(queue, id, used, max)
   end
   return false, q
 end
+-- drop every Lua reference to cached hologram widgets (no Destroy, nothing is called on them)
+local function releaseRefs() holo.ent, holo.at, holo.miss, holo.queue, holo.qat, holo.gone = {}, {}, {}, {}, {}, {} end
+-- hologram_release(host): call on window close AND at the start of every open (a fresh open creates new widgets, never SetShip on an old one).
+-- RemoveFromParent is called on the cached widgets only while `host` is the live host they were parented to; otherwise references are just dropped.
+function M.hologram_release(host)
+  local n = 0
+  for _ in pairs(holo.ent) do n = n + 1 end
+  hstep("release n=" .. n)
+  pcall(function()
+    if holo.hostId and ok(host) and cie_id(host) == holo.hostId then
+      for _, e in pairs(holo.ent) do pcall(function() e:RemoveFromParent() end) end
+    end
+  end)
+  releaseRefs()
+  holo.host, holo.hostId = nil, nil
+end
 local function hologram_texture_impl(id, opts)
   if holo.off then return nil, "off:" .. holo.off end
   if type(id) ~= "number" then return nil, "bad id" end
   opts = opts or {}
   holo.cur = id
+  -- GC safety: widgets are parented to the consumer's persistent hidden host (its window tree keeps them and their textures alive).
+  -- No host = no hologram (never create unrooted widgets). A different host = window reopened: every cached widget is released.
+  local host = opts.host
+  if not ok(host) then return nil, "no host" end
+  local hid = cie_id(host)
+  if holo.hostId ~= hid then
+    if holo.hostId then releaseRefs() end
+    holo.host, holo.hostId = host, hid
+  end
   local now = os.clock()
   stalled(now)
   local e, at = holo.ent[id], holo.at[id]
+  if e then hstep("holo reuse id=" .. id) end
   local tex = e and holoTex(e) or nil
   local dec = M.holo_decide(at and now - at or nil, opts.ttl, opts.force, opts.refresh_ok, tex ~= nil)
   if tex and dec == "reuse" then   -- no ship scan / SetShip / FindAllOf on this path
     holo.stats.reuses = holo.stats.reuses + 1
     if M.holo_due(at and now - at or nil, opts.ttl, false) then holo.stats.stale_reuses = holo.stats.stale_reuses + 1 end
+    hstep("holo reuse ok id=" .. id)
     return tex
   end
   if e and at and not tex then   -- texture missing or invalid right now: just built = wait, else drop the widget and build a new one (below)
@@ -306,6 +333,10 @@ local function hologram_texture_impl(id, opts)
     hstep("Create id=" .. id)
     try("holo create", function() e = StaticFindObject(LIB):Create(holo.pc, M.widget("fleet_ship_entry"), holo.pc) end)
     if not ok(e) then holo.miss[id] = now + 5; return nil, "pending" end
+    hstep("host AddChild id=" .. id)
+    local rooted = pcall(function() host:AddChild(e) end)
+    if not rooted then holo.miss[id] = now + 5; return nil, "pending" end   -- never keep an unrooted widget
+    pcall(function() e:SetVisibility(1) end)   -- Collapsed
     holo.ent[id] = e
     holo.stats.created = holo.stats.created + 1
   end
@@ -328,6 +359,8 @@ local function hg(f)
   end
 end
 -- WBP.ship_hologram(shipId [, {ttl = 30, force = false, refresh_ok = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
+-- HOST: opts.host = a persistent hidden panel of the consumer's window; widgets are AddChild'ed to it (GC-rooted, Collapsed). No host = nil,'no host'.
+-- Call hologram_release(host) on window close and at every open.
 -- REFRESH IS OFF (C.holo_refresh=false): re-rendering an existing widget crashed the game. A picture is created once per ship per session;
 -- opts.ttl / force / refresh_ok are accepted and ignored. An INVALID cached texture drops that widget and builds a NEW one (queue/budget).
 -- OWNERSHIP / LIFETIME: the mod owns the picture. APPLY the returned texture to YOUR Image brush IMMEDIATELY, in the same call
@@ -348,7 +381,12 @@ function M.set_ship_hologram(img, id, opts)
   if not pcall(function() img:SetBrushFromTexture(tex, true) end) then return false, "SetBrush failed" end
   return true
 end
-function M.hologram_caps() return holo.off and ("off:" .. holo.off) or "ok" end
+function M.hologram_caps()
+  if holo.off then return "off:" .. holo.off end
+  local n = 0
+  for _ in pairs(holo.ent) do n = n + 1 end
+  return "ok n=" .. n
+end
 local function holoTick()
   local now = os.clock()
   if holo.tickAt and now - holo.tickAt > 1.5 then holo.hold = now + 10 end   -- game stall = warp / load
