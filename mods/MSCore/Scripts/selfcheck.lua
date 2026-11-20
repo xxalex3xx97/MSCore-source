@@ -69,6 +69,15 @@ function M.run(MSCore)
         if tostring(W.caps()):find("^off:error") or tostring(detail):find("^killed") then return "BROKEN", detail end
         return "SKIP", detail
     end)
+    check("wbp.hologram", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_texture and W.set_ship_hologram and W.hologram_caps) then return "BROKEN", "hologram API missing in mscore_wbp" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.hologram_texture(sh.id)
+        if t then return yes(S.valid(t), "ship " .. sh.id .. " " .. S.objName(t)) end
+        if tostring(why):find("^off:") then return "BROKEN", why end
+        return "SKIP", tostring(why)
+    end)
     check("blocks.contract", function()
         local B = MSCore.blocks
         if not (B and B.selftest and B.caps) then return "BROKEN", "blocks API missing in mscore_blocks" end

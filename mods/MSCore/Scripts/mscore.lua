@@ -1037,12 +1037,14 @@ function MSCore.caps()
     if MSCore.blocks and MSCore.blocks.caps then
         local s, c = pcall(MSCore.blocks.caps); t.blocks = s and c or "off:error"
     end
+    t.hologram = (MSCore.wbp and MSCore.wbp.hologram_caps) and MSCore.wbp.hologram_caps() or "off:missing"
     t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
     return t
 end
 function MSCore.module_disable(name, why)
     if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
+    if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

@@ -22,6 +22,8 @@ Helpers for building simple UMG widgets: create objects, set text, convert colou
 | `ui.smallFont` | `tb, size` | - | Sets the font size of a text block. Logs one failure line at most. |
 | `ui.hadd` | `hb, w` | - | Adds `w` to a horizontal box with 4 px left and right padding. |
 
+Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most one build per second. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
+
 ## Example
 
 ```lua
@@ -51,6 +53,8 @@ local red = MSCore.ui.rgba(255, 0, 0)
 | `wbp.cost_row` | `host, item, need, have, opts` | row or `nil` | Adds the game's `WBP_ItemAmount` row to `host`. Text `have/needx`, red when `have < need`. `opts.refund = true` shows `+N refund` in green. `opts.pc` = controller. |
 | `wbp.fmt_int` | `n` | string | `1595` -> `"1,595"`. |
 | `wbp.geometry_log` | `widget` | - | One line: desired size and cached geometry. Use it to check layout, not to size. |
+| `wbp.set_ship_hologram` | `img, shipId` | `true`, or `false, why` | Sets the Image `img` brush to the ship's hologram texture (the game's `WBP_FleetShipEntry` render). `why` = `pending` (retry on a later tick), `no ship`, `no class`, `no controller`, `bad image`, `off:...`. |
+| `wbp.hologram_texture` | `shipId` | texture, or `nil, why` | The hologram texture of a ship, built lazily (one widget per ship). Same `why` values. |
 | `wbp.Z` | - | `1` | Window Z. Keep it below 2. |
 
 ## Example

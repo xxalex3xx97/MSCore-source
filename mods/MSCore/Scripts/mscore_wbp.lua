@@ -155,6 +155,72 @@ M.is_window = gd("is_window", function(o)
   local cn = o:GetClass():GetFName():ToString()
   return cn:sub(-2) == "_C" and cn ~= "WidgetBlueprintGeneratedClass" and nm(o):find("^" .. ((C and C.window_prefix) or "\0")) ~= nil
 end)
+-- ---------------------------------------------------------------------------------------------
+-- ship hologram: the game's WBP_FleetShipEntry renders a ship into e.ShipHologram; we hand out that texture.
+-- Own kill switch (hologram), separate from widgets. Warp safety: no build within 10 s of a game stall (FindAllOf / Create
+-- crash after a warp or load), max one build per second, one entry per ship id, entries are never destroyed (reference dropped).
+-- ---------------------------------------------------------------------------------------------
+local holo = { off = nil, ent = {}, miss = {}, hold = 0, buildAt = -math.huge, tickAt = nil, pc = nil, core = nil }
+local function holoTex(e)
+  local s, t = pcall(function() return e.ShipHologram.Brush.ResourceObject end)
+  if s and ok(t) then return t end
+  return nil
+end
+function M.hologram_disable(why)
+  if holo.off then return end
+  holo.off = tostring(why or "disabled"); compat("hologram=off:" .. holo.off .. " (runtime)")
+end
+local function hologram_texture_impl(id)
+  if holo.off then return nil, "off:" .. holo.off end
+  if type(id) ~= "number" then return nil, "bad id" end
+  local e = holo.ent[id]
+  if e then local t = holoTex(e); if t then return t end end
+  local now = os.clock()
+  if now < holo.hold or now - holo.buildAt < 1 or (holo.miss[id] or 0) > now then return nil, "pending" end
+  local cls = M.widget("fleet_ship_entry")
+  if not ok(cls) then return nil, "no class" end
+  if not ok(holo.pc) then holo.pc = localCtl() end
+  local pc = holo.pc
+  if not ok(pc) then return nil, "no controller" end
+  local alive, ship = {}, nil
+  for _, s in ipairs(holo.core and holo.core.ships and holo.core.ships.list() or {}) do
+    alive[s.id] = true
+    if s.id == id then ship = s.obj end
+  end
+  for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil end end   -- drop the reference, no Destroy
+  if not ok(ship) then holo.miss[id] = now + 5; return nil, "no ship" end
+  holo.buildAt = now
+  if not e then
+    try("holo create", function() e = StaticFindObject(LIB):Create(pc, cls, pc) end)
+    if not ok(e) then holo.miss[id] = now + 5; return nil, "pending" end
+    holo.ent[id] = e
+  end
+  try("holo SetShip", function() e:SetShip(ship) end)
+  return holoTex(e), "pending"
+end
+local function hg(f)
+  return function(...)
+    if holo.off then return nil, "off:" .. holo.off end
+    local r = table.pack(pcall(f, ...))
+    if not r[1] then M.hologram_disable("error in hologram: " .. tostring(r[2])); return nil, "off:" .. holo.off end
+    return table.unpack(r, 2, r.n)
+  end
+end
+M.hologram_texture = hg(hologram_texture_impl)
+function M.set_ship_hologram(img, id)
+  if not ok(img) then return false, "bad image" end
+  local tex, why = M.hologram_texture(id)
+  if not tex then return false, why end
+  if not pcall(function() img:SetBrushFromTexture(tex, true) end) then return false, "SetBrush failed" end
+  return true
+end
+function M.hologram_caps() return holo.off and ("off:" .. holo.off) or "ok" end
+local function holoTick()
+  local now = os.clock()
+  if holo.tickAt and now - holo.tickAt > 1.5 then holo.hold = now + 10 end   -- game stall = warp / load
+  holo.tickAt = now
+end
+
 -- cb(self) runs on the game thread after the widget's open function. true = hooked now or armed for retry
 M.on_open = gd("on_open", function(name, cb)
   local e = CW[name]
@@ -318,6 +384,11 @@ function M.geometry_log(wbp)
   L("geometry desired=" .. v2(sd, d) .. " cachedAbs=" .. ga .. " cachedLocal=" .. gl .. " inVp=" .. tostring(inVp(wbp)))
 end
 
-function M.install(MSCore) MSCore.wbp = M; return M end
+function M.install(MSCore)
+  MSCore.wbp = M
+  holo.core = MSCore
+  if MSCore.events and MSCore.events.on then pcall(MSCore.events.on, "tick", holoTick) end
+  return M
+end
 
 return M
