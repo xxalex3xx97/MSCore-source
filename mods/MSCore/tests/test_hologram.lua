@@ -18,11 +18,13 @@ local M = require("mscore_wbp")
 local r = M.set_ship_hologram(nil, 1)
 check("set_ship_hologram(nil) false", r == false)
 
--- (c) installed with an empty core: no throw, soft failure
-local core = { ships = { list = function() return {} end }, events = { on = function() end } }
-M.install(core)
+-- (c) standalone (no install, core nil): fake FindAllOf with ships, missing ship / class / controller soft-fail, no throw
+local shipCalls = 0
+FindAllOf = function() shipCalls = shipCalls + 1 return { { IsValid = function() return true end, ID = 7 } } end
 local okc, tex, why = pcall(M.hologram_texture, 1)
-check("missing ship no throw", okc and tex == nil and (why == "no class" or why == "no ship" or why == "no controller"))
+check("standalone missing ship no throw", okc and tex == nil and (why == "no class" or why == "no ship" or why == "no controller" or why == "pending"))
+pcall(M.hologram_texture, 1)
+check("standalone ship scan rate limited (<= 1 FindAllOf)", shipCalls <= 1)
 check("caps ok before disable", M.hologram_caps() == "ok")
 
 -- (b) kill switch

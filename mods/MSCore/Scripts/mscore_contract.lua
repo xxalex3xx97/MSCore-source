@@ -22,5 +22,7 @@ C.classes = {
   ship            = "DMSPlayerShipObject",
 }
 -- blocks module names (registry class, research class and dir, default category)
+-- ship/item lookup for mscore_wbp standalone mode (a mod state loads only mscore_wbp): FindAllOf class + ship id property
+C.ship_class, C.ship_id_prop, C.item_class = C.classes.ship, "ID", "Item"
 C.blocks = { registry = "BuildingBlockRegistry", research_class = "ResearchTechnology", research_dir = "/Game/Data/Research/", category = "Functional Blocks" }
 return C

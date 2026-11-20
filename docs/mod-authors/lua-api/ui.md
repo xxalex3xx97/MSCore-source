@@ -22,6 +22,8 @@ Helpers for building simple UMG widgets: create objects, set text, convert colou
 | `ui.smallFont` | `tb, size` | - | Sets the font size of a text block. Logs one failure line at most. |
 | `ui.hadd` | `hb, w` | - | Adds `w` to a horizontal box with 4 px left and right padding. |
 
+Mods run in their own Lua state and load only `mscore_wbp` (`local WBP = require "mscore_wbp"`, package.path = `<Mods>/MSCore/Scripts/?.lua`), never `mscore.lua`. Call `WBP.set_ship_hologram(img, shipId)` and `WBP.set_item_icon(img, key)` directly; `MSCore.wbp.*` and `MSCore.items.*` are aliases inside MSCore's own state. Standalone, the ship is found by an own `FindAllOf` cache (at most one per 5 s) and a gap of more than 8 s between calls counts as a stall (3 s settle).
+
 Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most one build per second. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
 
 ## Example

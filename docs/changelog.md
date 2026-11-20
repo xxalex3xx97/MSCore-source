@@ -6,8 +6,8 @@ nav_order: 6
 # Changelog
 
 ## Unreleased
-- **New:** MSCore.wbp.set_ship_hologram / hologram_texture, caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
-- **New:** MSCore.items.icon / set_icon, caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
+- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): set_ship_hologram / hologram_texture, caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
+- **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 
 ## 0.8.14 - Game update 2026-11-20 + pause query
 - **New:** C export `MSCore_world_paused()` (1 paused, 0 running, -1 unknown, -2 module off; UGameplayStatics::IsGamePaused by reflection, no patterns), caps `world`, selfcheck `world.paused`. API stays 10.

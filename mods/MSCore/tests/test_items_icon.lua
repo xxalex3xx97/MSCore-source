@@ -1,4 +1,4 @@
--- Plain Lua 5.4 tests for MSCore.items icon API (no game). Run: lua test_items_icon.lua  (from any cwd)
+-- Plain Lua 5.4 tests for the item icon API (mscore_wbp standalone + MSCore.items aliases) (no game). Run: lua test_items_icon.lua  (from any cwd)
 local dir = (arg and arg[0] or ""):match("^(.*)[/\\]") or "."
 package.path = dir .. "/../Scripts/?.lua;" .. package.path
 
@@ -14,6 +14,19 @@ FindAllOf = function() findCalls = findCalls + 1 return {} end
 FindFirstOf = function() return nil end
 StaticFindObject = function() return nil end
 RegisterHook = function() return nil end
+
+-- standalone: mscore_wbp alone (mod state), no mscore.lua loaded
+local W = require("mscore_wbp")
+local t0, w0 = W.item_icon("ITEM_Nope")
+check("standalone missing key nil", t0 == nil and w0 == "no item ITEM_Nope" and findCalls == 1)
+W.item_icon("ITEM_Nope")
+check("standalone rate limit", findCalls == 1)
+check("standalone set_icon(nil)", select(1, W.set_item_icon(nil, "x")) == false)
+check("standalone caps ok", W.items_caps() == "ok")
+W.items_disable("y")
+check("standalone off", select(2, W.item_icon("x")) == "off:y" and W.items_caps() == "off:y")
+package.loaded["mscore_wbp"] = nil
+findCalls = 0
 
 local MSCore = require("mscore")
 local I = MSCore.items

@@ -669,50 +669,9 @@ function MSCore.find_item(res)
     return nil, "'" .. tostring(res) .. "' matches " .. n .. " Items (ambiguous)"
 end
 
--- Item icons: items.icon(key) -> texture | nil, why ; items.set_icon(img, key) -> true | false, why. key = item object name (e.g. ITEM_TitaniumOre).
--- One FindAllOf builds the name map; a missing key refreshes it at most every 10 s.
-local items = { off = nil, map = nil, at = -math.huge }
+-- Item icons: implementation lives in mscore_wbp (mods load only that); MSCore.items = aliases for MSCore's own state.
+local items = { icon = function(k) return MSCore.wbp.item_icon(k) end, set_icon = function(i, k) return MSCore.wbp.set_item_icon(i, k) end }
 MSCore.items = items
-local function itemMap(force)
-    if force or not items.map then
-        local ok, all = pcall(FindAllOf, R.item)
-        local map = {}
-        if ok and all then
-            for _, it in ipairs(all) do
-                if safe.valid(it) then
-                    local nm = safe.objName(it)
-                    if nm ~= "?" and not string.find(nm, "Default__", 1, true) then map[nm] = it end
-                end
-            end
-        end
-        items.map, items.at = map, os.clock()
-    end
-    return items.map
-end
-local function itemsDisable(why)
-    items.off = tostring(why or "disabled")
-    print("[MSCore] COMPAT CAPS items_icon=off:" .. items.off .. " (runtime)\n")
-end
-function items.icon(key)
-    if items.off then return nil, "off:" .. items.off end
-    local ok, tex, why = pcall(function()
-        local it = itemMap(false)[key]
-        if not it and os.clock() - items.at >= 10 then it = itemMap(true)[key] end
-        if not it then return nil, "no item " .. tostring(key) end
-        local t = prop(it, "Icon")
-        if safe.valid(t) then return t end
-        return nil, "no icon"
-    end)
-    if not ok then itemsDisable("error: " .. tostring(tex)) return nil, "off:" .. items.off end
-    return tex, why
-end
-function items.set_icon(img, key)
-    if not safe.valid(img) then return false, "bad image" end
-    local t, why = items.icon(key)
-    if not t then return false, why end
-    if not pcall(function() img:SetBrushFromTexture(t, true) end) then return false, "SetBrush failed" end
-    return true
-end
 
 ---------------------------------------------------------------- world scan + chunk hold (native; see docs/mod-authors/lua-api/scan.md)
 local SCAN_KINDS = { ship = 0, asteroid = 1, station = 2 }
@@ -1083,7 +1042,7 @@ function MSCore.caps()
         local s, c = pcall(MSCore.blocks.caps); t.blocks = s and c or "off:error"
     end
     t.hologram = (MSCore.wbp and MSCore.wbp.hologram_caps) and MSCore.wbp.hologram_caps() or "off:missing"
-    t.items_icon = items.off and ("off:" .. items.off) or "ok"
+    t.items_icon = (MSCore.wbp and MSCore.wbp.items_caps) and MSCore.wbp.items_caps() or "off:missing"
     t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
     return t
 end
@@ -1091,7 +1050,7 @@ function MSCore.module_disable(name, why)
     if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
     if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
-    if name == "items" then itemsDisable(why) return true end
+    if name == "items" and MSCore.wbp and MSCore.wbp.items_disable then pcall(MSCore.wbp.items_disable, why) return true end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

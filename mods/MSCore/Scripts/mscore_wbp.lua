@@ -160,7 +160,24 @@ end)
 -- Own kill switch (hologram), separate from widgets. Warp safety: no build within 10 s of a game stall (FindAllOf / Create
 -- crash after a warp or load), max one build per second, one entry per ship id, entries are never destroyed (reference dropped).
 -- ---------------------------------------------------------------------------------------------
-local holo = { off = nil, ent = {}, miss = {}, hold = 0, buildAt = -math.huge, tickAt = nil, pc = nil, core = nil }
+-- Standalone (mod state, only mscore_wbp loaded, holo.core == nil): ships come from an own FindAllOf cache (max one per 5 s);
+-- no tick event exists there, so a gap > 8 s between calls (caller repaints ~1/s while pending) counts as a new open / stall => 3 s settle.
+local holo = { off = nil, ent = {}, miss = {}, hold = 0, buildAt = -math.huge, tickAt = nil, pc = nil, core = nil, shipAt = -math.huge, shipMap = {}, lastCall = nil }
+local function standaloneShips()
+  local now = os.clock()
+  if now - holo.shipAt >= 5 then
+    holo.shipAt = now
+    local map = {}
+    local s, l = pcall(FindAllOf, C and C.ship_class or "")
+    if s and l then
+      for _, o in ipairs(l) do
+        if live(o) then local id = rd(o, C.ship_id_prop); if type(id) == "number" then map[id] = o end end
+      end
+    end
+    holo.shipMap = map
+  end
+  return holo.shipMap
+end
 local function holoTex(e)
   local s, t = pcall(function() return e.ShipHologram.Brush.ResourceObject end)
   if s and ok(t) then return t end
@@ -176,6 +193,8 @@ local function hologram_texture_impl(id)
   local e = holo.ent[id]
   if e then local t = holoTex(e); if t then return t end end
   local now = os.clock()
+  if not holo.core and (not holo.lastCall or now - holo.lastCall > 8) then holo.hold = now + 3 end
+  holo.lastCall = now
   if now < holo.hold or now - holo.buildAt < 1 or (holo.miss[id] or 0) > now then return nil, "pending" end
   local cls = M.widget("fleet_ship_entry")
   if not ok(cls) then return nil, "no class" end
@@ -183,9 +202,16 @@ local function hologram_texture_impl(id)
   local pc = holo.pc
   if not ok(pc) then return nil, "no controller" end
   local alive, ship = {}, nil
-  for _, s in ipairs(holo.core and holo.core.ships and holo.core.ships.list() or {}) do
-    alive[s.id] = true
-    if s.id == id then ship = s.obj end
+  if holo.core and holo.core.ships then
+    for _, s in ipairs(holo.core.ships.list()) do
+      alive[s.id] = true
+      if s.id == id then ship = s.obj end
+    end
+  else
+    for k, o in pairs(standaloneShips()) do
+      alive[k] = true
+      if k == id then ship = o end
+    end
   end
   for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil end end   -- drop the reference, no Destroy
   if not ok(ship) then holo.miss[id] = now + 5; return nil, "no ship" end
@@ -219,6 +245,53 @@ local function holoTick()
   local now = os.clock()
   if holo.tickAt and now - holo.tickAt > 1.5 then holo.hold = now + 10 end   -- game stall = warp / load
   holo.tickAt = now
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- item icons (works with mscore_wbp alone): item_icon(key) -> texture | nil, why ; set_item_icon(img, key) -> true | false, why.
+-- key = item object name (e.g. ITEM_TitaniumOre). One FindAllOf builds the name map; a missing key refreshes it at most every 10 s.
+-- ---------------------------------------------------------------------------------------------
+local items = { off = nil, map = nil, at = -math.huge }
+local function itemMap(force)
+  if force or not items.map then
+    local s, all = pcall(FindAllOf, C and C.item_class or "")
+    local map = {}
+    if s and all then
+      for _, it in ipairs(all) do
+        if live(it) then
+          local n = nm(it)
+          if n ~= "?" and not n:find("Default__", 1, true) then map[n] = it end
+        end
+      end
+    end
+    items.map, items.at = map, os.clock()
+  end
+  return items.map
+end
+function M.items_disable(why)
+  items.off = tostring(why or "disabled")
+  print("[MSCore] COMPAT CAPS items_icon=off:" .. items.off .. " (runtime)\n")
+end
+function M.items_caps() return items.off and ("off:" .. items.off) or "ok" end
+function M.item_icon(key)
+  if items.off then return nil, "off:" .. items.off end
+  local s, tex, why = pcall(function()
+    local it = itemMap(false)[key]
+    if not it and os.clock() - items.at >= 10 then it = itemMap(true)[key] end
+    if not it then return nil, "no item " .. tostring(key) end
+    local t = rd(it, "Icon")
+    if live(t) then return t end
+    return nil, "no icon"
+  end)
+  if not s then M.items_disable("error: " .. tostring(tex)) return nil, "off:" .. items.off end
+  return tex, why
+end
+function M.set_item_icon(img, key)
+  if not live(img) then return false, "bad image" end
+  local t, why = M.item_icon(key)
+  if not t then return false, why end
+  if not pcall(function() img:SetBrushFromTexture(t, true) end) then return false, "SetBrush failed" end
+  return true
 end
 
 -- cb(self) runs on the game thread after the widget's open function. true = hooked now or armed for retry
