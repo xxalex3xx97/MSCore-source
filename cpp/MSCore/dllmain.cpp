@@ -37,6 +37,7 @@ using namespace RC::Unreal;
 #include "msc_scan.hpp"
 #include "msc_ships.hpp"
 #include "msc_flight.hpp"
+#include "msc_world.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
 #include "msc_rename.hpp"
@@ -46,7 +47,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.13";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.14";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -130,6 +131,14 @@ namespace
             const int r = ship_shields_read(ship, cur, max);
             detail = "shields cur=" + std::to_string(cur) + " max=" + std::to_string(max);
             return (r & 1) != 0;
+        }
+        if (name == "paused")
+        {
+            if (!module_ok(STR("world"))) { detail = "world off: " + caps_text(); return false; }
+            if (!alive(ctrl)) { detail = "SKIP no DMSPlayerController"; return false; }
+            const int r = world_paused_read();
+            detail = r < 0 ? std::string("IsGamePaused unreadable") : std::string(r ? "paused=1" : "paused=0");
+            return r >= 0;
         }
         if (name == "flight")
         {
@@ -1196,7 +1205,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.13");
+        ModVersion = STR("0.8.14");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1216,7 +1225,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); world_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1233,7 +1242,7 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc. set_dock_filter is a Lua native only (no C export, number unchanged).
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused). set_dock_filter is a Lua native only (no C export, number unchanged).
     MSCORE_API int MSCore_api() { try { return 10; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
@@ -1457,6 +1466,13 @@ extern "C"
               if (max) *max = m;
               return r; }
         catch (...) { module_disable(STR("ships"), STR("ship_shields exception")); return -1; }
+    }
+
+    // world paused (API 10): 1 paused, 0 running, -1 unknown or exception, -2 world module off. Mods treat only 1 as paused.
+    MSCORE_API int MSCore_world_paused()
+    {
+        try { if (!module_ok(STR("world"))) return -2; return world_paused_read(); }
+        catch (...) { module_disable(STR("world"), STR("world_paused exception")); return -1; }
     }
 
     // flight state of ship sid (API 10): mask = FL_* groups, out = MsFlight with out->size = sizeof(MsFlight).

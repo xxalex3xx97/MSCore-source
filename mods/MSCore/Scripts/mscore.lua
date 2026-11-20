@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 6).
-local MSCore = { api = 3, version = "0.8.13", verified_build = 149299200 }
+local MSCore = { api = 3, version = "0.8.14", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
 local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
@@ -984,17 +984,17 @@ MSCore.hacks = hacks
 function hacks.add(h) hlist[#hlist + 1] = h return h end   -- {name, what, why, verified_build}
 function hacks.list() return hlist end
 hacks.add({ name = "click_hook", what = "Button clicks via OnClicked -> ForceLayoutPrepass + RegisterHook lookup by FullName",
-    why = "Lua cannot bind a delegate to a Lua function directly", verified_build = 149299200 })
+    why = "Lua cannot bind a delegate to a Lua function directly", verified_build = MSCore.verified_build })
 hacks.add({ name = "valid_before_call", what = "check IsValid() before any method call on a UObject",
-    why = "native AV on null wrappers cannot be caught by pcall", verified_build = 149299200 })
+    why = "native AV on null wrappers cannot be caught by pcall", verified_build = MSCore.verified_build })
 hacks.add({ name = "linear_colors", what = "convert sRGB to linear for UMG colors",
-    why = "UMG colors are linear, raw sRGB looks washed out", verified_build = 149299200 })
+    why = "UMG colors are linear, raw sRGB looks washed out", verified_build = MSCore.verified_build })
 hacks.add({ name = "shipmove_typeid", what = "set cmd+0x28 type id 0x3a for NewObject ShipMovementInputCommand",
-    why = "flush drops commands whose type id is 0", verified_build = 149299200 })
+    why = "flush drops commands whose type id is 0", verified_build = MSCore.verified_build })
 hacks.add({ name = "map_pin_hook", what = "pre-hook on DMSPlayerController.AddInputCommand stores the ObjectId of a MapPinInputCommand with bShow=1",
-    why = "the map pin is the only pinned-sector source the game exposes; the hook only reads memory", verified_build = 149299200 })
+    why = "the map pin is the only pinned-sector source the game exposes; the hook only reads memory", verified_build = MSCore.verified_build })
 hacks.add({ name = "teleport_warp", what = "warp = AddInputCommand(ShipTeleportInput{bSetTarget, NewLocation, NewQuat W=65536, NewChunkLocation, NewSolarSystem}), wrapped in SetPilotingInput on/off",
-    why = "the player's manual warp sends exactly this (probe 2026-10-29); instant, no warp fuel used", verified_build = 149299200 })
+    why = "the player's manual warp sends exactly this (probe 2026-10-29); instant, no warp fuel used", verified_build = MSCore.verified_build })
 
 -- optional sibling modules (same Scripts dir, found by require). A failed load is logged, never thrown.
 local function load_optional(name, install)
