@@ -50,6 +50,8 @@ check("write absent", ok == false and e == "off:native too old")
 _G.MSCoreNative_fleet_cmd = function() return false, "x" end
 ok, e = F.rename(1, "y")
 check("write fail passthrough", ok == false and e == "x")
+ok, e = F.unassign(10, 101)
+check("unassign fail passthrough", ok == false and e == "x")
 check("write_caps unverified", F.write_caps() == "off:unverified")
 _G.MSCoreNative_offsets = function() return "fleets=ok fleets_write=ok" end
 check("write_caps ok", F.write_caps() == "ok")
@@ -124,8 +126,8 @@ C.capture(true)
 cb(nil, wrap(1), wrap(mkcmd(FTI)))
 check("capture(true) re-enables", #lines == n0 + 1 and #hooks == 1)
 C = fresh(true); C.capture(true)
-for _ = 1, 21 do hooks[1][2](nil, wrap(1), wrap(mkcmd(FTI))) end
-check("dump cap 20", count("CAPTURE FleetTagInput") == 20)
+for _ = 1, 41 do hooks[1][2](nil, wrap(1), wrap(mkcmd(FTI))) end
+check("dump cap 40", count("CAPTURE FleetTagInput") == 40)
 print = realPrint
 _G.RegisterHook = nil
 
