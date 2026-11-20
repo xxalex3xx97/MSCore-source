@@ -1,6 +1,6 @@
 // FILE: cpp/MSCore/msc_fleets.hpp
 // WHAT: fleets_get(): FleetTag objects (id, parent, DisplayName) and per-ship FleetTagIDs, cached 3 s (native API 13, C exports MSCore_fleet_tags / MSCore_fleet_ships).
-//       Also fleets_probe_text() (layout dump of FleetTagInput) and fleet_write() ("unassign" only, bRemove=false, via make_cmd + add_input).
+//       Also fleets_probe_text() (layout dump of FleetTagInput) and fleet_write() ("unassign" only, bRemove=true, via make_cmd + add_input).
 // WHY: the fleet tree lives in game memory only; mods need it without Lua struct access or ProcessEvent. Reads go straight to memory.
 // SAFETY: game thread, reads only. FindAllOf and every per-object read run under seh_run; alive() guards each object.
 //         A fault or a FleetTagIDs layout surprise returns false (caller turns the module off). Default__ objects and ids <= 0 are skipped. No ProcessEvent.
@@ -183,8 +183,9 @@ namespace
         return true;
     }
 
-    // WHAT: fleet write op. Only "unassign" is implemented: FleetTagInput with FleetTagID = a and bRemove = false, sent to ship b via AddInputCommand.
-    // SAFETY: bRemove is never true (a true value may delete the fleet tag for every ship). Other ops fail closed. A fault turns module 'fleets_write' off.
+    // WHAT: fleet write op. Only "unassign" is implemented: FleetTagInput with FleetTagID = a and bRemove = true, sent to ship b via AddInputCommand.
+    // NOTE: bRemove=false is ADD (proven by log 2026-11-20 22:56: game add gave ship fleets [70801]; our old unassign with bRemove=false gave [70801,70801]). bRemove=true = remove ship from fleet.
+    // SAFETY: other ops fail closed. A fault turns module 'fleets_write' off.
     bool fleet_write(const std::string& op, int a, int b, const std::string& name, std::wstring& err)
     {
         (void)name;
@@ -211,7 +212,7 @@ namespace
                             std::memcpy(d, m, 16);
                         }
                         else if (CastField<FIntProperty>(q)) *reinterpret_cast<int32_t*>(d) = a;
-                        else if (CastField<FBoolProperty>(q)) *d = 0;   // bRemove = false
+                        else if (CastField<FBoolProperty>(q)) *d = 1;   // bRemove = true (remove ship from fleet; false = ADD)
                     }
                     return true;
                 }, err);
