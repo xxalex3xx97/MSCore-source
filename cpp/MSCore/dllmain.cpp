@@ -138,12 +138,13 @@ namespace
         if (name == "stations")
         {
             if (!module_ok(STR("stations"))) { detail = "stations off: " + caps_text(); return false; }
+            stn_probe_log();
             std::vector<MsStationName> rows;
             if (!stations_read(rows)) { detail = "stations read faulted (module stations off until reload)"; module_disable(STR("stations"), STR("selfcheck fault")); return false; }
             if (rows.empty()) { detail = "SKIP no stations"; return false; }
             int named = 0;
             for (const auto& r : rows) if (r.name[0]) ++named;
-            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with DisplayName";
+            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with name, via " + (g_stn_src.empty() ? std::string("none") : narrow(g_stn_src));
             return named > 0;
         }
         if (name == "fleets")

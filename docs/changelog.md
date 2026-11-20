@@ -6,6 +6,7 @@ nav_order: 6
 # Changelog
 
 ## Unreleased
+- **Fixed:** stations names: DisplayName read failed on StationObject, now tries DisplayName, Blueprint.DisplayName, StationName, CustomName (first non-empty); selfcheck world.stations logs a one-shot probe and the winning source. C API unchanged.
 - **New:** MSCore.wbp.open_fleets_window() (the game's own fleet window, ShowWidget(WBP_Fleet, PlayerObject)), open_fleet_assign(shipId) (add-to-fleet popup, enabled: WidgetSubsystem:ShowPopup(WBP_TagSelectPopup_C, shipObject, nil, false); logs "[MSCore.wbp] open_fleet_assign ship=.. class=.. ok=.."), fleet_assign_caps() ("ok" or "off:<why>"), probe_fleet_popup() (dev capture, logs the ShowPopup widget class name, sends nothing). Contract widgets fleet_window / fleet_tag_popup, selfcheck wbp.fleet_open. Lua API stays 3.
 - **New:** fleets module: C exports MSCore_fleet_tags / MSCore_fleet_ships (MsFleetTag 200 B, MsFleetShip 48 B), Lua natives fleets_read / fleet_cmd / fleets_probe, Lua mscore_fleets.lua (MSCore.fleets.list / of_ship, write wrappers), caps fleets and fleets_write (off: unverified), kill switch module_disable("fleets"), selfcheck world.fleets / world.fleets_write / fleets.list. Native API 12 -> 13. Lua API stays 3.
 - **New:** C export `MSCore_stations(MsStationName*, int)` (id + DisplayName of every live station), caps `stations`, kill switch `module_disable("stations")`, selfcheck `world.stations`. Native API 11 -> 12. C only.
