@@ -5,6 +5,9 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased
+- **Fixed:** selfcheck no longer expects `MSCore.native.rename_ship` (it is a Lua wrapper over `rename_dock`); new check `factory_native.rename_ship` instead. Game build 149329408 is now the verified build (Lua `verified_build` and comments).
+
 ## 0.8.13 - Flight module
 - **New:** C exports `MSCore_ship_flight(sid, mask, MsFlight*)` (one read of the ship state: actor frame, chunk / Location / Quat, Throttle and steps, bAutopilot / bDockingAutopilot / bTravelling, collision radius, max speeds, power grid, low-power flag and limits), `MSCore_ship_set_throttle`, `MSCore_ship_zero` (Throttle 0 and RotationImpulseInput 0), `MSCore_ship_console` (PilotConsoleObject id) and `MSCore_actor_loc` (K2_GetActorLocation). caps flight=ok|off:why, kill switch `MSCore.module_disable("flight")`, selfcheck `world.flight`.
 - Native API 9 -> 10. Lua API stays 3.

@@ -13,7 +13,7 @@
 
 namespace
 {
-    // resolve table, verified build 149299200; selfcheck native.offsets guards it
+    // resolve table, verified build = MSCore.verified_build (mscore.lua); selfcheck native.offsets guards it
     constexpr int kTypeIdOffset = 0x28;
     constexpr double kViewRawPerDeg = 65536.0;
     constexpr int kViewYawAxis = 2;     // ViewRotation.Z
