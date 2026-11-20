@@ -274,12 +274,17 @@ local function hg(f)
   end
 end
 -- WBP.ship_hologram(shipId [, {ttl = 30, force = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
--- LIFETIME: the texture is only valid until MSCore re-renders or drops that ship (ttl or force refresh re-uses the same widget but the
--- texture handle may change). Ask again on EVERY paint, check IsValid/ok() before use, never store it across ticks, and apply it with
--- pcall(img.SetBrushFromTexture, ...) (set_ship_hologram does exactly that).
+-- OWNERSHIP / LIFETIME: the mod owns the picture. APPLY the returned texture to YOUR Image brush IMMEDIATELY, in the same call
+-- (SetBrushFromTexture / brush.ResourceObject, under pcall + IsValid). The Slate brush then holds a strong GC reference, so the picture
+-- stays alive even if MSCore drops its hidden widget; an MSCore refresh redraws INTO the same render target (SetShip again), so images
+-- already applied update in place. Do not keep the Lua variable across ticks; ask again on every paint. set_ship_hologram(img, id) /
+-- set_item_icon(img, key) do exactly that in one call (use them when you do not need the texture).
+-- Fallback: if in-game testing shows flicker or a dead picture on refresh, the fallback is a pixel-copy into the caller's own render
+-- target (new render target + draw per ship): heavy, not implemented. Not yet tested in game.
 M.ship_hologram = hg(hologram_texture_impl)
 M.hologram_texture = M.ship_hologram
 M._holoTex = holoTex   -- test hook
+-- applies right where it gets the texture, in the same call, under pcall (no texture is kept)
 function M.set_ship_hologram(img, id, opts)
   if not live(img) then return false, "bad image" end
   local tex, why = M.ship_hologram(id, opts)
@@ -335,7 +340,7 @@ function M.item_icon(key)
   if not s then M.items_disable("error: " .. tostring(tex)) return nil, "off:" .. items.off end
   return tex, why
 end
--- item_icon(key) -> texture | nil, why: same lifetime rule (ask again per paint, check validity, apply with pcall)
+-- item_icon(key) -> texture | nil, why: same ownership/lifetime contract as ship_hologram (apply it to your brush immediately, ask again per paint)
 function M.set_item_icon(img, key)
   if not live(img) then return false, "bad image" end
   local t, why = M.item_icon(key)

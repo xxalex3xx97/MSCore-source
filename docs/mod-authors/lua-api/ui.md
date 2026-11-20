@@ -24,7 +24,15 @@ Helpers for building simple UMG widgets: create objects, set text, convert colou
 
 Mods run in their own Lua state and load only `mscore_wbp` (`local WBP = require "mscore_wbp"`, package.path = `<Mods>/MSCore/Scripts/?.lua`), never `mscore.lua`. Call `WBP.ship_hologram(shipId [, {ttl=30, force=false}])` and `WBP.item_icon(key)` (they return the texture UObject, or `nil, why`); `WBP.set_ship_hologram(img, shipId [, opts])` and `WBP.set_item_icon(img, key)` are convenience wrappers that apply it with pcall; `MSCore.wbp.*` and `MSCore.items.*` are aliases inside MSCore's own state. Standalone, the ship is found by an own `FindAllOf` cache (at most one per 5 s) and a gap of more than 8 s between calls counts as a stall (3 s settle).
 
-Texture lifetime: a returned texture is only valid until MSCore re-renders or drops that ship (a ttl or force refresh re-uses the same widget but the texture handle may change). Ask again on every paint, check IsValid before use, never store the texture across ticks, and apply it with `pcall(img.SetBrushFromTexture, ...)` (the wrappers do exactly that). MSCore never returns a texture that is invalid at the time of the call.
+Ownership / lifetime: the mod owns the picture. APPLY the returned texture to your own Image brush immediately, in the same call (`SetBrushFromTexture` or `brush.ResourceObject`, under pcall + IsValid). The Slate brush then holds a strong GC reference, so the picture stays alive even if MSCore drops its hidden widget; an MSCore refresh redraws into the same render target (`SetShip` again), so images already applied update in place. Do not keep the Lua variable across ticks; ask again on every paint. `set_ship_hologram(img, id)` / `set_item_icon(img, key)` do exactly that in one call (use them when you do not need the texture). MSCore never returns a texture that is invalid at the time of the call.
+
+Fallback: if in-game testing shows flicker or a dead picture on refresh, the fallback is a pixel-copy into the caller's own render target (new render target + draw per ship): heavy, not implemented. This has not been tested in game yet.
+
+In-game test checklist (hologram):
+- Open the Fleet window; confirm rows and the Details panel show holograms.
+- Let a ship leave the list (dock, destroy, leave sector) and refresh after more than 30 s: expect no crash and no grey or black row image.
+- Reopen the menu within 30 s: no re-render (selfcheck `wbp.hologram ttl` counters).
+- After more than 30 s: a refresh happens (selfcheck `wbp.hologram refresh`).
 
 Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most `holo_per_window` (2) renders per `holo_window` (0.25 s), extra ships wait in a FIFO queue (`pending`). Refresh: a picture lives `holo_ttl` = 30 s (mscore_contract.lua); a call with an older (or never rendered) ship calls `SetShip` again on the existing hidden widget (no new widget, no FindAllOf), a younger one reuses the texture. `WBP.hologram_stats()` returns `{renders, reuses, created, queued}`. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
 
@@ -57,10 +65,10 @@ local red = MSCore.ui.rgba(255, 0, 0)
 | `wbp.cost_row` | `host, item, need, have, opts` | row or `nil` | Adds the game's `WBP_ItemAmount` row to `host`. Text `have/needx`, red when `have < need`. `opts.refund = true` shows `+N refund` in green. `opts.pc` = controller. |
 | `wbp.fmt_int` | `n` | string | `1595` -> `"1,595"`. |
 | `wbp.geometry_log` | `widget` | - | One line: desired size and cached geometry. Use it to check layout, not to size. |
-| `wbp.ship_hologram` | `shipId [, {ttl=30, force=false}]` | texture UObject, or `nil, why` | Primary. The ship's hologram texture (the game's `WBP_FleetShipEntry` render), cached 30 s, built lazily (one widget per ship). `why` = `pending` (retry on a later paint), `no ship`, `no class`, `no controller`, `bad id`, `off:...`. |
+| `wbp.ship_hologram` | `shipId [, {ttl=30, force=false}]` | texture UObject, or `nil, why` | Primary. The ship's hologram texture (the game's `WBP_FleetShipEntry` render), cached 30 s, built lazily (one widget per ship). `why` = `pending` (retry on a later paint), `no ship`, `no class`, `no controller`, `bad id`, `off:...`. Apply it to your brush immediately; see Ownership / lifetime. |
 | `wbp.hologram_texture` | `shipId [, opts]` | same | Alias of `wbp.ship_hologram`. |
 | `wbp.set_ship_hologram` | `img, shipId [, opts]` | `true`, or `false, why` | Convenience: `ship_hologram` + `SetBrushFromTexture` under pcall. Extra `why`: `bad image`, `SetBrush failed`. |
-| `wbp.item_icon` | `key` | texture, or `nil, why` | Primary item icon (see warp-docks.md). |
+| `wbp.item_icon` | `key` | texture, or `nil, why` | Primary item icon (see warp-docks.md). Apply it to your brush immediately; see Ownership / lifetime. |
 | `wbp.set_item_icon` | `img, key` | `true`, or `false, why` | Convenience wrapper. |
 | `wbp.Z` | - | `1` | Window Z. Keep it below 2. |
 
