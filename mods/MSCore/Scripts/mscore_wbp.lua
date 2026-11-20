@@ -558,9 +558,11 @@ function M.fleet_assign_caps() return C.fleet_assign and "ok" or "off:unverified
 -- dev capture only, sends nothing: hooks log the popup class + setup args when the user opens add-to-fleet once. Remove after the recipe is known.
 -- Do not call within ~10 s after a warp (same as the hologram code).
 function M.probe_fleet_popup()
-  local function cn(o)
+  local function cn(o)   -- a null object param still arrives as a wrapper: never call GetClass without IsValid
+    local okv, valid = pcall(function() return o:get():IsValid() end)
+    if not (okv and valid) then return "nil" end
     local s, v = pcall(function() return o:get():GetClass():GetFName():ToString() end)
-    return s and v or "nil"
+    return s and v or "?"
   end
   pcall(RegisterHook, "/Script/MainSequence.WidgetSubsystem:ShowPopup", function(self, wc, o1, o2)
     L("PROBE ShowPopup class=" .. cn(wc) .. " o1=" .. cn(o1) .. " o2=" .. cn(o2))
@@ -574,7 +576,8 @@ end
 do
   local src = debug.getinfo(1, "S").source:match("^@(.*[/\\])")
   local fh = src and io.open(src .. "../probe_fleet_popup.flag", "r")
-  if fh then fh:close(); pcall(M.probe_fleet_popup) end
+  -- arm in ONE Lua state only (every mod loads this file): the first state renames the flag, later states see none
+  if fh then fh:close(); if os.rename(src .. "../probe_fleet_popup.flag", src .. "../probe_fleet_popup.flag.armed") then pcall(M.probe_fleet_popup) end end
 end
 
 -- ---------------------------------------------------------------------------------------------
