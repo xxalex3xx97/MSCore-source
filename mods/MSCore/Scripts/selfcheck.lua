@@ -90,6 +90,30 @@ function M.run(MSCore)
         if tostring(why):find("^off:") then return "BROKEN", why end
         return "SKIP", tostring(why)
     end)
+    check("wbp.hologram ttl", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_stats) then return "BROKEN", "hologram_stats missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.hologram_texture(sh.id)
+        if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
+        local a = W.hologram_stats()
+        W.hologram_texture(sh.id)
+        local b = W.hologram_stats()
+        if b.reuses == a.reuses + 1 and b.renders == a.renders then return "OK", "reuse, renders=" .. b.renders end
+        return "BROKEN", "second call did not reuse"
+    end)
+    check("wbp.hologram refresh", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_stats) then return "BROKEN", "hologram_stats missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        if not W.hologram_texture(sh.id) then return "SKIP", "no picture yet" end
+        local a = W.hologram_stats()
+        local t, why = W.hologram_texture(sh.id, { force = true })
+        local b = W.hologram_stats()
+        if tostring(why):find("^off:") then return "BROKEN", why end
+        if b.renders == a.renders + 1 and b.created == a.created then return "OK", "re-rendered, no new widget" end
+        return "SKIP", "render budget/hold: " .. tostring(why)
+    end)
     check("blocks.contract", function()
         local B = MSCore.blocks
         if not (B and B.selftest and B.caps) then return "BROKEN", "blocks API missing in mscore_blocks" end

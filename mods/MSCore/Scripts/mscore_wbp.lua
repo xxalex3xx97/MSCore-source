@@ -158,7 +158,7 @@ end)
 -- ---------------------------------------------------------------------------------------------
 -- ship hologram: the game's WBP_FleetShipEntry renders a ship into e.ShipHologram; we hand out that texture.
 -- Own kill switch (hologram), separate from widgets. Warp safety: no build within 10 s of a game stall (FindAllOf / Create
--- crash after a warp or load), max one build per second, one entry per ship id, entries are never destroyed (reference dropped).
+-- crash after a warp or load), max C.holo_per_window renders per C.holo_window s (FIFO queue), one entry per ship id, entries are never destroyed (reference dropped).
 -- ---------------------------------------------------------------------------------------------
 -- Standalone (mod state, only mscore_wbp loaded, holo.core == nil): ships come from an own FindAllOf cache (max one per 5 s);
 -- no tick event exists there, so a gap > 8 s between calls (caller repaints ~1/s while pending) counts as a new open / stall => 3 s settle.
@@ -187,20 +187,41 @@ function M.hologram_disable(why)
   if holo.off then return end
   holo.off = tostring(why or "disabled"); compat("hologram=off:" .. holo.off .. " (runtime)")
 end
-local function hologram_texture_impl(id)
+-- timings live in mscore_contract (C.holo_ttl / holo_per_window / holo_window); these are only fallbacks
+local HOLO_TTL, HOLO_MAX, HOLO_WIN = (C and C.holo_ttl) or 30, (C and C.holo_per_window) or 2, (C and C.holo_window) or 0.25
+M.HOLO_TTL = HOLO_TTL
+holo.at, holo.queue, holo.winAt, holo.used = {}, {}, -math.huge, 0     -- render time per id, FIFO of ids waiting for budget, window start, renders in window
+holo.stats = { renders = 0, reuses = 0, created = 0, queued = 0 }
+function M.hologram_stats() local s = holo.stats; return { renders = s.renders, reuses = s.reuses, created = s.created, queued = s.queued } end
+-- pure: is a picture due (never rendered = age nil, force, or age >= ttl)
+function M.holo_due(age, ttl, force) return force == true or age == nil or age >= (ttl or HOLO_TTL) end
+-- pure: FIFO render budget. queue = list of ids (not modified); returns allowed, newQueue. id may render when fewer than `max`
+-- renders were used in this window and id is within the first (max - used) queued ids (older ids are served first). Deduped.
+function M.holo_take(queue, id, used, max)
+  local q, has = {}, false
+  for _, v in ipairs(queue) do q[#q + 1] = v; if v == id then has = true end end
+  if not has then q[#q + 1] = id end
+  for i = 1, math.min(max - used, #q) do
+    if q[i] == id then table.remove(q, i); return true, q end
+  end
+  return false, q
+end
+local function hologram_texture_impl(id, opts)
   if holo.off then return nil, "off:" .. holo.off end
   if type(id) ~= "number" then return nil, "bad id" end
-  local e = holo.ent[id]
-  if e then local t = holoTex(e); if t then return t end end
+  opts = opts or {}
   local now = os.clock()
+  -- standalone: no tick event, a gap > 8 s between calls = new open / stall => short settle
   if not holo.core and (not holo.lastCall or now - holo.lastCall > 8) then holo.hold = now + 3 end
   holo.lastCall = now
-  if now < holo.hold or now - holo.buildAt < 1 or (holo.miss[id] or 0) > now then return nil, "pending" end
-  local cls = M.widget("fleet_ship_entry")
-  if not ok(cls) then return nil, "no class" end
-  if not ok(holo.pc) then holo.pc = localCtl() end
-  local pc = holo.pc
-  if not ok(pc) then return nil, "no controller" end
+  local e, at = holo.ent[id], holo.at[id]
+  local tex = e and holoTex(e) or nil
+  local due = M.holo_due(at and now - at or nil, opts.ttl, opts.force)
+  if tex and not due then holo.stats.reuses = holo.stats.reuses + 1; return tex end
+  if e and at and not due then   -- rendered, texture not there yet
+    if now - at <= 5 then return nil, "pending" end
+  end
+  if now < holo.hold or (holo.miss[id] or 0) > now then return nil, "pending" end
   local alive, ship = {}, nil
   if holo.core and holo.core.ships then
     for _, s in ipairs(holo.core.ships.list()) do
@@ -213,16 +234,36 @@ local function hologram_texture_impl(id)
       if k == id then ship = o end
     end
   end
-  for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil end end   -- drop the reference, no Destroy
+  for k in pairs(holo.ent) do if not alive[k] then holo.ent[k] = nil; holo.at[k] = nil end end   -- drop the reference, no Destroy
+  for i = #holo.queue, 1, -1 do if not alive[holo.queue[i]] then table.remove(holo.queue, i) end end
   if not ok(ship) then holo.miss[id] = now + 5; return nil, "no ship" end
-  holo.buildAt = now
   if not e then
-    try("holo create", function() e = StaticFindObject(LIB):Create(pc, cls, pc) end)
+    local cls = M.widget("fleet_ship_entry")
+    if not ok(cls) then return nil, "no class" end
+    if not ok(holo.pc) then holo.pc = localCtl() end
+    if not ok(holo.pc) then return nil, "no controller" end
+  end
+  if now - holo.winAt >= HOLO_WIN then holo.winAt, holo.used = now, 0 end
+  local was = #holo.queue
+  local allowed, q = M.holo_take(holo.queue, id, holo.used, HOLO_MAX)
+  holo.queue = q
+  if not allowed then
+    if #q > was then holo.stats.queued = holo.stats.queued + 1 end
+    return nil, "pending"
+  end
+  holo.used = holo.used + 1
+  if not e then
+    try("holo create", function() e = StaticFindObject(LIB):Create(holo.pc, M.widget("fleet_ship_entry"), holo.pc) end)
     if not ok(e) then holo.miss[id] = now + 5; return nil, "pending" end
     holo.ent[id] = e
+    holo.stats.created = holo.stats.created + 1
   end
   try("holo SetShip", function() e:SetShip(ship) end)
-  return holoTex(e), "pending"
+  holo.at[id] = now
+  holo.stats.renders = holo.stats.renders + 1
+  tex = holoTex(e)
+  if tex then return tex end
+  return nil, "pending"
 end
 local function hg(f)
   return function(...)
@@ -232,10 +273,11 @@ local function hg(f)
     return table.unpack(r, 2, r.n)
   end
 end
+-- opts = { ttl = 30, force = false }
 M.hologram_texture = hg(hologram_texture_impl)
-function M.set_ship_hologram(img, id)
+function M.set_ship_hologram(img, id, opts)
   if not ok(img) then return false, "bad image" end
-  local tex, why = M.hologram_texture(id)
+  local tex, why = M.hologram_texture(id, opts)
   if not tex then return false, why end
   if not pcall(function() img:SetBrushFromTexture(tex, true) end) then return false, "SetBrush failed" end
   return true
@@ -249,9 +291,10 @@ end
 
 -- ---------------------------------------------------------------------------------------------
 -- item icons (works with mscore_wbp alone): item_icon(key) -> texture | nil, why ; set_item_icon(img, key) -> true | false, why.
--- key = item object name (e.g. ITEM_TitaniumOre). One FindAllOf builds the name map; a missing key refreshes it at most every 10 s.
+-- key = item object name (e.g. ITEM_TitaniumOre). One FindAllOf builds the name map; textures are kept for the session, a missing key refreshes the map at most every C.items_refresh (30) s.
 -- ---------------------------------------------------------------------------------------------
-local items = { off = nil, map = nil, at = -math.huge }
+local ITEMS_REFRESH = (C and C.items_refresh) or 30
+local items = { off = nil, map = nil, at = -math.huge, tex = {} }
 local function itemMap(force)
   if force or not items.map then
     local s, all = pcall(FindAllOf, C and C.item_class or "")
@@ -276,11 +319,12 @@ function M.items_caps() return items.off and ("off:" .. items.off) or "ok" end
 function M.item_icon(key)
   if items.off then return nil, "off:" .. items.off end
   local s, tex, why = pcall(function()
+    if live(items.tex[key]) then return items.tex[key] end
     local it = itemMap(false)[key]
-    if not it and os.clock() - items.at >= 10 then it = itemMap(true)[key] end
+    if not it and os.clock() - items.at >= ITEMS_REFRESH then it = itemMap(true)[key] end
     if not it then return nil, "no item " .. tostring(key) end
     local t = rd(it, "Icon")
-    if live(t) then return t end
+    if live(t) then items.tex[key] = t; return t end
     return nil, "no icon"
   end)
   if not s then M.items_disable("error: " .. tostring(tex)) return nil, "off:" .. items.off end

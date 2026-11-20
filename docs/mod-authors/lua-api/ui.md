@@ -22,9 +22,9 @@ Helpers for building simple UMG widgets: create objects, set text, convert colou
 | `ui.smallFont` | `tb, size` | - | Sets the font size of a text block. Logs one failure line at most. |
 | `ui.hadd` | `hb, w` | - | Adds `w` to a horizontal box with 4 px left and right padding. |
 
-Mods run in their own Lua state and load only `mscore_wbp` (`local WBP = require "mscore_wbp"`, package.path = `<Mods>/MSCore/Scripts/?.lua`), never `mscore.lua`. Call `WBP.set_ship_hologram(img, shipId)` and `WBP.set_item_icon(img, key)` directly; `MSCore.wbp.*` and `MSCore.items.*` are aliases inside MSCore's own state. Standalone, the ship is found by an own `FindAllOf` cache (at most one per 5 s) and a gap of more than 8 s between calls counts as a stall (3 s settle).
+Mods run in their own Lua state and load only `mscore_wbp` (`local WBP = require "mscore_wbp"`, package.path = `<Mods>/MSCore/Scripts/?.lua`), never `mscore.lua`. Call `WBP.set_ship_hologram(img, shipId [, {ttl=30, force=false}])` and `WBP.set_item_icon(img, key)` directly; `MSCore.wbp.*` and `MSCore.items.*` are aliases inside MSCore's own state. Standalone, the ship is found by an own `FindAllOf` cache (at most one per 5 s) and a gap of more than 8 s between calls counts as a stall (3 s settle).
 
-Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most one build per second. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
+Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most `holo_per_window` (2) renders per `holo_window` (0.25 s), extra ships wait in a FIFO queue (`pending`). Refresh: a picture lives `holo_ttl` = 30 s (mscore_contract.lua); a call with an older (or never rendered) ship calls `SetShip` again on the existing hidden widget (no new widget, no FindAllOf), a younger one reuses the texture. `WBP.hologram_stats()` returns `{renders, reuses, created, queued}`. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
 
 ## Example
 
@@ -55,8 +55,8 @@ local red = MSCore.ui.rgba(255, 0, 0)
 | `wbp.cost_row` | `host, item, need, have, opts` | row or `nil` | Adds the game's `WBP_ItemAmount` row to `host`. Text `have/needx`, red when `have < need`. `opts.refund = true` shows `+N refund` in green. `opts.pc` = controller. |
 | `wbp.fmt_int` | `n` | string | `1595` -> `"1,595"`. |
 | `wbp.geometry_log` | `widget` | - | One line: desired size and cached geometry. Use it to check layout, not to size. |
-| `wbp.set_ship_hologram` | `img, shipId` | `true`, or `false, why` | Sets the Image `img` brush to the ship's hologram texture (the game's `WBP_FleetShipEntry` render). `why` = `pending` (retry on a later tick), `no ship`, `no class`, `no controller`, `bad image`, `off:...`. |
-| `wbp.hologram_texture` | `shipId` | texture, or `nil, why` | The hologram texture of a ship, built lazily (one widget per ship). Same `why` values. |
+| `wbp.set_ship_hologram` | `img, shipId [, {ttl=30, force=false}]` | `true`, or `false, why` | Sets the Image `img` brush to the ship's hologram texture (the game's `WBP_FleetShipEntry` render). `why` = `pending` (retry on a later tick), `no ship`, `no class`, `no controller`, `bad image`, `off:...`. |
+| `wbp.hologram_texture` | `shipId [, opts]` | texture, or `nil, why` | The hologram texture of a ship, built lazily (one widget per ship). Same `why` values. |
 | `wbp.Z` | - | `1` | Window Z. Keep it below 2. |
 
 ## Example

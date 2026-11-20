@@ -6,7 +6,7 @@ nav_order: 6
 # Changelog
 
 ## Unreleased
-- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): set_ship_hologram / hologram_texture, caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
+- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): set_ship_hologram / hologram_texture (picture refreshed after 30 s ttl or force, 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 
 ## 0.8.14 - Game update 2026-11-20 + pause query
