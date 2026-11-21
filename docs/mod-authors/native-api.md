@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 16.** `MSCore_api()` returns `16`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section). Version 16 added the rock registry exports `MSCore_rockreg_*` (API 16 section).
+**Native API version: 17.** `MSCore_api()` returns `17`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section). Version 16 added the rock registry exports `MSCore_rockreg_*` (API 16 section). Version 17 added `MSCore_ship_caps` (API 17 section).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`16`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`17`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -198,6 +198,14 @@ Call from the game thread (`MSCore_ship_mining_caps` reads game objects). `MSCor
 |---|---|---|---|
 | `MSCore_ship_mining_caps` | `void* ship` | `int` bitmask: `1` MiningLaser present, `2` ItemScooper present, `0` readable with no mining weapon, `-1` unknown, `-2` ships module off, `-1` also on exception | Reads `DMSPlayerShipObject.Weapons` and matches each weapon's class name (`MiningLaser`, `ItemScooper`). `-1` unknown: ship null or dead, array unreadable, count outside 0..100000, or a native fault (logged once). An empty readable array is `0`, not `-1`. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_weapons.hpp`. Native API 15. |
 | `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, any other value (`-1` unknown) = unknown. `read 1`: bad = 0, listed. Unknown: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
+
+## API 17: ship caps
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_caps` | `void* ship` | `int` bitmask | Bits: `1` MiningLaser, `2` ItemScooper, `4` attack weapon (Cannon, Lance, Missile), `8` auto defence (Turret names, never armed), `16` tractor. `32` reserved (cargo, always 0 for now). `0` readable with no weapon, `-1` unknown, `-2` ships module off. Source `cpp\MSCore\msc_wclass.hpp`. Selfcheck `ships.ship_caps`. |
+
+`MSCore_ship_mining_caps` keeps its API 15 contract (0..3).
 
 ## API 16: rock registry (0.8.15)
 

@@ -86,7 +86,7 @@ MSCore.require(1)
 | `MSCore.native.version()` | Native version string. |
 | `MSCore.native.check(name)` | Read-only world check. Returns `ok, detail`. |
 | `MSCore.native.pin_ensure()` | Call every tick until it returns `true`. |
-| `MSCore_api()` (C) | Returns `15`. Check before other exports. |
+| `MSCore_api()` (C) | Returns `17`. Check before other exports. |
 | `MSCore_ship_mining_caps(ship)` (C) | Mining bits: `1` laser, `2` scooper, `0` none, `-1` unknown, `-2` module off. API 15. |
 | `MSCore_presence_step(bad_n, listed, read, bad_out)` (C) | Pure debounce for ship presence (3 absent reads to drop). API 15. |
 | `MSCore.factory_native.add_block(station, classPath, x, y, h, rot)` | Adds one station block (0.8.0, Lua only). Returns `true` or `nil, err`. |
