@@ -413,8 +413,64 @@ static void t_review()
     CHECK(e.empty());
 }
 
+// round 3: a reseed that corrects a row moves it in the grid, pass verdict, kill gate, cache retry backoff
+static void t_round3()
+{
+    RrTable t;
+    const double o[3] = {0, 0, 0}, far[3] = {5000, 0, 0};
+    rr_add(t, 1, 7, 0, 0, 0);
+    rr_add(t, 2, 7, 100, 0, 0);
+    std::vector<size_t> v;
+    CHECK(t.within(7, o, 10.0, v) == 1);
+    // stale cache row corrected by the save: other cell, same system
+    rr_add(t, 1, 7, 5000, 0, 0);
+    CHECK(t.rocks.size() == 2 && t.alive_count() == 2);
+    v.clear();
+    CHECK(t.within(7, o, 10.0, v) == 0);                       // not at the old place any more
+    v.clear();
+    CHECK(t.within(7, far, 10.0, v) == 1 && t.rocks[v[0]].id == 1);
+    std::vector<std::pair<double, size_t>> nn;
+    CHECK(t.nearest_n(7, -1, far, nullptr, 100.0, 5, nn) == 1 && t.rocks[nn[0].second].id == 1);
+    double sm = 0;
+    const size_t bs = t.nearest_surface(7, far, 0.0, sm);
+    CHECK(bs != RrTable::npos && t.rocks[bs].id == 1);
+    // other system
+    rr_add(t, 1, 8, 5000, 0, 0);
+    v.clear();
+    CHECK(t.within(7, far, 10.0, v) == 0);
+    CHECK(t.within(8, far, 10.0, v) == 1);
+    const double lo[3] = {-1e30, -1e30, -1e30}, hi[3] = {1e30, 1e30, 1e30};
+    size_t n7 = 0, n8 = 0;
+    t.for_box(7, lo, hi, [&](size_t) { ++n7; });   // system list scan: only rock 2 is listed in system 7
+    t.for_box(8, lo, hi, [&](size_t) { ++n8; });
+    CHECK(n7 == 1 && n8 == 1);
+    // moved inside the same cell: one entry only
+    rr_add(t, 2, 7, 120, 0, 0);
+    v.clear();
+    CHECK(t.within(7, o, 1000.0, v) == 1 && t.rocks[v[0]].c[0] == 120.0);
+    // version changes on a move
+    const uint64_t v0 = t.version;
+    rr_add(t, 2, 7, 4000, 0, 0);
+    CHECK(t.version > v0);
+
+    // pass verdict
+    CHECK(rr_pass_verdict(100, 100, 0, 3) == RPV_OK && rr_pass_verdict(0, 0, 0, 3) == RPV_OK);
+    CHECK(rr_pass_verdict(10, 100, 0, 3) == RPV_RETRY && rr_pass_verdict(10, 100, 2, 3) == RPV_RETRY);
+    CHECK(rr_pass_verdict(10, 100, 3, 3) == RPV_INCOMPLETE);   // accepted, but no kill / no cache write (game side)
+    CHECK(rr_pass_verdict(60, 100, 3, 3) == RPV_OK);
+
+    // kill gate
+    CHECK(!rr_kill_allowed(false, 100, 4) && !rr_kill_allowed(true, 3, 4) && rr_kill_allowed(true, 4, 4) && rr_kill_allowed(true, 99, 4));
+
+    // cache write retry backoff: 5 min doubling, at most 1 h
+    CHECK(rr_cache_retry_ms(0) == 0 && rr_cache_retry_ms(1) == 300000 && rr_cache_retry_ms(2) == 600000 && rr_cache_retry_ms(3) == 1200000);
+    CHECK(rr_cache_retry_ms(5) == 3600000 && rr_cache_retry_ms(1000) == 3600000);
+    for (unsigned f = 1; f < 30; ++f) CHECK(rr_cache_retry_ms(f + 1) >= rr_cache_retry_ms(f));
+}
+
 int main()
 {
+    t_round3();
     t_review();
     t_bad_bounds();
     t_table();

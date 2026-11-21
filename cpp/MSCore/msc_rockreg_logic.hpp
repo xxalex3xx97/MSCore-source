@@ -217,6 +217,22 @@ namespace
             {
                 RrRock& r = rocks[it->second];
                 if (!r.alive) { r.alive = true; ++alive_n_; ++version; }
+                // WHY: a reseed can correct a stale (cached) row: a changed system or cell moves the grid and system list entries, so queries find it at the new place
+                const RrCell ok = cell_key(r.sys, r.c), nk = cell_key(sys, c);
+                if (!(ok == nk) || r.sys != sys)
+                {
+                    auto& oc = grid_[ok];
+                    oc.erase(std::remove(oc.begin(), oc.end(), it->second), oc.end());
+                    grid_[nk].push_back(it->second);
+                    if (r.sys != sys)
+                    {
+                        auto& ol = sys_list_[r.sys];
+                        ol.erase(std::remove(ol.begin(), ol.end(), it->second), ol.end());
+                        sys_list_[sys].push_back(it->second);
+                        r.sys = sys;
+                    }
+                    ++version;
+                }
                 std::copy(c, c + 3, r.c);
                 if (ore) std::copy(ore, ore + 4, r.ore);
                 return it->second;
@@ -494,6 +510,27 @@ namespace
     // WHAT: sanity guard of a finished seed pass. live_n = live saves the pass saw, ref = alive rocks known before it (table / cache). A pass that saw
     //       fewer than half of them is incomplete (world not fully loaded): no mass kill, no cache write, retry later. ref 0 = first pass: sane.
     inline bool rr_seed_sane(size_t live_n, size_t ref) { return ref == 0 || live_n * 2 >= ref; }
+
+    // WHAT: result of a finished seed pass: OK (kill the unseen rocks, cache may be written), RETRY (incomplete, rows kept, redo after a wait) or INCOMPLETE
+    //       (still incomplete after max_retry retries: accepted, but NOTHING is killed and the cache is not written: absent rocks are not confirmed).
+    enum RrPassVerdict { RPV_OK = 0, RPV_RETRY = 1, RPV_INCOMPLETE = 2 };
+    inline RrPassVerdict rr_pass_verdict(size_t live_n, size_t ref, int insane_n, int max_retry)
+    {
+        if (rr_seed_sane(live_n, ref)) return RPV_OK;
+        return insane_n < max_retry ? RPV_RETRY : RPV_INCOMPLETE;
+    }
+
+    // WHAT: true when a failed alive check may kill a rock: the world read was OK for need consecutive ticks (ok_ticks) and the world is ok.
+    inline bool rr_kill_allowed(bool world_ok, int ok_ticks, int need) { return world_ok && ok_ticks >= need; }
+
+    // WHAT: wait (ms) before the next cache write try after fails failures in a row: 5 min, doubling, at most 1 h. 0 fails = 0.
+    inline uint64_t rr_cache_retry_ms(unsigned fails)
+    {
+        if (fails == 0) return 0;
+        const unsigned sh = fails > 6 ? 6 : fails - 1;
+        const uint64_t v = 300000ull << sh;
+        return v > 3600000ull ? 3600000ull : v;
+    }
 
     // WHAT: wait (ms) before a rock whose radius read failed is tried again: 500 ms doubling per failure, at most 60 s.
     inline uint64_t rr_rad_backoff_ms(unsigned fails)

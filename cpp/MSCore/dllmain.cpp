@@ -1824,6 +1824,8 @@ extern "C"
         return rr_run([&] {
             double mm = 0.0;
             if (!p || !out || n <= 0 || !rr_ok3(p) || !rr_len(max_m, mm) || !(mm > 0.0)) return 0;
+            n = std::min(n, RR_NEAREST_MAX_N);
+            nskip = std::min(nskip, RR_SKIP_MAX);
             const RrState& s = rr_st();
             int16_t want = -1;
             if (item)
@@ -1832,9 +1834,10 @@ extern "C"
                 if (k < 0) return 0;
                 want = static_cast<int16_t>(k);
             }
-            std::set<int> skip;
+            static std::set<int> skip;   // game thread only: scratch reused across calls
+            static std::vector<std::pair<double, size_t>> rows;
+            skip.clear();
             if (skip_ids) for (int i = 0; i < nskip; ++i) skip.insert(skip_ids[i]);
-            std::vector<std::pair<double, size_t>> rows;
             s.tab.nearest_n(sys, want, p, skip.empty() ? nullptr : &skip, mm, static_cast<size_t>(n), rows);
             for (size_t k = 0; k < rows.size(); ++k)
             {

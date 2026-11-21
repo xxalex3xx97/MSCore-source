@@ -71,7 +71,9 @@ namespace
     constexpr size_t RR_RAD_SEG_TICK = 40;              // GetRadius reads per tick for approach segment rocks
     constexpr size_t RR_MASS_DEAD = 500;                // bound saves deleted in one drain = world change
     constexpr size_t RR_DEAD_CAP = 65536;               // delete queue cap; above it the queue is cleared and flagged (world change)
-    constexpr size_t RR_CHECK_MAX_N = 100;              // check report rows (max)
+    constexpr size_t RR_CHECK_MAX_N = 64;               // check report rows (max)
+    constexpr int RR_NEAREST_MAX_N = 64;                // MSCore_rockreg_nearest_n: rocks returned (max)
+    constexpr int RR_SKIP_MAX = 256;                    // MSCore_rockreg_nearest_n: skip ids used (max; the rest is ignored)
     constexpr int RR_MAX_FEED_N = 100000;               // sanity cap on a feed array
     constexpr double RR_COORD_MAX = 1.0e12;             // largest |coordinate| or length (m) accepted from a caller (cell indexes stay far inside int64)
 
@@ -207,6 +209,10 @@ namespace
         int cache_verdict = -1;            // verdict of the cache sample (RrCacheVerdict), -1 = not decided; kept until a pass finishes, so an aborted pass re-applies it
         size_t prev_alive = 0;             // alive rocks known when the running pass began (table + cache): the sanity reference
         int insane_n = 0;                  // consecutive passes rejected by rr_seed_sane
+        int rd_ok_ticks = 0;               // consecutive ticks whose world probe read the player; kills need RR_NOWORLD_TICKS of them
+        unsigned cache_fail_n = 0;         // cache write failures in a row
+        ULONGLONG cache_retry_at = 0;      // no cache write before this GetTickCount64 (backoff after a failure)
+        std::set<std::string> cache_fail_logged;   // failure kinds already logged
         std::vector<uint8_t> rad_fail;     // per rock index: failed GetRadius reads in a row
         std::vector<ULONGLONG> rad_next;   // per rock index: earliest next GetRadius try (GetTickCount64)
         ULONGLONG seed_ms = 0, self_ms = 0, stats_ms = 0, slow_ms = 0, sys_ms = 0, trig_ms = 0, last_tick_ms = 0;
@@ -359,7 +365,14 @@ namespace
         const double loc[3] = {static_cast<double>(raw[0]), static_cast<double>(raw[1]), static_cast<double>(raw[2])};
         double c[3] = {0, 0, 0};
         rr_abs_m(ch, loc, RR_RAW_PER_M, c);
-        const bool fresh = s.tab.index_of(id) == RrTable::npos || !s.tab.rocks[s.tab.index_of(id)].alive;
+        // changed = new, revived, or a known row the save corrects (system, position, ore): a corrected cache must be rewritten
+        const size_t old = s.tab.index_of(id);
+        bool fresh = old == RrTable::npos || !s.tab.rocks[old].alive;
+        if (!fresh)
+        {
+            const RrRock& r = s.tab.rocks[old];
+            fresh = r.sys != sys || !rr_same_pos(r.c, c) || std::memcmp(r.ore, ore, sizeof ore) != 0;
+        }
         const size_t i = s.tab.add(id, sys, c, ore);
         rr_side(s, i);
         s.tab.rocks[i].unverified = false;
@@ -549,6 +562,8 @@ namespace
 
     // WHAT: one-shot sample check of a loaded cache: the unverified rocks nearest to the ships and as many random ones are read (position, ore
     //       names) and compared with the table. rr_cache_verdict decides: trust, merge (new reads only) or reseed (all cache rocks re-read).
+    // ponytail: one call scans the rock table once (cand) and reads at most 2 * RR_CACHE_SAMPLE_N = 100 saves; it runs once per session, so it is not
+    //           resumed across ticks. Ceiling: a table of ~1M rocks makes that one scan a visible hitch; then split the cand scan over ticks.
     void rr_sample_stage(RrState& s)
     {
         s.sample_done = true;   // cache_pending stays set until a pass FINISHES: an aborted pass runs this stage again
@@ -633,21 +648,29 @@ namespace
     void rr_seed_finish(RrState& s)
     {
         s.seeding = false;
-        // sanity: a pass that saw fewer than half of the rocks known before it (world not fully loaded) is incomplete: nothing is killed, the cache is
-        // not touched, the pass is retried after RR_EMPTY_RETRY_MS. Three incomplete passes in a row are accepted (the world really shrank).
-        if (!rr_seed_sane(s.live_n, s.prev_alive) && s.insane_n < 3)
+        // sanity (rr_pass_verdict): a pass that saw fewer than half of the rocks known before it (world not fully loaded) is incomplete: the partial 'seen'
+        // marks are discarded, nothing is killed, the cache is not touched, the pass is retried after RR_EMPTY_RETRY_MS. After 3 incomplete tries the pass
+        // is accepted as INCOMPLETE: it still kills NOTHING and writes NO cache (absent rocks are not confirmed absent; the delete listener and the 2 km
+        // validation remove the dead ones over time).
+        const RrPassVerdict pv = rr_pass_verdict(s.live_n, s.prev_alive, s.insane_n, 3);
+        if (pv == RPV_RETRY)
         {
             ++s.insane_n;
             msc_log(STR("RR seed incomplete saves=") + std::to_wstring(s.live_n) + STR(" known=") + std::to_wstring(s.prev_alive) + STR(" try=") +
                     std::to_wstring(s.insane_n) + STR(" (nothing killed, no cache write, retry)"));
+            std::fill(s.seen.begin(), s.seen.end(), 0);
             s.world_wait = true;
             s.seed_ms = GetTickCount64();
             rr_seed_release(s);
             return;
         }
+        const bool incomplete = pv == RPV_INCOMPLETE;
+        if (incomplete) msc_log(STR("RR seed accepted as incomplete saves=") + std::to_wstring(s.live_n) + STR(" known=") + std::to_wstring(s.prev_alive) + STR(" (nothing killed, no cache write)"));
+        const bool force_write = s.cache_verdict == RCV_RESEED;   // a reseed replaced the cached rows: the file is rewritten
+        s.cache_verdict = -1;
         s.insane_n = 0;
         s.cache_pending = false;
-        const size_t gone = s.live_n ? rr_kill_unseen(s.tab, s.seen, s.pass, s.ticks) : 0;
+        const size_t gone = (s.live_n && !incomplete) ? rr_kill_unseen(s.tab, s.seen, s.pass, s.ticks) : 0;
         s.tab.zones_ready(s.pass);
         s.self_due = true;
         const size_t alive_n = rr_alive_count(s);
@@ -655,7 +678,8 @@ namespace
         msc_log(STR("RR seed done n=") + std::to_wstring(alive_n) + STR(" saves=") + std::to_wstring(s.live_n) + STR(" new=") +
                 std::to_wstring(s.changed) + STR(" gone=") + std::to_wstring(gone) + STR(" pass=") + std::to_wstring(s.pass) + STR(" ms=") +
                 std::to_wstring(GetTickCount64() - s.seed_ms));
-        if (alive_n > 0 && (!s.cache_ok || static_cast<double>(changed) > RR_CACHE_CHANGE_FRAC * static_cast<double>(alive_n)))
+        if (alive_n > 0 && !incomplete && GetTickCount64() >= s.cache_retry_at &&
+            (!s.cache_ok || force_write || static_cast<double>(changed) > RR_CACHE_CHANGE_FRAC * static_cast<double>(alive_n)))
         {
             // the writer runs over the next ticks (rr_cache_write_step): tmp file, placeholder header, records
             RrCacheWrite& w = s.cw;
@@ -663,7 +687,7 @@ namespace
             w.tmp = w.dst;
             w.tmp += L".tmp";
             if (_wfopen_s(&w.f, w.tmp.c_str(), L"wb") != 0) w.f = nullptr;
-            if (!w.f) msc_log(STR("RR cache write: cannot open the temp file"));
+            if (!w.f) rr_cache_fail(s, "open");
             else
             {
                 uint8_t z[RR_CACHE_HDR] = {0};
@@ -689,8 +713,17 @@ namespace
         w.buf.clear();
     }
 
-    // WHAT: writer abort: closes and removes the temp file; the old cache (if any) stays.
-    void rr_cache_write_abort(RrState& s, const char* why)
+    // WHAT: a cache write failed (kind = open | I/O): backoff before the next try (rr_cache_retry_ms), the kind is logged once per session.
+    void rr_cache_fail(RrState& s, const char* kind)
+    {
+        ++s.cache_fail_n;
+        s.cache_retry_at = GetTickCount64() + rr_cache_retry_ms(s.cache_fail_n);
+        if (s.cache_fail_logged.insert(kind).second)
+            msc_log(STR("RR cache write failed: ") + rr_w(kind) + STR(" (next try in ") + std::to_wstring(rr_cache_retry_ms(s.cache_fail_n) / 1000) + STR(" s, doubling up to 1 h)"));
+    }
+
+    // WHAT: writer abort: closes and removes the temp file; the old cache (if any) stays. fail = false for an abort that is not a failure (world changed).
+    void rr_cache_write_abort(RrState& s, const char* why, bool fail = true)
     {
         RrCacheWrite& w = s.cw;
         if (w.f) std::fclose(w.f);
@@ -698,7 +731,7 @@ namespace
         w.on = false;
         std::error_code ec;
         std::filesystem::remove(w.tmp, ec);
-        msc_log(STR("RR cache write failed: ") + rr_w(why));
+        if (fail) rr_cache_fail(s, why);
     }
 
     // WHAT: writer: the tail (ore names, header with the checksum, close, rename). Run when every rock has been written.
@@ -724,6 +757,8 @@ namespace
         if (!closed) throw std::runtime_error("close");
         std::filesystem::rename(w.tmp, w.dst);
         s.cache_ok = true;
+        s.cache_fail_n = 0;
+        s.cache_retry_at = 0;
         msc_log(STR("RR cache written rocks=") + std::to_wstring(w.rock_n) + STR(" saves=") + std::to_wstring(w.save_n) + STR(" names=") +
                 std::to_wstring(s.tab.kinds.size()) + STR(" ms=") + std::to_wstring(GetTickCount64() - w.t_begin));
     }
@@ -795,7 +830,7 @@ namespace
     }
 
     // WHAT: targeted rocks: the merged targets of every feed become the registry's targeted set; a targeted rock whose save object is gone is killed.
-    void rr_target_stage(RrState& s)
+    void rr_target_stage(RrState& s, bool may_kill)
     {
         std::set<int> want(s.targets.begin(), s.targets.end());
         std::vector<int> drop;
@@ -806,14 +841,14 @@ namespace
         {
             const size_t i = s.tab.index_of(id);
             if (i == RrTable::npos || !s.tab.rocks[i].alive || i >= s.save.size() || !s.save[i]) continue;
-            if (!alive_seh(s.save[i])) { s.tab.kill(id, s.ticks); rr_bind(s, i, nullptr); }
+            if (!alive_seh(s.save[i])) { if (may_kill) s.tab.kill(id, s.ticks); rr_bind(s, i, nullptr); }
         }
     }
 
     // WHAT: GetRadius of the rocks near a ship, near an approach segment or targeted: at most RR_RAD_SEG_TICK + RR_RAD_TICK reads per tick for ALL ships
     //       together, and the loop stops when the tick budget is spent. A read that fails is NOT stored (the radius stays unknown); that rock is tried
     //       again after rr_rad_backoff_ms. ponytail: rocks in backoff still occupy candidate slots (4 x the read cap), so 200 permanently failing rocks near a ship could starve others.
-    void rr_radius_stage(RrState& s, const std::vector<MsRegShip>& ships, ULONGLONG now)
+    void rr_radius_stage(RrState& s, const std::vector<MsRegShip>& ships, ULONGLONG now, bool may_kill)
     {
         constexpr size_t CAP = RR_RAD_SEG_TICK + RR_RAD_TICK;
         constexpr size_t GATHER = CAP * 4;
@@ -835,7 +870,7 @@ namespace
             UObject* sv = s.save[i];
             if (!sv) continue;   // not bound yet
             if (now < s.rad_next[i]) continue;   // in backoff
-            if (!alive_seh(sv)) { s.tab.kill(s.tab.rocks[i].id, s.ticks); rr_bind(s, i, nullptr); continue; }
+            if (!alive_seh(sv)) { if (may_kill) s.tab.kill(s.tab.rocks[i].id, s.ticks); rr_bind(s, i, nullptr); continue; }
             ++reads;
             int64_t rad = 0;
             if (call_pnum(sv, STR("GetRadius"), rad))
@@ -852,7 +887,8 @@ namespace
     }
 
     // WHAT: validation of the save objects of the rocks within RR_NEAR_M of a ship, RR_VALID_TICK per tick (rotating).
-    void rr_validate_stage(RrState& s, const std::vector<MsRegShip>& ships)
+    // may_kill = the world read has been OK for RR_NOWORLD_TICKS ticks in a row (rr_kill_allowed); otherwise a failed check only clears the pointer.
+    void rr_validate_stage(RrState& s, const std::vector<MsRegShip>& ships, bool may_kill)
     {
         std::vector<size_t> cand;
         for (const MsRegShip& sh : ships) s.tab.within(sh.sys, sh.p, RR_NEAR_M, cand);
@@ -866,7 +902,7 @@ namespace
             if (!s.tab.rocks[i].alive) continue;
             ++n;
             last = i + 1;
-            if (i < s.save.size() && s.save[i] && !alive_seh(s.save[i])) { s.tab.kill(s.tab.rocks[i].id, s.ticks); rr_bind(s, i, nullptr); }
+            if (i < s.save.size() && s.save[i] && !alive_seh(s.save[i])) { if (may_kill) s.tab.kill(s.tab.rocks[i].id, s.ticks); rr_bind(s, i, nullptr); }
         }
         s.valid_cur = limited ? last : 0;
     }
@@ -1063,7 +1099,7 @@ namespace
     //       writes the cache again; an emptied table is never written: rr_seed_finish needs alive rocks).
     void rr_world_reset(RrState& s)
     {
-        if (s.cw.on) rr_cache_write_abort(s, "world changed");
+        if (s.cw.on) rr_cache_write_abort(s, "world changed", false);
         rr_seed_abort(s);
         rr_seed_unbind(s);
         s.tab.clear();
@@ -1102,6 +1138,8 @@ namespace
         const RrWorldEv we = rr_world_step(s.wt, rd ? wc.id : 0, RR_NOWORLD_TICKS);
         if (rd) s.world_sys = wc.sys;   // a warp only updates the system: pointers stay bound
         s.world_ok = s.wt.ok;
+        if (rd) { if (s.rd_ok_ticks < 1000) ++s.rd_ok_ticks; } else s.rd_ok_ticks = 0;
+        const bool may_kill = rr_kill_allowed(s.world_ok, s.rd_ok_ticks, RR_NOWORLD_TICKS);   // a failing / unknown world probe never kills
         const bool mass = overflow || hit.size() > RR_MASS_DEAD;
         const bool world_bad = we != RWE_NONE || !s.world_ok || mass;
         if (we != RWE_NONE)
@@ -1123,7 +1161,7 @@ namespace
             for (size_t i : hit)   // the save object is gone: the rock is gone
             {
                 if (i < s.save.size() && s.save[i]) { s.save_at.erase(s.save[i]); s.save[i] = nullptr; }
-                if (s.tab.rocks[i].alive && !world_bad && !s.world_wait) s.tab.kill(s.tab.rocks[i].id, s.ticks);   // unreadable world: only clear the pointer
+                if (s.tab.rocks[i].alive && !world_bad && !s.world_wait && may_kill) s.tab.kill(s.tab.rocks[i].id, s.ticks);   // unreadable world: only clear the pointer
             }
         }
         if (world_bad)
@@ -1132,7 +1170,7 @@ namespace
             s.seed_ms = now;
             s.world_wait = true;
         }
-        if (!world_bad && !s.world_wait) rr_target_stage(s);
+        if (!world_bad && !s.world_wait) rr_target_stage(s, may_kill);
         // seed triggers, no ship needed: first tick, 10 min refresh, world loaded / incomplete pass (after RR_EMPTY_RETRY_MS), no alive rock (retry every 5 s),
         // a ship in a system no pass covered (also restarts a running pass)
         if (now - s.trig_ms >= RR_TRIG_MS)
@@ -1176,8 +1214,8 @@ namespace
         }
         LARGE_INTEGER t1;
         QueryPerformanceCounter(&t1);
-        if (!rr_over_budget(rr_perf_ms(t1))) rr_validate_stage(s, ships);
-        if (!world_bad && !s.world_wait && !rr_over_budget(rr_perf_ms(t1))) rr_radius_stage(s, ships, now);
+        if (!rr_over_budget(rr_perf_ms(t1))) rr_validate_stage(s, ships, may_kill);
+        if (!world_bad && !s.world_wait && !rr_over_budget(rr_perf_ms(t1))) rr_radius_stage(s, ships, now, may_kill);
         if (!s.cw.on)
         {
             if (!rr_over_budget(rr_perf_ms(t1))) rr_self_stage(s);
