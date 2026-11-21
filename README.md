@@ -55,8 +55,8 @@ Close the game before every manager action (it refuses while the game runs).
 `Add mod...` examples (any repo with a release that has `manifest.txt`):
 
 ```text
-xxalex3xx97/MSMiningUnit
-https://github.com/xxalex3xx97/MSMiningUnit
+xxalex3xx97/MiningBenchMod
+https://github.com/xxalex3xx97/MiningBenchMod
 ```
 
 The manager tells you to add `<ModName> : 1` to `ue4ss\Mods\mods.txt` when the mod zip has no `enabled.txt`.
@@ -143,7 +143,7 @@ typedef int (*MSCore_throttle_fn)(int, int, wchar_t*, int);
 
 HMODULE h = LoadLibraryW(dll_path);   // path to MSCore\dlls\main.dll
 auto api = reinterpret_cast<MSCore_api_fn>(GetProcAddress(h, "MSCore_api"));
-if (!api || api() < 16) return false;   // stop when missing or too old
+if (!api || api() < 10) return false;   // stop when missing or too old (MSCore_throttle is API 10)
 
 auto throttle = reinterpret_cast<MSCore_throttle_fn>(GetProcAddress(h, "MSCore_throttle"));
 wchar_t err[256] = {0};
