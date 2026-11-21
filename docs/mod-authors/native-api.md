@@ -122,33 +122,6 @@ Notes:
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
 | `MSCore_ship_shields` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Shield in whole units (raw PNum Value / 65536, floored). `cur` / `max` get `-1` when unreadable. Reads `Shields` / `MaxShields` PNum first, `GetShields` / `GetMaxShields` double when the PNum is missing. Negative or NaN = unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. |
-| `MSCore_ship_hull` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Hull in whole units from `GetCurrentHull` / `GetTotalHull` (int). `cur` / `max` get `-1` when unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. Native API 14. |
-
-## API 11: repair
-
-| Export | Signature | Returns | Notes |
-|---|---|---|---|
-| `MSCore_ship_repair` | `int sid, int count, int creative, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Sends the game's `RepairFrameInputCommand` (`CreateInputRepair(count, bCreative)`, receiver = ship id) through `AddInputCommand`. `creative` non-zero = free (no repair items used). One item heals 10 Health. Kill switch: `module_disable("repair")`. Source `cpp\MSCore\msc_repair.hpp`. |
-| `MSCore_ship_repair_need` | `int sid` | `int` (`>0` items needed, `0` full hull, `-1` unreadable or exception, `-2` repair module off) | `ceil((GetTotalHull - GetCurrentHull) / 10)`. |
-
-## API 12: station names
-
-| Export | Signature | Returns | Notes |
-|---|---|---|---|
-| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
-
-## API 14: ship hull (0.8.15)
-
-| Export | Signature | Returns | Notes |
-|---|---|---|---|
-| `MSCore_ship_hull` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none, `-2` ships module off, `-1` exception | See the `MSCore_ship_hull` row in the table above. |
-
-## API 13: fleets
-
-| Export | Signature | Returns | Notes |
-|---|---|---|---|
-| `MSCore_fleet_tags` | `MsFleetTag* out, int max, int max_age_ms` | `int` (`n` tags, `-2` fleets module off, `-1` fault) | `MsFleetTag { int32 id; int32 parent; wchar_t name[96]; }` (200 B). Cached 3 s. Kill switch `module_disable("fleets")`. Source `cpp\MSCore\msc_fleets.hpp`. |
-| `MSCore_fleet_ships` | `MsFleetShip* out, int max, int max_age_ms` | `int` (`n` ships, `-2` fleets module off, `-1` fault) | `MsFleetShip { int32 ship; int32 count; int32 total; int32 pad; int32 tags[8]; }` (48 B). Cached 3 s. Same kill switch and source. |
 
 ## API 10: flight (0.8.13)
 
@@ -188,6 +161,32 @@ Notes:
 | 256 | lp_frac | double | POWER | `FlightModel.MaxLowPowerSpeed` (fraction) |
 
 Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_POSE (ch, loc_raw, quat), 16 AUTOPILOT (`bAutopilot` true), 32 DOCK_AP (`bDockingAutopilot` true), 64 TRAVELLING (`bTravelling` true), 128 GRID, 256 LP_KNOWN, 512 LP_ON, 1024 LP_LIMITS, 2048 THROTTLE, 4096 STEPS, 8192 COLL (`CollisionRadius` > 0). The three bool bits are set only when true, so a false bool and an unreadable bool look the same.
+
+## API 11: repair
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_repair` | `int sid, int count, int creative, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Sends the game's `RepairFrameInputCommand` (`CreateInputRepair(count, bCreative)`, receiver = ship id) through `AddInputCommand`. `creative` non-zero = free (no repair items used). One item heals 10 Health. Kill switch: `module_disable("repair")`. Source `cpp\MSCore\msc_repair.hpp`. |
+| `MSCore_ship_repair_need` | `int sid` | `int` (`>0` items needed, `0` full hull, `-1` unreadable or exception, `-2` repair module off) | `ceil((GetTotalHull - GetCurrentHull) / 10)`. |
+
+## API 12: station names
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
+
+## API 13: fleets
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_fleet_tags` | `MsFleetTag* out, int max, int max_age_ms` | `int` (`n` tags, `-2` fleets module off, `-1` fault) | `MsFleetTag { int32 id; int32 parent; wchar_t name[96]; }` (200 B). `max_age_ms = 0` rescans now (no cache); otherwise a snapshot younger than `min(max_age_ms, 10000)` is reused. The export has no default: the caller passes it (Lua `fleets_read()` with no argument passes `0`; `mscore_fleets.lua` passes `3000`). Kill switch `module_disable("fleets")`. Source `cpp\MSCore\msc_fleets.hpp`. |
+| `MSCore_fleet_ships` | `MsFleetShip* out, int max, int max_age_ms` | `int` (`n` ships, `-2` fleets module off, `-1` fault) | `MsFleetShip { int32 ship; int32 count; int32 total; int32 pad; int32 tags[8]; }` (48 B). `count` = ids stored (at most 8), `total` = real number of fleet ids, so a ship in 9+ fleets shows 8 ids. Same `max_age_ms` rule, kill switch and source. |
+
+## API 14: ship hull (0.8.15)
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_hull` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Hull in whole units from `GetCurrentHull` / `GetTotalHull` (int). `cur` / `max` get `-1` when unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. Native API 14. |
 
 ## Error convention
 

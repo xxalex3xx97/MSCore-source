@@ -38,7 +38,7 @@ In-game test checklist (hologram):
 - Reopen the menu within 30 s: no re-render (selfcheck `wbp.hologram ttl` counters).
 - After more than 30 s: still no re-render, the old picture stays (selfcheck `wbp.hologram refresh` asserts this).
 
-Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most `holo_per_window` (2) renders per `holo_window` (0.25 s), extra ships wait in a FIFO queue (`pending`). Refresh: a picture lives `holo_ttl` = 30 s (mscore_contract.lua); a call with an older (or never rendered) ship calls `SetShip` again on the existing hidden widget (no new widget, no FindAllOf), a younger one reuses the texture. `WBP.hologram_stats()` returns `{renders, reuses, created, queued}`. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
+Ship hologram notes: caps key `hologram` (`ok` or `off:why`), kill switch `MSCore.module_disable("hologram")` (independent of `widgets`). Warp safety: no build within 10 s of a game stall, at most `holo_per_window` (2) renders per `holo_window` (0.25 s), extra ships wait in a FIFO queue (`pending`). Refresh: OFF (`C.holo_refresh = false` in mscore_contract.lua), so `holo_ttl` = 30 s has no effect. A ship's picture is created once and reused (no second `SetShip`, no new widget, no FindAllOf). A cached texture that turns invalid drops that widget and builds a new one. `hologram_release(host)` on close and at every open drops the cached widgets. `WBP.hologram_stats()` returns `{renders, reuses, created, queued}`. Each mod's own Lua state keeps its own cache, so call again on a later tick while `why` is `pending`.
 
 ## Example
 

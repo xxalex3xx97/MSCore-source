@@ -360,7 +360,7 @@ local function hg(f)
     return table.unpack(r, 2, r.n)
   end
 end
--- WBP.ship_hologram(shipId [, {ttl = 30, force = false, refresh_ok = false}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
+-- WBP.ship_hologram(shipId [, {host = panel}]) -> texture UObject | nil, why   (primary; hologram_texture = alias)
 -- HOST: opts.host = a persistent hidden panel of the consumer's window; widgets are AddChild'ed to it (GC-rooted, Collapsed). No host = nil,'no host'.
 -- Call hologram_release(host) on window close and at every open.
 -- REFRESH IS OFF (C.holo_refresh=false): re-rendering an existing widget crashed the game. A picture is created once per ship per session;

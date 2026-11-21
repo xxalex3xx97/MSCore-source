@@ -23,7 +23,14 @@ nav_order: 6
 - **Changed:** native fleet unassign sends `bRemove=true` (`false` is ADD, per the 2026-11-20 log). Verified in game 2026-11-21: the pill trash removes a fleet from a ship. Other fleet write ops (create, rename, delete, assign, reparent) stay unverified and off (`fleet_write` refuses them; `fleets_write` cap off by default).
 - **Changed:** selftest `world.fleets_write` arms the cap only for the verified factory `CreateInputFleetTag` (FText, int and bool params). Any other FleetTagInput factory keeps `fleets_write` off.
 - **Fixed:** fleets scan skips a ship whose `FleetTagIDs` layout is unexpected (counted) and fails (module off) only when no ship could be read. `MSCore.module_disable("fleets")` also switches off native `fleets_write` (new narrow native `MSCoreNative_module_disable`, names `fleets` / `fleets_write` only).
-- **Known issues:** `open_fleet_assign` (mscore_wbp.lua): in standalone mode the `holo.hold - now <= 3` bypass is always true, so the 3 s settle hold never blocks the + (add to fleet) click. Left unchanged: standalone mode has no warp/load event, so a bypass limited to "this session start" cannot be told apart from a warp without the live game. The + flow is confirmed working in game; the warp guard stays as before. Follow-up: a warp/load signal for standalone mode.
+- **Known issues:**
+  - `open_fleet_assign` (mscore_wbp.lua): in standalone mode the `holo.hold - now <= 3` bypass is always true, so the 3 s settle hold never blocks the + (add to fleet) click. Left unchanged: standalone mode has no warp/load event, so a bypass limited to "this session start" cannot be told apart from a warp without the live game. The + flow is confirmed working in game; the warp guard stays as before. Follow-up: a warp/load signal for standalone mode.
+  - Native fleets export: only the first 8 fleet tag ids per ship are exported (`MsFleetShip.tags[8]`). A ship in 9+ fleets shows 8 ids; `total` has the real count.
+  - Native exports that walk game objects (`ship_repair_need`, `ship_hull`, `fleet_tags`, `fleet_ships`, `stations`) must be called from the game thread. SEH only catches access violations.
+  - A hologram widget dropped after its ship disappears stays parented to the host panel until `hologram_release`. Memory grows in very long sessions.
+  - The hologram render queue can hold a ship behind an abandoned queued ship for up to 10 s.
+  - `MSCore.caps().fleets` reports `ok` from the Lua side only. A native fleets module off is not reflected yet.
+  - The `piloted` flag accepts a PilotID equal to the controller id or the player object id.
 - **Changed:** `MSCore.fleets.list(true)` bypasses the cache. `open_fleet_assign` scans ships on its first click.
 - **New:** `MSCore.fleets.on_fleet_cmd` (a function you set; nil clears it): called with `(FleetTagID, bRemove)` whenever the game sends a FleetTagInput, even with the log muted. ID 0 = create fleet.
 - **New:** mscore_wbp `close_fleets_window()` closes the game's fleet window again after the add-to-fleet popup; `fleets_window_open()` reports whether it is open.

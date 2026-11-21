@@ -1,5 +1,5 @@
 // FILE: cpp/MSCore/msc_fleets.hpp
-// WHAT: fleets_get(): FleetTag objects (id, parent, DisplayName) and per-ship FleetTagIDs, cached 3 s (native API 13, C exports MSCore_fleet_tags / MSCore_fleet_ships).
+// WHAT: fleets_get(): FleetTag objects (id, parent, DisplayName) and per-ship FleetTagIDs, cached by max_age_ms (0 = no cache; native API 13, C exports MSCore_fleet_tags / MSCore_fleet_ships).
 //       Also fleets_probe_text() (layout dump of FleetTagInput) and fleet_write() ("unassign" only, bRemove=true, via make_cmd + add_input).
 // WHY: the fleet tree lives in game memory only; mods need it without Lua struct access or ProcessEvent. Reads go straight to memory.
 // SAFETY: game thread, reads only. FindAllOf and every per-object read run under seh_run; alive() guards each object.
@@ -19,6 +19,7 @@
 namespace
 {
     constexpr int kFleetMaxTags = 8;
+    // UNUSED: no code reads this. C has no default TTL: max_age_ms 0 = rescan. The 3000 ms value is passed by the Lua caller (mscore_fleets.lua refresh).
     constexpr ULONGLONG kFleetTtlMs = 3000;
     constexpr long long kFleetMaxAgeMs = 10000;
 

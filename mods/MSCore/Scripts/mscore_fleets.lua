@@ -65,7 +65,7 @@ local function parse(text)
     return { list = tags, ofs = ofs }
 end
 
--- force = bypass the native 3 s cache too. Returns cache table | nil, why
+-- force = native max_age_ms 0 (rescan now, no native cache). Returns cache table | nil, why
 local function refresh(force)
     if offReason then return nil, "off:" .. offReason end
     local fn = rawget(_G, "MSCoreNative_fleets_read")
