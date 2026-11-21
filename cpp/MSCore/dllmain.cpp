@@ -49,6 +49,7 @@ using namespace RC::Unreal;
 #include "msc_rename.hpp"
 #include "msc_dockfilter.hpp"
 #include "msc_refund.hpp"
+#include "msc_designer.hpp"
 #include "msc_loader.hpp"
 
 namespace
@@ -1158,8 +1159,28 @@ namespace
         if (n == 0 || n >= buf.size()) return;
         const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
         std::error_code ec;
+        static bool dgOnce = false;   // designer guard: decided once per process (the kill-switch file is read once)
+        if (!dgOnce) { dgOnce = true; if (!mscl::fs::exists(dir / L"designer_guard_off.txt", ec)) dg_install(); }
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
         if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
+    }
+
+    // Lua: designer_guard(bool) -> status string. true installs the Designer IsBlockAvailable null guard (done at start unless
+    // designer_guard_off.txt exists), false restores the original bytes (kill switch). designer_guard_status() -> "<status> blocked=<n>".
+    int lua_designer_guard(const LuaMadeSimple::Lua& lua)
+    {
+        try
+        {
+            if (lua_toboolean(lua.get_lua_state(), 1) != 0) dg_install(); else dg_uninstall("lua kill switch");
+        }
+        catch (...) { module_disable(STR("designer_guard"), STR("exception")); }
+        lua.set_string(g_dg.status + " blocked=" + std::to_string(dg_count()));
+        return 1;
+    }
+    int lua_designer_guard_status(const LuaMadeSimple::Lua& lua)
+    {
+        lua.set_string(g_dg.status + " blocked=" + std::to_string(dg_count()));
+        return 1;
     }
 
     // ---------------- loader: mod update checks (worker thread; Lua reads the rows) ----------------
@@ -1309,6 +1330,8 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_redirect_enable", lua_redirect_enable);
     lua.register_function("MSCoreNative_redirect_status", lua_refund_status);
     lua.register_function("MSCoreNative_redirect_stats", lua_redirect_stats);
+    lua.register_function("MSCoreNative_designer_guard", lua_designer_guard);
+    lua.register_function("MSCoreNative_designer_guard_status", lua_designer_guard_status);
     Output::send<LogLevel::Normal>(STR("[MSCore] Lua globals registered for mod {}\n"), mod_name);
 }
 
@@ -1329,6 +1352,7 @@ public:
     {
         g_loader_stop = true;   // detached worker checks this between network steps
         try { ref_uninstall(); } catch (...) {}
+        try { dg_restore_bytes(); } catch (...) {}
         try { rr_listener_release(); } catch (...) {}
         try { chunk_hold_release_all(); }
         catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }

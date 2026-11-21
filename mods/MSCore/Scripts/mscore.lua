@@ -1022,6 +1022,7 @@ load_optional("mscore_inv", function(mod, M) mod.install(M) end)
 load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
 load_optional("mscore_fleets", function(mod, M) mod.install(M) end)
 load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
+load_optional("mscore_designer", function(mod, M) mod.install(M) end)
 
 ---------------------------------------------------------------- hook (never throws)
 -- hook(logical_name, fn_path, callback [, post_callback]) -> true | false. A failed RegisterHook logs one COMPAT line
@@ -1047,6 +1048,7 @@ function MSCore.caps()
     end
     t.hologram = (MSCore.wbp and MSCore.wbp.hologram_caps) and MSCore.wbp.hologram_caps() or "off:missing"
     t.items_icon = (MSCore.wbp and MSCore.wbp.items_caps) and MSCore.wbp.items_caps() or "off:missing"
+    t.designer_guard = MSCore.designer and MSCore.designer.caps() or "off:missing"
     t.fleets = MSCore.fleets and MSCore.fleets.caps() or "off:missing"
     t.fleets_write = MSCore.fleets and MSCore.fleets.write_caps() or "off:missing"
     t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
@@ -1063,6 +1065,7 @@ function MSCore.module_disable(name, why)
         if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end
         return true
     end
+    if name == "designer_guard" and MSCore.designer then pcall(MSCore.designer.disable, why or "disabled") return true end
     if name == "rockreg" then   -- native rock registry kill switch (API 16): every MSCore_rockreg_* export then returns -2
         local nd = rawget(_G, "MSCoreNative_module_disable")
         if type(nd) == "function" then pcall(nd, "rockreg") end
