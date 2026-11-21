@@ -34,6 +34,11 @@
 
 namespace mscl {
 
+// THE MSCore version and native API number: dllmain.cpp (kVersion, MSCore_api) and the manager (title, --version) use these.
+// Keep kVersion equal to MSCore.version in mscore.lua and ModVersion in mscore.mod.
+inline constexpr const char* kVersion = "0.8.15";
+inline constexpr int kNativeApi = 16;
+
 namespace fs = std::filesystem;
 using KV = std::map<std::string, std::string>;
 
@@ -618,8 +623,35 @@ inline bool same_deps(const std::vector<Dep>& a, const std::vector<Dep>& b) {
     return true;
 }
 
+// mscore.mod "save_scrub=<modded class path>><stock class path>" (repeatable): what Remove rewrites in the user's saves.
+// Paths exactly as in the save's class table, e.g. /Game/Blueprints/BuildingBlocks/BPO_X.BPO_X_C. standin = optional
+// vanilla class that takes the now unused class-table slot (empty = msc_savescrub.hpp picks one). Bad lines are ignored.
+struct SaveScrub {
+    std::string modded, stock, standin;
+};
+
+inline std::vector<SaveScrub> parse_save_scrub(const std::string& text) {
+    std::vector<SaveScrub> out;
+    std::istringstream in(text.compare(0, 3, "\xEF\xBB\xBF") == 0 ? text.substr(3) : text);
+    std::string line;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.compare(0, 11, "save_scrub=") != 0) continue;
+        std::string v = line.substr(11);
+        size_t gt = v.find('>');
+        if (gt == std::string::npos) continue;
+        SaveScrub s{trim(v.substr(0, gt)), trim(v.substr(gt + 1)), ""};
+        if (s.modded.empty() || s.stock.empty() || s.modded == s.stock || s.modded[0] != '/' || s.stock[0] != '/' ||
+            s.stock.find('>') != std::string::npos)
+            continue;
+        out.push_back(s);
+    }
+    return out;
+}
+
 struct Mod {
     std::string name, repo, version;
+    bool disabled = false;  // files live in Mods\MSCore\disabled\<mod>\ (see set_mod_enabled)
     fs::path dir;
     std::vector<Dep> requires_;
 };
@@ -627,19 +659,35 @@ struct Mod {
 inline std::vector<Mod> scan_mods(const Paths& p) {
     std::vector<Mod> mods;
     std::error_code ec;
-    for (auto& d : fs::directory_iterator(p.mods, ec)) {
-        if (!d.is_directory(ec)) continue;
-        fs::path mf = d.path() / L"mscore.mod";
-        if (!fs::exists(mf, ec)) continue;
+    auto add = [&](const fs::path& dir, bool disabled) {
+        std::error_code e2;
+        fs::path mf = dir / L"mscore.mod";
+        if (!fs::is_regular_file(mf, e2)) return;
         KV kv = parse_kv(read_text(mf));
         Mod m;
-        m.dir = d.path();
-        m.name = kv["name"].empty() ? to_utf8(d.path().filename().wstring()) : kv["name"];
+        m.dir = dir;
+        m.disabled = disabled;
+        m.name = kv["name"].empty() ? to_utf8(dir.filename().wstring()) : kv["name"];
+        if (disabled)
+            for (const auto& x : mods)
+                if (x.name == m.name) return;  // a live copy wins (partly enabled mod)
         m.repo = kv["repo"];
         m.version = kv["version"];
         std::string derr;  // unparsable requires in an installed mod: ignored (scan has no error channel)
         if (!parse_deps(kv["requires"], m.requires_, derr)) m.requires_.clear();
         mods.push_back(m);
+    };
+    // error_code overloads only: a folder that vanishes or is locked mid-scan must not throw
+    for (fs::directory_iterator it(p.mods, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (it->is_directory(e2)) add(it->path(), false);
+    }
+    // disabled mods (files moved to disabled\<mod>\Mods\<dir>\mscore.mod) stay listed so they can be enabled again
+    ec.clear();
+    for (fs::directory_iterator it(p.core / L"disabled", ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e1, e3;
+        if (!it->is_directory(e1)) continue;
+        for (fs::directory_iterator jt(it->path() / L"Mods", e3), jend; !e3 && jt != jend; jt.increment(e3)) add(jt->path(), true);
     }
     std::sort(mods.begin(), mods.end(), [](const Mod& a, const Mod& b) { return a.name < b.name; });
     return mods;
@@ -680,6 +728,10 @@ inline bool dep_ok(const Paths& p, const Dep& d, std::string& why) {
     for (const auto& m : scan_mods(p)) {
         if (lower(m.repo) != lower(d.repo)) continue;
         found = true;
+        if (m.disabled) {
+            why = d.repo + " is disabled";
+            continue;
+        }
         if (ver_cmp(m.version, d.min_ver) >= 0) return true;
         why = d.repo + " " + m.version + " < " + d.min_ver;
     }
@@ -734,10 +786,13 @@ inline Check check_mod(const Mod& mod, const std::string& core_native_ver, const
         for (const auto& d : mod.requires_) {
             std::string why;
             if (!dep_ok(*p, d, why)) {
-                c.state = "needs:" + d.repo;
+                bool dis = why.size() > 11 && why.compare(why.size() - 11, 11, "is disabled") == 0;
+                c.state = dis ? "enable first:" + d.repo : "needs:" + d.repo;
                 break;
             }
         }
+    // a disabled mod is never staged into Mods\ by Update: the user enables it first
+    if (mod.disabled) c.state = "disabled: enable it first";
     return c;
 }
 
@@ -1000,16 +1055,28 @@ inline bool remove_plan(const Paths& p, const std::string& mod, std::vector<Remo
     }
     std::string text = read_text(p.core / L"installed" / to_wide(mod + ".txt"));
     if (text.empty()) {
-        // no install list: the mod folder is the list
-        fs::path d = p.mods / to_wide(mod);
+        // no install list: the mod folder is the list (live folder and/or the disabled copy under disabled\<mod>)
+        fs::path d = p.mods / to_wide(mod), dd = p.core / L"disabled" / to_wide(mod);
         std::error_code ec;
-        if (!fs::is_regular_file(d / L"mscore.mod", ec)) {
+        bool live = fs::is_regular_file(d / L"mscore.mod", ec);
+        bool dis = fs::is_regular_file(dd / L"Mods" / to_wide(mod) / L"mscore.mod", ec);
+        if (!live && !dis) {
             err = mod + " is not installed";
             return false;
         }
         text = "0\n";
-        for (auto it = fs::recursive_directory_iterator(d, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-            if (it->is_regular_file(ec)) text += "Mods/" + to_utf8(fs::relative(it->path(), p.mods).generic_wstring()) + "\n";
+        std::set<std::string> seen;
+        auto walk = [&](const fs::path& root, const fs::path& rel_to, const std::string& prefix) {
+            std::error_code e2;
+            for (fs::recursive_directory_iterator it(root, e2), end; !e2 && it != end; it.increment(e2)) {
+                std::error_code e3;
+                if (!it->is_regular_file(e3)) continue;
+                std::string r = prefix + to_utf8(fs::relative(it->path(), rel_to).generic_wstring());
+                if (seen.insert(r).second) text += r + "\n";
+            }
+        };
+        if (live) walk(d, p.mods, "Mods/");
+        if (dis) walk(dd, dd, "");
     }
     std::istringstream in(text);
     std::string l;
@@ -1092,31 +1159,159 @@ inline std::string mods_txt_set(const std::string& text, const std::string& mod,
     return out;
 }
 
-// Enabled = enabled.txt exists, or mods.txt says "mod : 1".
-inline bool mod_enabled(const Paths& p, const std::string& mod) {
-    std::error_code ec;
-    if (fs::is_regular_file(p.mods / to_wide(mod) / L"enabled.txt", ec)) return true;
-    std::string val;
-    return mods_txt_line(read_text(p.mods / L"mods.txt"), mod, val) && !val.empty() && val[0] == '1';
+// Disabled mods live here: disabled\<mod>\Mods\... and disabled\<mod>\Paks\... (same layout as the install list).
+inline fs::path disabled_dir(const Paths& p, const std::string& mod) { return p.core / L"disabled" / to_wide(mod); }
+
+// top-level Mods\<dir> names in a plan (a mod may ship more than one folder)
+inline std::set<std::string> mod_dirs(const std::vector<RemoveItem>& items) {
+    std::set<std::string> r;
+    for (const auto& it : items) {
+        if (it.rel.compare(0, 5, "Mods/") != 0) continue;
+        std::string rest = it.rel.substr(5);
+        size_t s = rest.find('/');
+        if (s != std::string::npos && lower(rest.substr(0, s)) != "mscore") r.insert(rest.substr(0, s));
+    }
+    return r;
 }
 
-// enabled.txt (UE4SS starts it even if mods.txt says 0) + mods.txt line if one exists (never adds one).
-// Refuses MSCore. The caller must check the game is not running.
+// Moves src over dst. dst is never deleted first: same volume = one MoveFileExW(REPLACE_EXISTING); other volume = copy to
+// dst.msctmp next to it, MoveFileExW that over dst, then delete src (only after success). A failure leaves src intact and no
+// partial dst behind.
+inline bool move_file(const fs::path& src, const fs::path& dst) {
+    std::error_code ec;
+    fs::create_directories(dst.parent_path(), ec);
+    if (MoveFileExW(src.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+    if (GetLastError() != ERROR_NOT_SAME_DEVICE) return false;
+    fs::path tmp = dst;
+    tmp += L".msctmp";
+    if (!CopyFileW(src.c_str(), tmp.c_str(), FALSE)) {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    if (!MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    if (!DeleteFileW(src.c_str())) {  // copied but the source is locked: undo, report failure
+        DeleteFileW(dst.c_str());
+        return false;
+    }
+    return true;
+}
+
+inline void remove_empty_dirs_above(const fs::path& f, const fs::path& root) {
+    std::error_code ec;
+    for (fs::path d = f.parent_path(); under_root(d, root); d = d.parent_path())
+        if (!fs::remove(d, ec)) break;  // not empty (or gone): stop climbing
+}
+
+inline bool is_disabled(const Paths& p, const std::string& mod) {
+    std::error_code ec;
+    fs::path d = disabled_dir(p, mod);
+    return fs::is_directory(d, ec) && !fs::is_empty(d, ec);
+}
+
+// Enabled = enabled.txt exists, or mods.txt says "mod : 1". Disabled = the files were moved to disabled\<mod>.
+// Partial = some files live and some in disabled\<mod> (an interrupted or failed move): Enable (or Disable) again completes it.
+enum class ModState { Enabled, Disabled, Partial };
+
+inline ModState mod_state(const Paths& p, const std::string& mod) {
+    std::error_code ec;
+    if (is_disabled(p, mod)) {
+        std::vector<RemoveItem> items;
+        std::string e;
+        if (remove_plan(p, mod, items, e))
+            for (const auto& it : items)
+                if (fs::exists(it.target, ec)) return ModState::Partial;
+        return ModState::Disabled;
+    }
+    if (fs::is_regular_file(p.mods / to_wide(mod) / L"enabled.txt", ec)) return ModState::Enabled;
+    std::string val;
+    return mods_txt_line(read_text(p.mods / L"mods.txt"), mod, val) && !val.empty() && val[0] == '1' ? ModState::Enabled : ModState::Disabled;
+}
+
+inline bool mod_enabled(const Paths& p, const std::string& mod) { return mod_state(p, mod) == ModState::Enabled; }
+
+// Disable = every file of the mod (install list: Mods\ and Paks\, not protected files) is MOVED to
+// disabled\<mod>\<same relative path>, so the game cannot load anything of it: UE4SS only starts Mods\<dir>\dlls\main.dll
+// and scripts of folders that exist (enabled.txt / mods.txt), the engine only mounts pak files that sit in Paks\, and the
+// MSCore native loader never loads other mods' DLLs. Enable = move everything back. mods.txt lines (if present) of the mod and
+// its extra Mods\<dir> folders are set to 0 / 1 too (never added). A mod without install list (no mscore.mod) only gets the
+// enabled.txt / mods.txt toggle. Refuses MSCore. The caller must check the game is not running.
 inline bool set_mod_enabled(const Paths& p, const std::string& mod, bool on, std::string& err) {
     if (!safe_name(mod) || lower(mod) == "mscore") {
         err = "refusing to toggle " + mod;
         return false;
     }
     try {
+        std::error_code ec;
+        fs::path dd = disabled_dir(p, mod);
+        std::set<std::string> names{mod};
+        struct Moved {
+            fs::path src, dst;  // what the move did; undo = dst back to src
+            fs::path clean_root;  // empty dirs above dst are removed below this root on undo
+        };
+        std::vector<Moved> moved;  // done in this call, undone (best effort) when a later move fails
+        std::string failed;
+        auto fail = [&](const std::string& verb) {
+            for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+                move_file(it->dst, it->src);
+                remove_empty_dirs_above(it->dst, it->clean_root);
+            }
+            err = verb + " failed for: " + failed + "; the files already moved were put back (if one stays moved the mod shows as partly enabled, run it again)";
+            return false;
+        };
+        auto add_failed = [&](const std::string& n) { failed += (failed.empty() ? "" : ", ") + n; };
         if (on) {
+            std::vector<fs::path> files;
+            for (fs::recursive_directory_iterator it(dd, ec), end; !ec && it != end; it.increment(ec)) {
+                std::error_code e2;
+                if (it->is_regular_file(e2)) files.push_back(it->path());
+            }
+            std::sort(files.begin(), files.end());
+            for (const auto& f : files) {
+                std::string rel = norm_slash(to_utf8(fs::relative(f, dd).generic_wstring()));
+                fs::path t = target_for(p, rel);
+                if (t.empty() || !move_file(f, t)) {
+                    add_failed(rel);
+                    continue;
+                }
+                moved.push_back({f, t, rel.compare(0, 5, "Mods/") == 0 ? p.mods : p.paks});
+                if (rel.compare(0, 5, "Mods/") == 0) {
+                    size_t sl = rel.find('/', 5);
+                    if (sl != std::string::npos) names.insert(rel.substr(5, sl - 5));
+                }
+            }
+            if (!failed.empty()) {
+                return fail("Enable");
+            }
+            fs::remove_all(dd, ec);
             write_text(p.mods / to_wide(mod) / L"enabled.txt", "");
         } else {
-            std::error_code ec;
+            std::vector<RemoveItem> items;
+            std::string perr;
+            if (remove_plan(p, mod, items, perr)) {
+                names = mod_dirs(items);
+                names.insert(mod);
+                for (const auto& it : items) {
+                    if (!fs::exists(it.target, ec)) continue;  // already moved (or never there): nothing to do
+                    fs::path to = dd / to_wide(it.rel);
+                    if (!move_file(it.target, to)) {
+                        add_failed(it.rel);
+                        continue;
+                    }
+                    moved.push_back({it.target, to, p.core / L"disabled"});
+                }
+                if (!failed.empty()) return fail("Disable");
+                for (const auto& it : items) remove_empty_dirs_above(it.target, it.root);
+            }
             fs::remove(p.mods / to_wide(mod) / L"enabled.txt", ec);
         }
         fs::path txt = p.mods / L"mods.txt";
-        std::string text = read_text(txt), val;
-        if (mods_txt_line(text, mod, val)) write_text(txt, mods_txt_set(text, mod, on ? "1" : "0"));
+        for (const auto& n : names) {
+            std::string text = read_text(txt), val;
+            if (mods_txt_line(text, n, val)) write_text(txt, mods_txt_set(text, n, on ? "1" : "0"));
+        }
         return true;
     } catch (const std::exception& e) {
         err = e.what();
@@ -1124,8 +1319,10 @@ inline bool set_mod_enabled(const Paths& p, const std::string& mod, bool on, std
     }
 }
 
-// Deletes the files listed for mod. A file that was overwritten by an update is put back from backup\.
-// Then: install list, backup dir, staged update, pending line, legacy loader.ini force_install.<mod> lines, mods.txt line.
+// Deletes the files listed for mod (and a disabled copy under disabled\<mod>). NOTHING is restored from backup\:
+// a backup file is the previous version of the same mod (or of another Mods\ folder it ships), and putting it back
+// left a half-installed mod behind (bug: Mods\MiningUnitUI, pak98, enabled.txt survived Remove).
+// Then: install list, backup dir, staged update, pending line, legacy loader.ini force_install.<mod> lines, mods.txt lines.
 // Refuses MSCore, refuses paths outside Mods\ and Paks\, never touches protected/user files (see protected_name).
 // The caller must check the game is not running.
 inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err) {
@@ -1135,19 +1332,8 @@ inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err)
         std::error_code ec;
         size_t failed = 0;
         fs::path bdir = p.core / L"backup" / to_wide(mod);
-        for (const auto& it : items) {
-            fs::path bk = bdir / to_wide(it.rel);
-            bool has_bk = fs::is_regular_file(bk, ec);
-            if (fs::exists(it.target, ec) && !fs::remove(it.target, ec)) {
-                ++failed;  // locked
-                continue;
-            }
-            if (has_bk) {
-                fs::create_directories(it.target.parent_path(), ec);
-                fs::rename(bk, it.target, ec);
-                if (ec) ++failed;
-            }
-        }
+        for (const auto& it : items)
+            if (fs::exists(it.target, ec) && !fs::remove(it.target, ec)) ++failed;  // locked
         for (const auto& it : items)
             for (fs::path d = it.target.parent_path(); under_root(d, it.root); d = d.parent_path())
                 if (!fs::remove(d, ec)) break;  // not empty (or gone): stop climbing
@@ -1157,6 +1343,7 @@ inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err)
         }
 
         fs::remove_all(bdir, ec);
+        fs::remove_all(disabled_dir(p, mod), ec);
         fs::remove_all(p.core / L"updates" / to_wide(mod), ec);
         fs::remove(p.core / L"installed" / to_wide(mod + ".txt"), ec);
         drop_lines(p.core / L"pending.txt", [&](const std::string& l) {
@@ -1167,11 +1354,14 @@ inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err)
             size_t eq = l.find('=');
             return eq != std::string::npos && trim(l.substr(0, eq)) == "force_install." + mod;
         });
+        // mods.txt lines of the mod and of every other Mods\<dir> it shipped that is now gone
+        std::set<std::string> names = mod_dirs(items);
+        names.insert(mod);
         drop_lines(p.mods / L"mods.txt", [&](const std::string& l) {
-            std::string t = trim(l);
-            if (t.empty() || t[0] == '#' || t[0] == ';') return false;
-            size_t c = t.find(':');
-            return c != std::string::npos && lower(trim(t.substr(0, c))) == lower(mod);
+            std::string v;
+            for (const auto& n : names)
+                if (mods_txt_match(l, n, v) && (n == mod || !fs::exists(p.mods / to_wide(n), ec))) return true;
+            return false;
         });
         return true;
     } catch (const std::exception& e) {

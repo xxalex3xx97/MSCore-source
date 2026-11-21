@@ -91,6 +91,11 @@ try {
     # manifest (BOM-less, LF)
     $zSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
     $uSha = (Get-FileHash -LiteralPath $uePath -Algorithm SHA256).Hash.ToLower()
+    # manager self-update keys: the exe asset's own version (must equal the release version), hash and size
+    $mExe = Join-Path $rel 'MSCoreManager.exe'
+    $mVer = (& $mExe --version | Out-String).Trim()
+    if ($mVer -notmatch ("v" + [regex]::Escape($Version) + "(\s|$)")) { throw "MSCoreManager.exe reports '$mVer', expected v$Version (kVersion in msc_loader.hpp)" }
+    $mSha = (Get-FileHash -LiteralPath $mExe -Algorithm SHA256).Hash.ToLower()
     $lines = @(
         'name=MSCore'
         "version=$Version"
@@ -102,6 +107,9 @@ try {
         "ue4ss_zip=$ueZipName"
         "ue4ss_sha256=$uSha"
         "ue4ss_size=$((Get-Item $uePath).Length)"
+        "manager_version=$Version"
+        "manager_sha256=$mSha"
+        "manager_size=$((Get-Item $mExe).Length)"
     )
     [IO.File]::WriteAllText((Join-Path $rel 'manifest.txt'), (($lines -join "`n") + "`n"), $utf8)
 } finally {

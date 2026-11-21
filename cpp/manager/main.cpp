@@ -2,9 +2,15 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
+//      --restore-saves <save-backup folder> [--dry-run], --scrub-designs <ModName> [--dry-run] (designs only, restores moved ones), --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
+//      --self-update (headless; replace this exe by the newer one of the latest MSCore release, see msc_selfupdate.hpp)
+//      --no-self-update (GUI: skip the startup self-update check)
+//      --version (prints the manager version and exits)
 //      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
 #include "msc_loader.hpp"
+#include "msc_savescrub.hpp"
+#include "msc_selfupdate.hpp"
 
 #include <commctrl.h>
 #include <shellapi.h>
@@ -25,11 +31,14 @@ const wchar_t* kClass = L"MSCoreManagerWnd";
 const char* kRepo = "xxalex3xx97/MSCore";
 const UINT WM_APP_CHECKED = WM_APP + 1;
 const UINT WM_APP_WORK = WM_APP + 2;
+const UINT WM_APP_PROGRESS = WM_APP + 5;  // lp = new std::string (progress line while a job runs)
+const UINT WM_APP_SELFUPD = WM_APP + 3;   // lp = new SelfUpdateInfo (a newer manager exists)
+const UINT WM_APP_SELFDONE = WM_APP + 4;  // lp = new std::string (empty = swapped, else the error)
 
-enum : int { ID_LIST = 100, ID_CHECK, ID_UPD_SEL, ID_UPD_ALL, ID_INSTALL, ID_ROLLBACK, ID_BROWSE, ID_GAME, ID_STATUS, ID_ADD, ID_REMOVE, ID_TOGGLE };
+enum : int { ID_LIST = 100, ID_CHECK, ID_UPD_SEL, ID_UPD_ALL, ID_INSTALL, ID_ROLLBACK, ID_BROWSE, ID_GAME, ID_STATUS, ID_ADD, ID_REMOVE, ID_TOGGLE, ID_AUTOUPD };
 const int IDD_ADDMOD = 300, IDC_REPO = 301;  // manager.rc DIALOG
 
-HWND g_hwnd = nullptr, g_list = nullptr, g_game_lbl = nullptr, g_status = nullptr;
+HWND g_hwnd = nullptr, g_list = nullptr, g_game_lbl = nullptr, g_status = nullptr, g_details = nullptr;
 HWND g_btn_check = nullptr, g_btn_add = nullptr, g_btn_upd_sel = nullptr, g_btn_upd_all = nullptr,
      g_btn_install = nullptr, g_btn_rollback = nullptr, g_btn_browse = nullptr, g_btn_remove = nullptr,
      g_btn_toggle = nullptr;
@@ -37,8 +46,32 @@ std::string g_add_repo;  // set by the Add mod dialog
 mscl::Paths g_paths;
 bool g_has_game = false;
 bool g_busy = false;
+std::string g_self_ver;  // version being installed by the self-update
 std::string g_last;  // last work result, shown together with the next check result
 std::vector<mscl::Check> g_rows;
+
+// "MSCore Manager v0.8.15  native API 16  build Nov 21 2026": version/API come from msc_loader.hpp (same constants as the DLL)
+std::string version_text() {
+    return std::string("MSCore Manager v") + mscl::kVersion + "  native API " + std::to_string(mscl::kNativeApi) + "  build " + __DATE__;
+}
+
+// text to stdout (redirected/piped handle as is, else the parent console) + the headless log
+void out_text(const std::string& text) {
+    std::string v = text;
+    for (size_t i = 0; (i = v.find('\n', i)) != std::string::npos; i += 2)
+        if (i == 0 || v[i - 1] != '\r') v.insert(i, "\r");
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!out || out == INVALID_HANDLE_VALUE) {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+        out = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    }
+    DWORD n = 0;
+    if (out && out != INVALID_HANDLE_VALUE) WriteFile(out, v.data(), static_cast<DWORD>(v.size()), &n, nullptr);
+}
+
+fs::path g_saves_override;  // --saves <dir> (tests); else %LOCALAPPDATA%\MainSequence\Saved\SaveGames
+
+fs::path save_dir() { return g_saves_override.empty() ? mscl::default_save_dir() : g_saves_override; }
 
 // ---------- log / status ----------
 
@@ -49,8 +82,19 @@ void log_line(const std::string& s) {
     f << s << "\n";
 }
 
+// One line in the status label (first line of s), the whole text, wrapped and scrollable, in the details box below it.
 void set_status(const std::string& s) {
-    if (g_status) SetWindowTextW(g_status, mscl::to_wide(s).c_str());
+    size_t nl = s.find('\n');
+    std::string first = nl == std::string::npos ? s : s.substr(0, nl);
+    if (g_status) SetWindowTextW(g_status, mscl::to_wide(first).c_str());
+    if (g_details) {
+        std::string v;
+        for (char c : s) {
+            if (c == '\n') v += '\r';
+            v += c;
+        }
+        SetWindowTextW(g_details, mscl::to_wide(v).c_str());
+    }
 }
 
 // ---------- game location ----------
@@ -90,6 +134,31 @@ bool game_running() { return g_has_game && game_running_under(g_paths.win64); }
 fs::path settings_file() {
     const wchar_t* a = _wgetenv(L"APPDATA");
     return fs::path(a ? a : L".") / L"MSCoreManager" / L"game.txt";
+}
+
+// ---------- manager self-update ----------
+
+fs::path self_exe() {
+    wchar_t buf[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(nullptr, buf, static_cast<DWORD>(sizeof buf / sizeof buf[0]));
+    return n ? fs::path(std::wstring(buf, n)) : fs::path();
+}
+
+fs::path manager_ini() {
+    const wchar_t* a = _wgetenv(L"APPDATA");
+    return fs::path(a ? a : L".") / L"MSCoreManager" / L"manager.ini";
+}
+
+bool auto_update_on() {  // default ON; manager.ini "auto_update=0" turns it off
+    mscl::KV kv = mscl::parse_kv(mscl::read_text(manager_ini()));
+    return kv["auto_update"] != "0";
+}
+
+void set_auto_update(bool on) {
+    try {
+        mscl::write_text(manager_ini(), std::string("auto_update=") + (on ? "1" : "0") + "\n");
+    } catch (const std::exception&) {
+    }
 }
 
 fs::path saved_game() {
@@ -305,6 +374,10 @@ bool install_deps(const mscl::Paths& p, const std::vector<mscl::Dep>& deps, std:
     for (const auto& d : deps) {
         std::string why;
         if (mscl::dep_ok(p, d, why)) continue;
+        if (why.size() > 11 && why.compare(why.size() - 11, 11, "is disabled") == 0) {
+            err = "needs " + d.repo + ": " + why + " (enable it first)";
+            return false;
+        }
         std::string dmsg;
         if (!add_mod_core(p, d.repo, dmsg, err, depth + 1)) {
             err = "needs " + d.repo + ": " + err;
@@ -422,13 +495,75 @@ int remove_cli(const fs::path& win64, const std::string& mod) {
     mscl::Paths p = mscl::paths_from_win64(win64);
     std::vector<std::string> deps = mscl::dependents_of(p, mod);
     if (!deps.empty()) log_line("remove: warning: required by " + join_names(deps) + ": they will stop working");
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, mod);  // before the mscore.mod files are deleted
     std::string err;
     if (!mscl::remove_mod(p, mod, err)) {
         log_line("remove: FAILED " + err);
+        out_text("remove: FAILED " + err + "\n");
         return 1;
     }
     log_line("remove: OK " + mod);
+    out_text("remove: OK " + mod + "\n");
+    if (decl.empty()) return 0;
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, false);
+    log_line(sum.text());
+    out_text(sum.text());
+    return sum.refused() || sum.designs_refused() ? 3 : 0;
+}
+
+// --self-update: same check and swap as the startup one, no restart (tests, scripts). 0 = done / nothing to do, 1 = failed.
+int self_update_cli() {
+    mscl::SelfUpdateInfo info;
+    std::string err;
+    auto say = [](const std::string& t) {
+        log_line(t);
+        out_text(t + "\n");
+    };
+    switch (mscl::self_update_check(kRepo, mscl::kVersion, info, err)) {
+        case mscl::SuSt::Error: say("self-update: check failed: " + err); return 1;
+        case mscl::SuSt::NoInfo: say("self-update: " + err); return 0;
+        case mscl::SuSt::UpToDate: say("self-update: manager is up to date (v" + std::string(mscl::kVersion) + ")"); return 0;
+        case mscl::SuSt::Newer: break;
+    }
+    if (!mscl::self_update_apply(self_exe(), kRepo, info, err)) {
+        say("self-update: FAILED " + err + " (kept v" + std::string(mscl::kVersion) + ")");
+        return 1;
+    }
+    say("Manager updated to v" + info.version);
     return 0;
+}
+
+// --restore-saves <save-backup folder> [--dry-run]: originals back into the save folder (fresh backup of the current files first).
+int restore_cli(const fs::path& win64, const std::wstring& dir, bool dry) {
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    if (!dry && game_running_under(win64)) {
+        log_line("restore-saves: game is running - close it first");
+        return 1;
+    }
+    mscl::RestoreResult r = mscl::restore_saves(dir, save_dir(), p.core / L"save-backup", dry);
+    log_line(r.text);
+    out_text(r.text);
+    return r.failed ? 3 : 0;
+}
+
+// --scrub-saves <mod> [--dry-run]: what Remove does to the saves and designs, on its own.
+// --scrub-designs <mod> [--dry-run]: only designs; also takes designs an older Remove moved to DesignsBackup back into Designs.
+int scrub_cli(const fs::path& win64, const std::string& mod, bool dry, bool designs_only = false) {
+    if (!dry && game_running_under(win64)) {
+        log_line("scrub-saves: game is running - close it first");
+        return 1;
+    }
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, mod);
+    if (decl.empty()) {
+        out_text("scrub-saves: no save_scrub declaration for " + mod + "\n");
+        return 1;
+    }
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, dry,
+                                               designs_only ? (mscl::kScrubDesigns | mscl::kRestoreDesigns) : (mscl::kScrubSaves | mscl::kScrubDesigns));
+    log_line(sum.text());
+    out_text(sum.text());
+    return sum.refused() || sum.designs_refused() ? 3 : 0;
 }
 
 // ---------- background work ----------
@@ -470,11 +605,19 @@ void run_work(std::function<std::string()> job) {
 
 // ---------- UI ----------
 
+const wchar_t* label_suffix(const std::string& name) {
+    switch (mscl::mod_state(g_paths, name)) {
+        case mscl::ModState::Disabled: return L" (disabled)";
+        case mscl::ModState::Partial: return L" (partly enabled)";
+        default: return L"";
+    }
+}
+
 void refresh_list() {
     ListView_DeleteAllItems(g_list);
     for (int i = 0; i < static_cast<int>(g_rows.size()); ++i) {
         const mscl::Check& c = g_rows[i];
-        std::wstring cells[4] = {mscl::to_wide(c.mod.name) + (mscl::mod_enabled(g_paths, c.mod.name) ? L"" : L" (disabled)"),
+        std::wstring cells[4] = {mscl::to_wide(c.mod.name) + (label_suffix(c.mod.name)),
                                  mscl::to_wide(c.mod.version),
                                  mscl::to_wide(c.m.version.empty() ? std::string("-") : c.m.version),
                                  mscl::to_wide(c.state)};
@@ -515,6 +658,11 @@ bool update_picks(const mscl::Paths& p, const std::vector<mscl::Check>& picks, s
     bool all_ok = true;
     const bool running = game_running_under(p.win64);
     for (const auto& c : picks) {
+        if (c.mod.disabled) {
+            msg += c.mod.name + " is disabled: enable it first. ";
+            all_ok = false;
+            continue;
+        }
         std::vector<mscl::Dep> want = c.mod.requires_;
         want.insert(want.end(), c.m.requires_.begin(), c.m.requires_.end());
         std::string err, dmsg;
@@ -568,6 +716,10 @@ int update_cli(const fs::path& win64, const std::string& mod) {
         if (mscl::lower(m.name) == mscl::lower(mod)) target = &m;
     if (!target || mscl::lower(mod) == "mscore") {
         log_line("update: FAILED " + mod + " is not an installed mod (MSCore: use --install)");
+        return 1;
+    }
+    if (target->disabled) {
+        log_line("update: FAILED " + mod + " is disabled: enable it first");
         return 1;
     }
     mscl::Check c = mscl::check_mod(*target, core, &p);
@@ -717,15 +869,29 @@ void do_remove() {
     std::vector<std::string> deps = mscl::dependents_of(p, name);
     std::string q = "Remove " + name + "?\n\nThis deletes " + std::to_string(items.size()) +
                     " file(s) installed by " + name +
-                    ", its backup and its mods.txt line.\n"
+                    ", its backup and its mods.txt lines. Nothing of it stays loadable.\n"
+                    "Saves containing this mod's blocks will be backed up and scrubbed.\n"
                     "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
     if (!deps.empty()) q += "\n\nRequired by " + join_names(deps) + ": they will stop working";
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;
-    run_work([p, name]() -> std::string {
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, name);  // before the mscore.mod files are deleted
+    fs::path sd = save_dir();
+    run_work([p, name, decl, sd]() -> std::string {
         if (game_running_under(p.win64)) return "Game is running - close it first";
         std::string e;
-        if (mscl::remove_mod(p, name, e)) return "Removed " + name + ".";
-        return "Remove " + name + " failed: " + e;
+        if (!mscl::remove_mod(p, name, e)) return "Remove " + name + " failed: " + e;
+        std::string r = "Removed " + name + ".";
+        if (decl.empty()) return r;
+        auto progress = [](const std::string& t) {  // worker thread: the UI only shows the line, it never blocks
+            if (g_hwnd) PostMessageW(g_hwnd, WM_APP_PROGRESS, 0, reinterpret_cast<LPARAM>(new std::string(t)));
+        };
+        mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false, mscl::kScrubSaves | mscl::kScrubDesigns, progress);
+        log_line(sum.text());
+        r += " Saves scrubbed: " + std::to_string(sum.scrubbed()) + ", refused: " + std::to_string(sum.refused()) +
+             "; designs scrubbed: " + std::to_string(sum.designs_scrubbed()) + ", refused: " + std::to_string(sum.designs_refused()) +
+             (sum.refused() || sum.designs_refused() ? ". Refused files still need the mod (see below)." : ".");
+        r += "\n" + sum.text();
+        return r;
     });
 }
 
@@ -745,10 +911,11 @@ void do_toggle() {
         set_status("MSCore itself cannot be disabled here");
         return;
     }
-    bool on = !mscl::mod_enabled(g_paths, name);
+    bool on = mscl::mod_state(g_paths, name) != mscl::ModState::Enabled;  // partly enabled: Enable completes the move
     std::string err;
     if (mscl::set_mod_enabled(g_paths, name, on, err))
-        set_status(std::string(on ? "Enabled " : "Disabled ") + name + ". Restart game to apply.");
+        set_status(on ? "Enabled " + name + " (files moved back). Restart game to apply."
+                      : "Disabled " + name + " (files moved to MSCore\\disabled\\" + name + "). Restart game to apply.");
     else
         set_status("Toggle " + name + " failed: " + err);
     start_check();
@@ -766,6 +933,9 @@ void on_command(int id) {
         case ID_INSTALL: do_install(); break;
         case ID_ROLLBACK: do_rollback(); break;
         case ID_BROWSE: do_browse(); break;
+        case ID_AUTOUPD:
+            set_auto_update(SendDlgItemMessageW(g_hwnd, ID_AUTOUPD, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            break;
     }
 }
 
@@ -800,6 +970,10 @@ void create_controls(HWND h) {
     g_btn_remove = mk(h, L"BUTTON", L"Remove mod", BS_PUSHBUTTON, 12, 384, 136, 30, ID_REMOVE);
     g_btn_toggle = mk(h, L"BUTTON", L"Disable/Enable", BS_PUSHBUTTON, 154, 384, 136, 30, ID_TOGGLE);
     g_status = mk(h, L"STATIC", L"", 0, 12, 426, 988, 20, ID_STATUS);
+    mk(h, L"STATIC", mscl::to_wide(version_text()).c_str(), SS_RIGHT, 520, 392, 480, 20, 0);
+    HWND cb = mk(h, L"BUTTON", L"Auto-update manager", BS_AUTOCHECKBOX | WS_TABSTOP, 300, 390, 200, 22, ID_AUTOUPD);
+    SendMessageW(cb, BM_SETCHECK, auto_update_on() ? BST_CHECKED : BST_UNCHECKED, 0);
+    g_details = mk(h, L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER, 12, 452, 988, 150, 0);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -820,6 +994,67 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                        std::to_string(g_rows.size()) + " mod(s).");
             g_last.clear();
             update_ui();
+            return 0;
+        }
+        case WM_APP_PROGRESS: {
+            auto* t = reinterpret_cast<std::string*>(lp);
+            if (g_busy) {  // only while a job runs: a late line must not overwrite the result
+                size_t nl = t->find('\n');
+                if (g_status) SetWindowTextW(g_status, mscl::to_wide(nl == std::string::npos ? *t : t->substr(0, nl)).c_str());
+            }
+            delete t;
+            return 0;
+        }
+        case WM_APP_SELFUPD: {
+            auto* i = reinterpret_cast<mscl::SelfUpdateInfo*>(lp);
+            mscl::SelfUpdateInfo info = *i;
+            delete i;
+            if (g_busy) return 0;  // a mod operation is running: never swap the exe now, the next start tries again
+            g_busy = true;
+            update_ui();
+            set_status("Manager update available v" + info.version + " (installing...)");
+            std::thread([info]() {
+                std::string err;
+                mscl::self_update_apply(self_exe(), kRepo, info, err);
+                PostMessageW(g_hwnd, WM_APP_SELFDONE, 0, reinterpret_cast<LPARAM>(new std::string(err)));
+            }).detach();
+            g_self_ver = info.version;
+            return 0;
+        }
+        case WM_APP_SELFDONE: {
+            auto* e = reinterpret_cast<std::string*>(lp);
+            std::string err = *e;
+            delete e;
+            if (!err.empty()) {
+                log_line("self-update: FAILED " + err);
+                g_busy = false;
+                set_status("Manager update failed: " + err);
+                update_ui();
+                return 0;
+            }
+            set_status("Manager updated to v" + g_self_ver + " (restarting)");
+            log_line("self-update: updated to v" + g_self_ver + ", restarting");
+            std::wstring cmd = L"\"" + self_exe().wstring() + L"\"";
+            std::wstring cl = GetCommandLineW();
+            size_t sp = cl.find(L' ');  // arguments of this run, program name dropped
+            if (cl[0] == L'"') {
+                size_t q = cl.find(L'"', 1);
+                sp = q == std::wstring::npos ? q : cl.find(L' ', q);
+            }
+            if (sp != std::wstring::npos) cmd += cl.substr(sp);
+            cmd += L" --updated";
+            STARTUPINFOW si{};
+            si.cb = sizeof si;
+            PROCESS_INFORMATION pi{};
+            if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                DestroyWindow(g_hwnd);
+            } else {  // the new exe is in place but would not start: keep running, it is used next time
+                g_busy = false;
+                set_status("Manager updated to v" + g_self_ver + ". Restart it to use the new version.");
+                update_ui();
+            }
             return 0;
         }
         case WM_APP_WORK: {
@@ -845,8 +1080,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     INITCOMMONCONTROLSEX ic{sizeof ic, ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&ic);
+    mscl::self_update_cleanup(self_exe());  // exe.old of the previous self-update
 
-    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg;
+    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg, scrub_designs_arg, restore_arg;
+    bool self_update = false, no_self_update = false, updated = false;
+    bool dry_run = false;
     bool headless = false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -856,15 +1094,30 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--add" && i + 1 < argc) add_arg = argv[++i];
         else if (a == L"--remove" && i + 1 < argc) remove_arg = argv[++i];
         else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
+        else if (a == L"--scrub-saves" && i + 1 < argc) scrub_arg = argv[++i];
+        else if (a == L"--scrub-designs" && i + 1 < argc) scrub_designs_arg = argv[++i];
+        else if (a == L"--restore-saves" && i + 1 < argc) restore_arg = argv[++i];
+        else if (a == L"--self-update") self_update = true;
+        else if (a == L"--no-self-update") no_self_update = true;
+        else if (a == L"--updated") updated = true;
+        else if (a == L"--dry-run") dry_run = true;
+        else if (a == L"--saves" && i + 1 < argc) g_saves_override = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
         else if (a == L"--source" && i + 1 < argc) source_arg = argv[++i];
+        else if (a == L"--version") {
+            LocalFree(argv);
+            log_line(version_text());
+            out_text(version_text() + "\n");
+            return 0;
+        }
     }
     LocalFree(argv);
-    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty()) headless = true;
+    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty() || !scrub_designs_arg.empty() || !restore_arg.empty()) headless = true;
     if (!source_arg.empty()) {
         mscl::g_allow_local = true;
         mscl::g_local_root = mscl::to_utf8(source_arg);
     }
+    if (self_update) return self_update_cli();  // needs no game folder
 
     if (!game_arg.empty()) {
         if (fs::is_directory(game_arg)) apply_game(game_arg);
@@ -882,6 +1135,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         if (!add_arg.empty()) return add_cli(g_paths.win64, mscl::to_utf8(add_arg));  // owner/repo or GitHub URL, parsed in add_cli
         if (!remove_arg.empty()) return remove_cli(g_paths.win64, mscl::to_utf8(remove_arg));
         if (!update_arg.empty()) return update_cli(g_paths.win64, mscl::to_utf8(update_arg));
+        if (!restore_arg.empty()) return restore_cli(g_paths.win64, restore_arg, dry_run);
+        if (!scrub_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_arg), dry_run);
+        if (!scrub_designs_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_designs_arg), dry_run, true);
         return install_cli(g_paths.win64);
     }
 
@@ -903,14 +1159,41 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     RegisterClassExW(&wc);
 
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT rc{0, 0, 1012, 460};
+    RECT rc{0, 0, 1012, 616};
     AdjustWindowRect(&rc, style, FALSE);
-    g_hwnd = CreateWindowExW(0, kClass, L"MSCore Manager", style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
+    g_hwnd = CreateWindowExW(0, kClass, mscl::to_wide(version_text()).c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
                              rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
     ShowWindow(g_hwnd, show);
     update_ui();
+    if (updated) {
+        g_last = "Manager updated to v" + std::string(mscl::kVersion);
+        // the old instance may still hold exe.old for a moment: retry the delete in the background
+        std::thread([]() {
+            for (int i = 0; i < 40; ++i) {
+                mscl::self_update_cleanup(self_exe());
+                std::error_code ec;
+                fs::path old = self_exe();
+                old += L".old";
+                if (!fs::exists(old, ec)) break;
+                Sleep(250);
+            }
+        }).detach();
+    }
     start_check();
+    // startup self-update check: background, silent when offline; never when the user switched it off, in tests or right
+    // after an update (an exe that is still older than its manifest must not loop)
+    if (!no_self_update && !updated && auto_update_on()) {
+        std::thread([]() {
+            mscl::SelfUpdateInfo info;
+            std::string err;
+            mscl::SuSt st = mscl::self_update_check(kRepo, mscl::kVersion, info, err);
+            if (st == mscl::SuSt::Newer)
+                PostMessageW(g_hwnd, WM_APP_SELFUPD, 0, reinterpret_cast<LPARAM>(new mscl::SelfUpdateInfo(info)));
+            else if (st == mscl::SuSt::NoInfo)
+                log_line("self-update: " + err);
+        }).detach();
+    }
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {

@@ -1,5 +1,6 @@
 // msc_loader tests: plain asserts. Prints ALL OK, exit 1 on first failure.
 #include "msc_loader.hpp"
+#include "msc_savescrub.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -59,6 +60,166 @@ MSDevMenu : 1
 static bool zip_ok(std::vector<std::string> v) {
     std::string e;
     return zip_entries_ok(v, e);
+}
+
+// ---- synthetic minimal _S.sav (same layout as the real format, see msc_savescrub.hpp)
+static std::string w32(uint32_t v) { return ss::pk(v); }
+static const std::string kMod = "/Game/Blueprints/BuildingBlocks/BPO_ModBlock.BPO_ModBlock_C";
+static const std::string kStk = "/Game/Blueprints/BuildingBlocks/BPO_StkBlock.BPO_StkBlock_C";   // same length
+static const std::string kStkLong = "/Game/Blueprints/BuildingBlocks/BPO_StockBlockLonger.BPO_StockBlockLonger_C";
+static const std::string kOth = "/Game/Blueprints/BuildingBlocks/BPO_Other.BPO_Other_C";
+// table: 6 fixed classes, then stock(6) modded(7) other(8)
+static std::string make_save(bool withStock, bool withMod, bool shipStr, bool stats, int nodes, bool stockLong = false) {
+    const std::string& stk = stockLong ? kStkLong : kStk;
+    std::vector<std::string> T = {"/Script/A.ResearchState", "/Script/A.FactionManager", "/Script/A.M1",
+                                  "/Script/A.M2", "/Script/A.Statistics", "/Script/A.StarCluster"};
+    if (withStock) T.push_back(stk);
+    if (withMod) T.push_back(kMod);
+    T.push_back(kOth);
+    std::string b = w32(0) + w32(39) + w32(static_cast<uint32_t>(T.size()));
+    for (auto& t : T) b += ss::fstr(t);
+    for (uint32_t v : {1u, 1u, 5u, 2u, 3u, 4u, 5000u, 777u}) b += w32(v);
+    b += w32(0xAAAAAAAAu) + w32(0xBBBBBBBBu);
+    uint32_t mi = 6 + (withStock ? 1 : 0);
+    uint32_t si = withStock ? 6 : 0;
+    // node payload as in the real saves: [idx][id][0][..][..][..][0][0][0][-5][395][0][6][parent]; word before = anything
+    auto node = [&](uint32_t idx, uint32_t id) {
+        return w32(idx) + w32(id) + w32(0) + w32(262144) + w32(262144) + w32(65536) + w32(0) + w32(0) + w32(0) + w32(0xFFFFFFFBu) + w32(395) +
+               w32(0) + w32(6) + w32(1) + w32(0xCCCCCCCCu);
+    };
+    for (int i = 0; i < nodes; ++i) b += w32(i == 0 ? 10u : 0u) + w32(0) + node(mi, 100 + i);  // first one is off the old signature
+    b += w32(65536) + w32(0) + node(si, 900);
+    if (stats) {
+        b += w32(0xEEEEEEEEu) + w32(3);
+        b += ss::fstr(kOth) + w32(9) + ss::fstr(withStock ? stk : kOth + "x") + w32(5) + ss::fstr(kMod) + w32(2);
+        b += w32(0xEEEEEEEEu);
+    }
+    if (shipStr) b += w32(0x11112222u) + ss::fstr(kMod) + w32(0x33334444u);
+    b += w32(0xFFFFFFF0u);
+    return b;
+}
+
+static void scrub_tests() {
+    std::vector<SaveScrub> pairs = {{kMod, kStk, ""}};
+    // ok: nodes, table, stats merge, ship string
+    std::string a = make_save(true, true, true, true, 3);
+    ScrubOut o = scrub_bytes(a, pairs);
+    CHECK(o.st == ScrubSt::Ok);
+    CHECK(o.data.find(kMod) == std::string::npos);
+    CHECK(o.rep.nodes == 3 && o.rep.table == 1 && o.rep.merged == 1 && o.rep.paths == 1);
+    ss::Parsed PA, PC;
+    std::string why;
+    CHECK(ss::parse(a, PA, why) && ss::parse(o.data, PC, why));
+    CHECK(PC.table.size() == PA.table.size() && PC.table[7] == ss::standins()[0] && PC.table[6] == kStk && PC.table[8] == kOth);
+    CHECK(ss::usage(o.data, 7, PC).empty());
+    CHECK(ss::usage(o.data, 6, PC).size() == ss::usage(a, 6, PA).size() + 3);
+    auto fm = ss::find_flatmaps(o.data, kStk, PC.tab_end);
+    CHECK(fm.size() == 1 && fm[0].N == 2);
+    auto md = ss::mapdict(o.data, fm[0].p);
+    CHECK(md.size() == 2 && md[0].first == kOth && md[0].second == 9 && md[1].first == kStk && md[1].second == 7);
+    // size: stats entry removed, table slot renamed to the stand-in (other length)
+    CHECK(o.data.size() == a.size() - (ss::fstr(kMod).size() + 4) + (ss::fstr(ss::standins()[0]).size() - ss::fstr(kMod).size()));
+    // scrubbing again is a no-op (nothing modded left)
+    CHECK(scrub_bytes(o.data, pairs).st == ScrubSt::Skip);
+
+    // stock entry absent in the stats map: key renamed, N unchanged
+    std::string a2 = make_save(true, true, false, true, 1);
+    {
+        size_t k = a2.find(ss::fstr(kStk), a2.find(w32(0xEEEEEEEEu)));
+        CHECK(k != std::string::npos);
+        std::string alt = kStk;
+        alt.replace(alt.find("BPO_Stk"), 7, "BPO_Xyz");
+        a2.replace(k, ss::fstr(kStk).size(), ss::fstr(alt));
+        ScrubOut o2 = scrub_bytes(a2, pairs);
+        CHECK(o2.st == ScrubSt::Ok && o2.rep.renamed == 1 && o2.rep.merged == 0);
+        CHECK(o2.data.find(kMod) == std::string::npos);
+    }
+
+    // refusals: stock not in table; per-ship path with another length. Nothing is returned to write.
+    CHECK(scrub_bytes(make_save(false, true, false, false, 1), pairs).st == ScrubSt::Refused);
+    ScrubOut r = scrub_bytes(make_save(true, true, true, true, 1, true), {{kMod, kStkLong, ""}});
+    CHECK(r.st == ScrubSt::Refused && r.data.empty() && r.why.find("another length") != std::string::npos);
+    // save without the class: skipped, not written
+    CHECK(scrub_bytes(make_save(true, false, false, false, 0), pairs).st == ScrubSt::Skip);
+    // fail closed: a plausible reference to the modded slot that is not a known node shape leaves the save untouched
+    {
+        std::string sus = make_save(true, true, false, true, 1);
+        sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]: looks like a node, wrong payload
+        ScrubOut rf = scrub_bytes(sus, pairs);
+        CHECK(rf.st == ScrubSt::Refused && rf.data.empty() && rf.why.find("cannot revert safely") != std::string::npos);
+        // the same shape with a repeated id is a repeated record: explained, not a refusal
+        std::string rep2 = make_save(true, true, false, true, 1) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);
+        CHECK(scrub_bytes(rep2, pairs).st == ScrubSt::Ok);
+    }
+    // the off-signature first node was found (3 nodes, the first preceded by 10)
+    CHECK(o.rep.nodes == 3 && ss::usage(a, 7, PA).size() == 3);
+    // garbage that holds the path is refused, not touched
+    CHECK(scrub_bytes("junk" + kMod, pairs).st == ScrubSt::Refused);
+    // declarations
+    auto d = parse_save_scrub("name=X\nsave_scrub=" + kMod + ">" + kStk + "\nsave_scrub=bad\nsave_scrub=/a>/a\n#save_scrub=/x>/y\n");
+    CHECK(d.size() == 1 && d[0].modded == kMod && d[0].stock == kStk);
+
+    // files: backup, atomic write, other saves untouched, designs rewritten in place (same length, never moved), dry run writes nothing
+    std::random_device rd;
+    char nm[40];
+    std::snprintf(nm, sizeof nm, "msc_scrub_%08x", rd());
+    fs::path t = fs::temp_directory_path() / nm, sd = t / L"SaveGames", bk = t / L"save-backup";
+    write_text(sd / L"A_S.sav", a);
+    write_text(sd / L"A_M.sav", "meta");
+    write_text(sd / L"B-Autosave_S.sav", make_save(true, false, false, false, 0));
+    write_text(sd / L"B-Autosave_M.sav", "metaB");
+    write_text(sd / L"C_S.sav", make_save(false, true, false, false, 1));  // refused: stock missing
+    // GVAS-like blob: magic, a number, the class path as a whole FString (twice), tail
+    std::string dsg = "GVAS" + w32(3) + ss::fstr("/x") + ss::fstr(kMod) + w32(42) + ss::fstr(kOth) + ss::fstr(kMod) + "tail";
+    write_text(sd / L"Designs" / L"d1.sav", dsg);
+    write_text(sd / L"Designs" / L"d2.sav", "GVAS nothing");
+    write_text(sd / L"Designs" / L"d3.sav", "GVAS" + w32(1) + kMod + "!");  // path not a whole FString: refused, left alone
+    write_text(sd / L"DesignsBackup" / L"old.sav", "older");               // not ours: stays
+    write_text(sd / L"DesignsBackup" / L"d1.sav", dsg);                    // same name as a design in Designs: stays
+    write_text(sd / L"DesignsBackup" / L"r1.sav", "GVAS" + w32(9) + ss::fstr(kMod));  // moved by an old Remove: comes back
+    write_text(sd / L"DesignsBackup" / L"r2.sav", dsg);                    // byte copy of d1: stays
+    std::string bB = read_text(sd / L"B-Autosave_S.sav"), bC = read_text(sd / L"C_S.sav");
+    ScrubSummary dry = scrub_saves(sd, bk, pairs, true);
+    CHECK(dry.scrubbed() == 1 && dry.refused() == 1 && dry.designs_scrubbed() == 1 && dry.designs_refused() == 1 && dry.backup_dir.empty());
+    CHECK(read_text(sd / L"A_S.sav") == a && read_text(sd / L"Designs" / L"d1.sav") == dsg && !fs::exists(bk));
+    ScrubSummary run = scrub_saves(sd, bk, pairs, false);
+    CHECK(run.scrubbed() == 1 && run.refused() == 1 && run.designs_scrubbed() == 1 && run.designs_refused() == 1);
+    CHECK(read_text(sd / L"A_S.sav") == o.data);
+    CHECK(read_text(run.backup_dir / L"A_S.sav") == a && read_text(run.backup_dir / L"A_M.sav") == "meta" &&
+          fs::exists(run.backup_dir / L"RESTORE.txt"));
+    CHECK(read_text(sd / L"B-Autosave_S.sav") == bB && read_text(sd / L"C_S.sav") == bC);
+    CHECK(!fs::exists(run.backup_dir / L"B-Autosave_S.sav") && !fs::exists(sd / L"A_S.sav.scrubtmp"));
+    // design d1: same length, only the two modded strings replaced, original in the backup, d2/d3 untouched, nothing moved
+    std::string d1 = read_text(sd / L"Designs" / L"d1.sav");
+    CHECK(d1.size() == dsg.size() && d1.find(kMod) == std::string::npos);
+    std::string want = dsg;
+    for (size_t o2 = want.find(kMod); o2 != std::string::npos; o2 = want.find(kMod)) want.replace(o2, kMod.size(), kStk);
+    CHECK(d1 == want);
+    CHECK(read_text(run.backup_dir / L"Designs" / L"d1.sav") == dsg);
+    CHECK(read_text(sd / L"Designs" / L"d2.sav") == "GVAS nothing" && read_text(sd / L"Designs" / L"d3.sav") == "GVAS" + w32(1) + kMod + "!");
+    CHECK(read_text(sd / L"DesignsBackup" / L"old.sav") == "older" && !fs::exists(sd / L"Designs" / L"old.sav"));
+    CHECK(!fs::exists(sd / L"Designs" / L"r1.sav"));  // restore was not asked for
+    // restore: --scrub-designs style (r1 comes back scrubbed; d1-named and byte-copy designs stay in DesignsBackup)
+    write_text(sd / L"Designs" / L"d1.sav", dsg);  // pretend d1 is unscrubbed again so r2 is a byte copy of it
+    ScrubSummary rs = scrub_saves(sd, bk, pairs, false, kScrubDesigns | kRestoreDesigns);
+    CHECK(read_text(sd / L"Designs" / L"r1.sav") == "GVAS" + w32(9) + ss::fstr(kStk) && !fs::exists(sd / L"DesignsBackup" / L"r1.sav"));
+    CHECK(fs::exists(sd / L"DesignsBackup" / L"r2.sav") && fs::exists(sd / L"DesignsBackup" / L"d1.sav") && fs::exists(sd / L"DesignsBackup" / L"old.sav"));
+    CHECK(read_text(rs.backup_dir / L"DesignsBackup" / L"r1.sav") == "GVAS" + w32(9) + ss::fstr(kMod));
+    CHECK(read_text(sd / L"Designs" / L"d1.sav") == want);
+    // design refusals: stock path of another length, bad magic, garbage-free skip
+    CHECK(scrub_design_bytes(dsg, {{kMod, kStkLong, ""}}).st == ScrubSt::Refused);
+    CHECK(scrub_design_bytes("XXXX" + ss::fstr(kMod), pairs).st == ScrubSt::Refused);
+    CHECK(scrub_design_bytes("GVAS nothing", pairs).st == ScrubSt::Skip);
+    // restore the originals from the first backup (fresh backup of the scrubbed files first), then scrub again
+    RestoreResult rr = restore_saves(run.backup_dir, sd, bk, false);
+    CHECK(rr.restored >= 3 && rr.failed == 0 && read_text(sd / L"A_S.sav") == a && read_text(sd / L"A_M.sav") == "meta");
+    CHECK(read_text(rr.fresh_backup / L"A_S.sav") == o.data && fs::exists(rr.fresh_backup / L"RESTORE.txt"));
+    CHECK(read_text(sd / L"Designs" / L"d1.sav") == dsg);
+    CHECK(restore_saves(run.backup_dir / L"nope", sd, bk, false).failed == 1);
+    CHECK(scrub_saves(sd, bk, pairs, false).scrubbed() == 1 && read_text(sd / L"A_S.sav") == o.data);
+    CHECK(run.text().find("REFUSED C_S.sav") != std::string::npos);
+    std::error_code ec;
+    fs::remove_all(t, ec);
 }
 
 int main(int argc, char** argv) {
@@ -218,6 +379,181 @@ int main(int argc, char** argv) {
     write_text(P.core / L"installed" / L"Evil.txt", "1.0.0\nMods/../../evil.txt\n");
     CHECK(!remove_mod(P, "Evil", err));
     CHECK(!fs::exists(P.win64 / L"evil.txt"));
+
+    // ---- regression: Remove/Disable of MiningBenchMod (install list of the real game). Old Remove restored the
+    // backup\ copies (previous version of the same files) over the deleted ones: MiningUnitUI, pak98, enabled.txt stayed.
+    {
+        const char* kList = "0.3.1\nMods/MiningBenchMod/dlls/main.dll\nMods/MiningBenchMod/enabled.txt\nMods/MiningBenchMod/mscore.mod\n"
+                            "Mods/MiningUnitUI/Scripts/main.lua\nMods/MiningUnitUI/Scripts/wbp_loader.lua\nMods/MiningUnitUI/enabled.txt\n"
+                            "Paks/pakchunk101-MSMiningModel_P.pak\nPaks/pakchunk101-MSMiningModel_P.ucas\nPaks/pakchunk101-MSMiningModel_P.utoc\n"
+                            "Paks/pakchunk95-MSMiningMesh_P.pak\nPaks/pakchunk95-MSMiningMesh_P.ucas\nPaks/pakchunk95-MSMiningMesh_P.utoc\n"
+                            "Paks/pakchunk98-MiningUnitUI_P.pak\nPaks/pakchunk98-MiningUnitUI_P.ucas\nPaks/pakchunk98-MiningUnitUI_P.utoc\n"
+                            "Paks/pakchunk99-ClonedBlock_P.pak\nPaks/pakchunk99-ClonedBlock_P.ucas\nPaks/pakchunk99-ClonedBlock_P.utoc\n";
+        std::vector<std::string> rels;
+        {
+            std::istringstream in(kList);
+            std::string l;
+            std::getline(in, l);
+            while (std::getline(in, l)) rels.push_back(l);
+        }
+        CHECK(rels.size() == 18);
+        auto build = [&]() {
+            std::error_code e2;
+            fs::remove_all(P.mods / L"MiningBenchMod", e2);
+            fs::remove_all(P.mods / L"MiningUnitUI", e2);
+            fs::remove_all(P.core / L"backup", e2);
+            fs::remove_all(P.core / L"disabled", e2);
+            for (const auto& r : rels) write_text(target_for(P, r), "NEW " + r);
+            // files an earlier update replaced were moved to backup\ (previous versions)
+            for (const char* r : {"Mods/MiningBenchMod/enabled.txt", "Mods/MiningUnitUI/enabled.txt", "Mods/MiningUnitUI/Scripts/main.lua",
+                                  "Mods/MiningUnitUI/Scripts/wbp_loader.lua", "Paks/pakchunk98-MiningUnitUI_P.pak", "Paks/pakchunk98-MiningUnitUI_P.ucas",
+                                  "Paks/pakchunk98-MiningUnitUI_P.utoc"})
+                write_text(P.core / L"backup" / L"MiningBenchMod" / to_wide(r), std::string("OLD ") + r);
+            write_text(P.core / L"installed" / L"MiningBenchMod.txt", kList);
+            write_text(P.mods / L"mods.txt", "# hdr\nMiningBenchMod : 1\nMiningUnitUI : 1\nOther : 1\n");
+            write_text(P.mods / L"Other" / L"main.dll", "other");
+            write_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini", "ini");  // user file
+        };
+        auto none_left = [&]() {
+            for (const auto& r : rels) CHECK(!fs::exists(target_for(P, r)));
+        };
+
+        build();
+        CHECK(remove_mod(P, "MiningBenchMod", err));
+        none_left();
+        CHECK(!fs::exists(P.mods / L"MiningUnitUI"));  // no empty mod folder left
+        CHECK(read_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini") == "ini");  // only the user file keeps its folder
+        CHECK(!fs::exists(P.core / L"backup" / L"MiningBenchMod"));
+        CHECK(!fs::exists(P.core / L"installed" / L"MiningBenchMod.txt"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
+        CHECK(read_text(P.mods / L"Other" / L"main.dll") == "other");
+
+        // disable: nothing loadable stays in Mods\ / Paks\, all in disabled\; enable puts it all back
+        build();
+        fs::remove(P.mods / L"MiningBenchMod" / L"MiningBench.ini");
+        CHECK(set_mod_enabled(P, "MiningBenchMod", false, err));
+        none_left();
+        CHECK(!fs::exists(P.mods / L"MiningBenchMod") && !fs::exists(P.mods / L"MiningUnitUI"));
+        for (const auto& r : rels) CHECK(read_text(P.core / L"disabled" / L"MiningBenchMod" / to_wide(r)) == "NEW " + r);
+        CHECK(!mod_enabled(P, "MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nMiningBenchMod : 0\nMiningUnitUI : 0\nOther : 1\n");
+        bool listed = false;  // still listed in the manager so it can be enabled again
+        for (const auto& m : scan_mods(P)) listed = listed || m.name == "MiningBenchMod";
+        CHECK(listed);
+        CHECK(set_mod_enabled(P, "MiningBenchMod", true, err));
+        for (const auto& r : rels)
+            if (r != "Mods/MiningBenchMod/enabled.txt") CHECK(read_text(target_for(P, r)) == "NEW " + r);
+        CHECK(fs::exists(P.mods / L"MiningBenchMod" / L"enabled.txt") && fs::exists(P.mods / L"MiningUnitUI" / L"enabled.txt"));
+        CHECK(!fs::exists(P.core / L"disabled" / L"MiningBenchMod"));
+        CHECK(mod_enabled(P, "MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nMiningBenchMod : 1\nMiningUnitUI : 1\nOther : 1\n");
+
+        // remove while disabled leaves nothing either
+        CHECK(set_mod_enabled(P, "MiningBenchMod", false, err));
+        CHECK(remove_mod(P, "MiningBenchMod", err));
+        none_left();
+        CHECK(!fs::exists(P.core / L"disabled" / L"MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
+        fs::remove_all(P.mods / L"MiningBenchMod");
+        fs::remove_all(P.core / L"installed" / L"MiningBenchMod.txt");
+    }
+
+    // ---- toggle / remove edge cases (disabled mods, partial failure, move_file)
+    {
+        auto lock = [](const fs::path& f) {  // exclusive handle: rename/delete of f fails until it is closed
+            return CreateFileW(f.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        };
+        std::error_code e5;
+        fs::remove_all(P.mods / L"D", e5);
+        fs::remove_all(P.core / L"disabled", e5);
+        fs::remove_all(P.core / L"installed" / L"D.txt", e5);
+        write_text(P.mods / L"D" / L"mscore.mod", "name=D\nrepo=o/d\nversion=1.0.0\nsave_scrub=/Game/A.A_C>/Game/B.B_C\n");
+        write_text(P.mods / L"D" / L"dlls" / L"main.dll", "dll");
+        write_text(P.mods / L"D" / L"zz.dat", "zz");
+        write_text(P.paks / L"d1.pak", "pak");
+        write_text(P.core / L"installed" / L"D.txt", "1.0.0\nMods/D/mscore.mod\nMods/D/dlls/main.dll\nMods/D/zz.dat\nPaks/d1.pak\n");
+        write_text(P.mods / L"mods.txt", "D : 1\nOther : 1\nF : 1\n");
+
+        // move_file never deletes dst first: a locked src leaves dst and src untouched
+        write_text(P.mods / L"mv_src.bin", "SRC");
+        write_text(P.mods / L"mv_dst.bin", "DST");
+        HANDLE h = lock(P.mods / L"mv_src.bin");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        CHECK(!move_file(P.mods / L"mv_src.bin", P.mods / L"mv_dst.bin"));
+        CloseHandle(h);
+        CHECK(read_text(P.mods / L"mv_dst.bin") == "DST" && read_text(P.mods / L"mv_src.bin") == "SRC");
+        CHECK(move_file(P.mods / L"mv_src.bin", P.mods / L"mv_dst.bin") && read_text(P.mods / L"mv_dst.bin") == "SRC" && !fs::exists(P.mods / L"mv_src.bin"));
+        fs::remove(P.mods / L"mv_dst.bin");
+
+        // Disable with a locked file in the middle: failure names it, files already moved are put back, state stays Enabled
+        h = lock(P.mods / L"D" / L"zz.dat");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        CHECK(!set_mod_enabled(P, "D", false, err) && err.find("zz.dat") != std::string::npos);
+        CHECK(read_text(P.mods / L"D" / L"dlls" / L"main.dll") == "dll" && read_text(P.paks / L"d1.pak") == "pak");
+        CHECK(!is_disabled(P, "D"));
+        CloseHandle(h);
+        CHECK(read_text(P.mods / L"D" / L"zz.dat") == "zz");
+        CHECK(set_mod_enabled(P, "D", false, err));
+        CHECK(mod_state(P, "D") == ModState::Disabled && !mod_enabled(P, "D") && !fs::exists(P.mods / L"D") && !fs::exists(P.paks / L"d1.pak"));
+        // scan_mods lists it as disabled, a disabled mod does not satisfy a dependency, Update would refuse it
+        bool seenD = false;
+        for (const auto& m : scan_mods(P))
+            if (m.name == "D") seenD = m.disabled;
+        CHECK(seenD);
+        Dep dd{"o/d", "1.0.0"};
+        std::string why2;
+        CHECK(!dep_ok(P, dd, why2) && why2.find("is disabled") != std::string::npos);
+        // no install list: remove_plan finds the disabled copy, Remove deletes it, scrub declarations come from it, mods.txt is cleaned
+        std::vector<RemoveItem> its;
+        CHECK(remove_plan(P, "D", its, err) && its.size() >= 3);
+        auto decl = parse_save_scrub(read_text(P.core / L"disabled" / L"D" / L"Mods" / L"D" / L"mscore.mod"));
+        CHECK(decl.size() == 1);
+        // partial: one file back live by hand = partly enabled, Enable completes it
+        fs::copy_file(P.core / L"disabled" / L"D" / L"Paks" / L"d1.pak", P.paks / L"d1.pak");
+        CHECK(mod_state(P, "D") == ModState::Partial && !mod_enabled(P, "D"));
+        // Enable with a locked destination: fails, names the file, nothing half-done is claimed as enabled
+        h = lock(P.paks / L"d1.pak");
+        CHECK(!set_mod_enabled(P, "D", true, err) && err.find("d1.pak") != std::string::npos);
+        CloseHandle(h);
+        CHECK(mod_state(P, "D") != ModState::Enabled);
+        CHECK(set_mod_enabled(P, "D", true, err));
+        CHECK(mod_state(P, "D") == ModState::Enabled && read_text(P.mods / L"D" / L"zz.dat") == "zz" && read_text(P.paks / L"d1.pak") == "pak");
+        CHECK(!fs::exists(P.core / L"disabled" / L"D"));
+        // Remove of a disabled mod (no install list)
+        CHECK(set_mod_enabled(P, "D", false, err));
+        auto decl2 = scrub_declarations(P, "D");
+        CHECK(decl2.size() == 1 && decl2[0].modded == "/Game/A.A_C");
+        CHECK(remove_mod(P, "D", err));
+        CHECK(!fs::exists(P.core / L"disabled" / L"D") && !fs::exists(P.mods / L"D") && !fs::exists(P.paks / L"d1.pak"));
+        CHECK(read_text(P.mods / L"mods.txt") == "Other : 1\nF : 1\n");
+        // F: no install list. The mod folder is the list, also while disabled
+        write_text(P.mods / L"F" / L"mscore.mod", "name=F\nrepo=o/f\nversion=1.0.0\nsave_scrub=/Game/C.C_C>/Game/E.E_C\n");
+        write_text(P.mods / L"F" / L"x.dat", "x");
+        CHECK(set_mod_enabled(P, "F", false, err) && !fs::exists(P.mods / L"F") && mod_state(P, "F") == ModState::Disabled);
+        CHECK(remove_plan(P, "F", its, err) && its.size() == 2);  // found through the disabled copy
+        auto decl3 = scrub_declarations(P, "F");
+        CHECK(decl3.size() == 1 && decl3[0].modded == "/Game/C.C_C");
+        CHECK(remove_mod(P, "F", err));
+        CHECK(!fs::exists(P.core / L"disabled" / L"F") && !fs::exists(P.mods / L"F"));
+        CHECK(read_text(P.mods / L"mods.txt") == "Other : 1\n");
+        write_text(P.mods / L"mods.txt", "# hdr\nOther : 1\n");
+    }
+
+    scrub_tests();
+
+    // version constants the manager shows
+    {   // kVersion is the one constant: the other copies of the version in the repo must equal it
+        fs::path repo = fs::path(__FILE__).parent_path().parent_path().parent_path();
+        auto grab = [&](const fs::path& f, const std::regex& re) {
+            std::string t = read_text(f);
+            std::smatch m;
+            return std::regex_search(t, m, re) ? m[1].str() : std::string("<none>");
+        };
+        CHECK(grab(repo / L"mods/MSCore/mscore.mod", std::regex("version=([0-9.]+)")) == kVersion);
+        CHECK(grab(repo / L"mods/MSCore/Scripts/mscore.lua", std::regex("version = \"([0-9.]+)\"")) == kVersion);
+        CHECK(grab(repo / L"cpp/MSCore/dllmain.cpp", std::regex("ModVersion = STR\\(\"([0-9.]+)\"\\)")) == kVersion);
+        CHECK(kNativeApi >= 16);
+    }
 
     g_allow_local = false;
     g_local_root.clear();
@@ -403,6 +739,79 @@ int main(int argc, char** argv) {
     CHECK(run_mgr("--update Upd") == 0);
     CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
+    {   // a disabled mod is not updated into Mods\: Update says enable it first
+        std::string e6;
+        CHECK(set_mod_enabled(EP, "Upd", false, e6));
+        publish("owner/upd", "Upd", "1.2.0", "owner/dep@1.0.0", "owner/dep@1.0.0");
+        CHECK(run_mgr("--update Upd") != 0);
+        CHECK(!fs::exists(EP.mods / L"Upd") && !fs::exists(EP.core / L"pending.txt"));
+        CHECK(set_mod_enabled(EP, "Upd", true, e6));
+        CHECK(run_mgr("--update Upd") == 0);
+    }
+    // save scrub through the real manager: --scrub-saves --dry-run changes nothing, --remove backs up and scrubs
+    {
+        fs::path saves = e2e / L"saves";
+        std::string sv = make_save(true, true, true, true, 2);
+        write_text(saves / L"S1_S.sav", sv);
+        write_text(saves / L"S1_M.sav", "meta");
+        write_text(EP.mods / L"SMod" / L"mscore.mod", "name=SMod\nversion=1.0.0\nsave_scrub=" + kMod + ">" + kStk + "\n");
+        write_text(EP.mods / L"SMod" / L"dlls" / L"main.dll", "x");
+        std::string sa = " --saves \"" + saves.string() + "\"";
+        CHECK(run_mgr("--scrub-saves SMod --dry-run" + sa) == 0);
+        CHECK(read_text(saves / L"S1_S.sav") == sv && !fs::exists(EP.core / L"save-backup"));
+        CHECK(run_mgr("--remove SMod" + sa) == 0);
+        CHECK(!fs::exists(EP.mods / L"SMod"));
+        CHECK(read_text(saves / L"S1_S.sav") == scrub_bytes(sv, {{kMod, kStk, ""}}).data);
+        CHECK(read_text(saves / L"S1_S.sav").find(kMod) == std::string::npos);
+        bool bkok = false;
+        for (auto& e : fs::directory_iterator(EP.core / L"save-backup")) bkok = bkok || read_text(e.path() / L"S1_S.sav") == sv;
+        CHECK(bkok);
+    }
+    // manager self-update through a copy of the built manager (--self-update --source <dir>, offline)
+    {
+        fs::path box = e2e / L"selfupd";
+        fs::path cp = box / L"mgr_copy.exe";
+        fs::create_directories(box);
+        fs::copy_file(mgr, cp, fs::copy_options::overwrite_existing);
+        std::string orig = read_text(cp);
+        std::string fake = "MZ-new-manager-bytes";
+        auto manifest = [&](const std::string& extra) {
+            fs::path d = box / L"src";
+            std::error_code e3;
+            fs::remove_all(d, e3);
+            write_text(d / L"MSCoreManager.exe", fake);
+            std::string sha;
+            CHECK(sha256_file(d / L"MSCoreManager.exe", sha));
+            std::replace(sha.begin(), sha.end(), 'X', 'x');
+            std::string m = "name=MSCore\nversion=9.9.9\nzip=x.zip\nsha256=00\n";
+            std::string t = extra;
+            for (size_t k = t.find("@SHA@"); k != std::string::npos; k = t.find("@SHA@")) t.replace(k, 5, sha);
+            for (size_t k = t.find("@SIZE@"); k != std::string::npos; k = t.find("@SIZE@")) t.replace(k, 6, std::to_string(fake.size()));
+            write_text(d / L"manifest.txt", m + t);
+            return d;
+        };
+        auto run_su = [&](const fs::path& d) {
+            std::string cmd = "\"\"" + cp.string() + "\" --self-update --source \"" + d.string() + "\"\"";
+            return std::system(cmd.c_str());
+        };
+        // missing keys: nothing
+        CHECK(run_su(manifest("")) == 0 && read_text(cp) == orig && !fs::exists(box / L"mgr_copy.exe.old"));
+        // equal / older manager_version: nothing
+        CHECK(run_su(manifest("manager_version=" + std::string(kVersion) + "\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0 && read_text(cp) == orig);
+        CHECK(run_su(manifest("manager_version=0.0.1\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0 && read_text(cp) == orig);
+        // bad sha / bad size: refused, exe untouched, no staged file left
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=" + std::string(64, '0') + "\nmanager_size=@SIZE@\n")) != 0);
+        CHECK(read_text(cp) == orig && !fs::exists(box / L"mgr_copy.exe.new") && !fs::exists(box / L"mgr_copy.exe.old"));
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=@SHA@\nmanager_size=3\n")) != 0 && read_text(cp) == orig);
+        // newer + good: exe replaced, old one kept as .old
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0);
+        CHECK(read_text(cp) == fake && read_text(box / L"mgr_copy.exe.old") == orig && !fs::exists(box / L"mgr_copy.exe.new"));
+        // the next start of a real manager deletes the .old
+        fs::copy_file(mgr, cp, fs::copy_options::overwrite_existing);
+        write_text(box / L"mgr_copy.exe.old", "stale");
+        CHECK(run_su(manifest("")) == 0 && !fs::exists(box / L"mgr_copy.exe.old"));
+    }
+
     fs::remove_all(e2e, dec);
 
     std::printf("ALL OK\n");
