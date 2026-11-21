@@ -67,6 +67,13 @@ namespace
     constexpr size_t RR_CACHE_SAMPLE_N = 50;
     constexpr double RR_CACHE_CHANGE_FRAC = 0.005;   // a seed that changed more than 0.5% of the rocks rewrites the cache
 
+    // WHAT: largest |coordinate| (m) a query bound is clamped to. Cell indexes then stay below ~5e8, so spans never overflow int64.
+    constexpr double RR_BOUND_MAX_M = 1.0e12;
+    // WHAT: true when all 3 components are finite (NaN / infinity are rejected by the queries: empty result).
+    inline bool rr_finite3(const double v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
+    // WHAT: v clamped to +-RR_BOUND_MAX_M (finite input; +-infinity clamps too).
+    inline double rr_clampb(double v) { return std::min(std::max(v, -RR_BOUND_MAX_M), RR_BOUND_MAX_M); }
+
     // WHAT: distance from point c to the SEGMENT a->b (clamped to the ends).
     inline double rr_seg_point_dist(const double a[3], const double b[3], const double c[3])
     {
@@ -288,8 +295,12 @@ namespace
         // ---- queries (pure reads; no game calls) ----
         // WHAT: visits the rocks of system sys whose cells overlap the AABB lo..hi (metres). f(index) is called once per rock; f checks bounds itself.
         template <class F>
-        void for_box(int sys, const double lo[3], const double hi[3], F f) const
+        void for_box(int sys, const double lo_in[3], const double hi_in[3], F f) const
         {
+            // WHY: NaN bounds or lo > hi = empty box; huge / infinite bounds are clamped so the cell span cannot overflow (a hang otherwise)
+            for (int k = 0; k < 3; ++k) if (std::isnan(lo_in[k]) || std::isnan(hi_in[k]) || lo_in[k] > hi_in[k]) return;
+            const double lo[3] = {rr_clampb(lo_in[0]), rr_clampb(lo_in[1]), rr_clampb(lo_in[2])};
+            const double hi[3] = {rr_clampb(hi_in[0]), rr_clampb(hi_in[1]), rr_clampb(hi_in[2])};
             const int64_t x0 = rr_cell_idx(lo[0]), x1 = rr_cell_idx(hi[0]);
             const int64_t y0 = rr_cell_idx(lo[1]), y1 = rr_cell_idx(hi[1]);
             const int64_t z0 = rr_cell_idx(lo[2]), z1 = rr_cell_idx(hi[2]);
@@ -313,6 +324,7 @@ namespace
         size_t within(int sys, const double p[3], double r_m, std::vector<size_t>& out) const
         {
             const size_t n0 = out.size();
+            if (!rr_finite3(p) || !(r_m >= 0.0)) return 0;   // NaN, infinite position or negative / NaN radius: nothing
             const double lo[3] = {p[0] - r_m, p[1] - r_m, p[2] - r_m}, hi[3] = {p[0] + r_m, p[1] + r_m, p[2] + r_m};
             const double r2 = r_m * r_m;
             for_box(sys, lo, hi, [&](size_t i)
@@ -329,6 +341,7 @@ namespace
         size_t within_seg(int sys, const double a[3], const double b[3], double margin, std::vector<size_t>& out) const
         {
             const size_t n0 = out.size();
+            if (!rr_finite3(a) || !rr_finite3(b) || !(margin >= 0.0)) return 0;
             const double lo[3] = {std::min(a[0], b[0]) - margin, std::min(a[1], b[1]) - margin, std::min(a[2], b[2]) - margin};
             const double hi[3] = {std::max(a[0], b[0]) + margin, std::max(a[1], b[1]) + margin, std::max(a[2], b[2]) + margin};
             for_box(sys, lo, hi, [&](size_t i)
@@ -406,6 +419,7 @@ namespace
         // WHY: the approach segment's rocks get their radius first (the path check uses it).
         void radius_wanted_seg(int sys, const double a[3], const double b[3], double r_m, size_t max_n, std::vector<size_t>& out) const
         {
+            if (!rr_finite3(a) || !rr_finite3(b) || !(r_m >= 0.0)) return;
             const double lo[3] = {std::min(a[0], b[0]) - r_m, std::min(a[1], b[1]) - r_m, std::min(a[2], b[2]) - r_m};
             const double hi[3] = {std::max(a[0], b[0]) + r_m, std::max(a[1], b[1]) + r_m, std::max(a[2], b[2]) + r_m};
             for_box(sys, lo, hi, [&](size_t i)

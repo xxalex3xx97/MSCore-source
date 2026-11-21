@@ -1,6 +1,7 @@
 // FILE: tests/test_rockreg.cpp
 // WHAT: native unit test for the rock registry logic (cpp/MSCore/msc_rockreg_logic.hpp), API 16. Pure C++, no game headers.
 // RUN: scripts\test-native.ps1 (cl on Windows, g++ fallback). Exit 1 on any failed CHECK.
+#include <limits>
 #include <cstdio>
 #include "msc_rockreg_logic.hpp"
 
@@ -309,8 +310,51 @@ static void t_cache_loaded_ore()
     CHECK(t.nearest_n(7, ice, p, nullptr, 1.0e7, 8, nn) == 0);
 }
 
+// NaN / infinite / huge / inverted bounds: fast, empty or bounded (they used to overflow the cell span and hang)
+static void t_bad_bounds()
+{
+    RrTable t;
+    for (int i = 0; i < 20; ++i) rr_add(t, 100 + i, 7, i * 3000.0, 0, 0);
+    const double nan = std::nan(""), inf = std::numeric_limits<double>::infinity();
+    const double o[3] = {0, 0, 0}, far[3] = {-1e30, 0, 0}, nanp[3] = {nan, 0, 0}, infp[3] = {inf, 0, 0};
+    const double hi0[3] = {0, 0, 0}, big[3] = {1e30, 1e30, 1e30}, nbig[3] = {-1e30, -1e30, -1e30};
+    int n = 0;
+    t.for_box(7, far, hi0, [&](size_t) { ++n; });          // one huge end: bounded, no hang
+    CHECK(n <= 20);
+    n = 0;
+    t.for_box(7, nbig, big, [&](size_t) { ++n; });          // whole system, each rock once
+    CHECK(n == 20);
+    n = 0;
+    t.for_box(7, nanp, hi0, [&](size_t) { ++n; });
+    t.for_box(7, o, nanp, [&](size_t) { ++n; });
+    t.for_box(7, hi0, o, [&](size_t) { ++n; });             // lo == hi still visits its cell
+    CHECK(n == 1);
+    const double lo2[3] = {5, 0, 0}, hi2[3] = {-5, 0, 0};
+    n = 0;
+    t.for_box(7, lo2, hi2, [&](size_t) { ++n; });           // lo > hi: empty
+    CHECK(n == 0);
+    std::vector<size_t> v;
+    CHECK(t.within(7, nanp, 100.0, v) == 0 && t.within(7, infp, 100.0, v) == 0 && t.within(7, o, nan, v) == 0 && t.within(7, o, -1.0, v) == 0);
+    CHECK(t.within(7, o, 1e30, v) == 20);                   // "no limit" works
+    CHECK(t.within(7, o, inf, v) == 20);
+    v.clear();
+    CHECK(t.within_seg(7, far, hi0, 10.0, v) <= 20);
+    CHECK(t.within_seg(7, nanp, hi0, 10.0, v) == 0 && t.within_seg(7, o, infp, 10.0, v) == 0 && t.within_seg(7, o, hi0, nan, v) == 0);
+    CHECK(t.within_seg(7, nbig, big, 1e30, v) == 20);
+    std::vector<size_t> rw;
+    t.radius_wanted_seg(7, nanp, hi0, 10.0, 5, rw);
+    t.radius_wanted_seg(7, far, hi0, 1e30, 50, rw);
+    CHECK(rw.size() <= 20);
+    std::vector<std::pair<double, size_t>> nn;
+    CHECK(t.nearest_n(7, -1, o, nullptr, 1e30, 5, nn) == 5 && t.nearest_n(7, -1, nanp, nullptr, 1e30, 5, nn) == 0);
+    double sm = 0;
+    CHECK(t.nearest_surface(7, o, 50.0, sm) != RrTable::npos);
+    CHECK(t.nearest_surface(7, nanp, 50.0, sm) == RrTable::npos);
+}
+
 int main()
 {
+    t_bad_bounds();
     t_table();
     t_world_track();
     t_within_nearest();
