@@ -16,6 +16,8 @@ nav_order: 6
 - **New:** mscore_wbp item_list() ({key,name} sorted, cached from the item map, no extra FindAllOf), selfcheck items.list. Lua API stays 3.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 - **New:** C export `MSCore_ship_hull(ship, cur, max)` (GetCurrentHull / GetTotalHull, whole units, bitmask 1 cur ok / 2 max ok, -2 module off, -1 exception). Kill switch `module_disable("ships")`. Native API 13 -> 14 (`MSCore_api()` returns `14`). Lua API stays 3.
+- **New:** C export `MSCore_ship_mining_caps(ship)` (bitmask 1 MiningLaser, 2 ItemScooper, 0 no mining weapon, -1 unknown, -2 module off). Weapon names read in `cpp\MSCore\msc_weapons.hpp`; kill switch `module_disable("ships")`; selfcheck `ships.mining_caps`. Native API 14 -> 15 (`MSCore_api()` returns `15`). Lua API stays 3.
+- **New:** C export `MSCore_presence_step(bad_n, listed, read, bad_out)`: pure debounce (a ship read absent 3 times in a row is dropped; never-listed ships rejected at once; unknown read holds). Header `cpp\MSCore\msc_presence.hpp`, native unit test `tests\test_presence.cpp` run by `scripts\test-native.ps1` (from `scripts\check.ps1`).
 - **Fixed:** scan `piloted` flag: a ship counts as piloted when its PilotID matches the controller id or the PlayerObject id. Logs the pilot tuple once on change (`SCAN pilot`).
 - **Fixed:** `items` never caches an empty item map; the next call reads it again.
 - **Fixed:** wbp fleets window counts as open only when it is in the viewport and visible (a cached hidden `WBP_Fleet_C` no longer counts).
