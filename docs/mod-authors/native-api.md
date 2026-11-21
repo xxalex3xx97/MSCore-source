@@ -207,7 +207,8 @@ Rules for every export:
 
 - **Game thread only.**
 - **Units: metres.** Frame = `chunk * 2048 + loc_raw / 65536`, which equals the actor location in uu divided by 100. `MsRegShip.p` and `.q` and every `double[3]` argument use that frame. Radii are metres too.
-- **`-2`** = the `rockreg` module is off (caps row `rockreg`: off after a native fault, a selftest layout mismatch, or when `rocks` is off). **`-1`** = exception inside MSCore (the module is then also off). Every body runs under SEH; a fault turns the module off for the session.
+- **Bad numbers.** Positions and boxes must be finite with every component within 1e12 m, else the call returns 0 (a feed ship with a bad `p` is dropped, a bad `q` clears `has_seg`). Lengths (`max_m`, `margin_m`, `unknown_rad_m`, report radius) are clamped to 0..1e12, so a huge number means "no limit"; NaN returns 0. A box with `lo > hi` on an axis returns 0.
+- **`-2`** = the `rockreg` module is off (caps row `rockreg`: off after a native fault, a selftest layout mismatch, or when `rocks` is off) or MSCore has not registered its caps yet at startup (keep calling; do not treat the first `-2` as permanent). **`-1`** = exception inside MSCore (the module is then also off). Every body runs under SEH; a fault turns the module off for the session.
 - Rock ids are the save object ids (`ObjectId` of the rock actor).
 - Cache file `<MSCore mod folder>\rockreg\RockRegCache.bin`. The per-mod `MiningRegistryCache.bin` files of older mining / Fleet builds are orphaned and safe to delete.
 

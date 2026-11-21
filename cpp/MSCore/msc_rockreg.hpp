@@ -72,6 +72,7 @@ namespace
     constexpr size_t RR_DEAD_CAP = 65536;               // delete queue cap; above it the queue is cleared and flagged (world change)
     constexpr size_t RR_CHECK_MAX_N = 100;              // check report rows (max)
     constexpr int RR_MAX_FEED_N = 100000;               // sanity cap on a feed array
+    constexpr double RR_COORD_MAX = 1.0e12;             // largest |coordinate| or length (m) accepted from a caller (cell indexes stay far inside int64)
 
     // WHAT: wide -> UTF-8 (ore names are compared and stored as UTF-8).
     std::string rr_u8(const std::wstring& w)
@@ -101,6 +102,21 @@ namespace
         QueryPerformanceCounter(&now);
         QueryPerformanceFrequency(&hz);
         return static_cast<double>(now.QuadPart - t0.QuadPart) * 1000.0 / static_cast<double>(hz.QuadPart);
+    }
+
+    // WHAT: true when every component of v is finite and |v| <= RR_COORD_MAX.
+    // WHY: the logic header turns coordinates into int64 cell indexes; a NaN, infinite or huge value from a caller would overflow the cell span and hang the game thread.
+    bool rr_ok3(const double v[3])
+    {
+        for (int k = 0; k < 3; ++k) if (!std::isfinite(v[k]) || std::fabs(v[k]) > RR_COORD_MAX) return false;
+        return true;
+    }
+    // WHAT: v as a length in 0..RR_COORD_MAX (huge values are clamped, "no limit" = a big number works). false for NaN.
+    bool rr_len(double v, double& out)
+    {
+        if (std::isnan(v)) return false;
+        out = std::min(std::max(v, 0.0), RR_COORD_MAX);
+        return true;
     }
 
     double rr_norm3(const double v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
@@ -1048,7 +1064,7 @@ namespace
             for (size_t i : hit)   // the save object is gone: the rock is gone
             {
                 if (i < s.save.size() && s.save[i]) { s.save_at.erase(s.save[i]); s.save[i] = nullptr; }
-                if (s.tab.rocks[i].alive) s.tab.kill(s.tab.rocks[i].id, s.ticks);
+                if (s.tab.rocks[i].alive && !world_bad && !s.world_wait) s.tab.kill(s.tab.rocks[i].id, s.ticks);   // unreadable world: only clear the pointer
             }
         }
         if (world_bad)
@@ -1141,7 +1157,14 @@ namespace
         f.ms = now;
         n = (ships && n > 0) ? std::min(n, RR_MAX_FEED_N) : 0;
         nt = (targets && nt > 0) ? std::min(nt, RR_MAX_FEED_N) : 0;
-        f.ships.assign(ships, ships + n);
+        f.ships.clear();
+        for (int i = 0; i < n; ++i)   // a ship with a bad position is dropped; a bad approach target clears has_seg
+        {
+            MsRegShip sh = ships[i];
+            if (!rr_ok3(sh.p)) continue;
+            if (sh.has_seg && !rr_ok3(sh.q)) sh.has_seg = 0;
+            f.ships.push_back(sh);
+        }
         f.targets.assign(targets, targets + nt);
         if (s.last_tick_ms != 0 && now - s.last_tick_ms < RR_TICK_MS) return;
         std::vector<MsRegShip> ms;
@@ -1219,6 +1242,7 @@ namespace
     {
         RrState& s = rr_st();
         char b[320];
+        if (!rr_ok3(p)) return STR("error: position must be finite and within 1e12 m");
         if (kind == 0)
         {
             const size_t n = rr_dump_file(s, sys, p, L"RockRegDump.txt");
@@ -1226,7 +1250,9 @@ namespace
         }
         if (kind == 1)
         {
-            if (!(arg > 0.0)) return STR("error: radius must be > 0");
+            double rad = 0.0;
+            if (!rr_len(arg, rad) || !(rad > 0.0)) return STR("error: radius must be > 0");
+            arg = rad;
             std::vector<std::pair<double, size_t>> out;
             s.tab.nearest_n(sys, -1, p, nullptr, arg, RR_LIST_N, out);
             std::string txt;
@@ -1244,7 +1270,7 @@ namespace
         }
         if (kind == 2)
         {
-            size_t n = arg >= 1.0 ? static_cast<size_t>(arg) : 30;
+            size_t n = (std::isfinite(arg) && arg >= 1.0) ? static_cast<size_t>(std::min(arg, 1000.0)) : 30;
             n = std::min(n, RR_CHECK_MAX_N);
             std::vector<RrCmpRow> rows;
             long long missing = -1;

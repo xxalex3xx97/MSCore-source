@@ -1063,6 +1063,11 @@ function MSCore.module_disable(name, why)
         if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end
         return true
     end
+    if name == "rockreg" then   -- native rock registry kill switch (API 16): every MSCore_rockreg_* export then returns -2
+        local nd = rawget(_G, "MSCoreNative_module_disable")
+        if type(nd) == "function" then pcall(nd, "rockreg") end
+        return true
+    end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

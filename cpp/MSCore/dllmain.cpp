@@ -988,7 +988,7 @@ namespace
         return lua_result(lua, ok, err);
     }
 
-    // Lua: module_disable(name) -> ok   (narrow: only 'fleets' and 'fleets_write'; the Lua fleets kill switch calls it)
+    // Lua: module_disable(name) -> ok   (narrow: only 'fleets', 'fleets_write' and 'rockreg'; the Lua kill switches call it)
     int lua_module_disable(const LuaMadeSimple::Lua& lua)
     {
         bool ok = false;
@@ -997,6 +997,7 @@ namespace
             {
                 const std::string name = arg_bytes(lua);
                 if (name == "fleets") { module_disable(STR("fleets"), STR("lua kill switch")); ok = true; }
+                else if (name == "rockreg") { module_disable(STR("rockreg"), STR("lua kill switch")); ok = true; }
                 else if (name == "fleets_write") { module_disable(STR("fleets_write"), STR("lua kill switch")); ok = true; }
             }
         } catch (...) { ok = false; }
@@ -1788,7 +1789,7 @@ extern "C"
     MSCORE_API int MSCore_rockreg_box(int sys, const double lo[3], const double hi[3], MsRegRock* out, int max)
     {
         return rr_run([&] {
-            if (!lo || !hi) return 0;
+            if (!lo || !hi || !rr_ok3(lo) || !rr_ok3(hi) || lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return 0;
             const RrTable& t = rr_st().tab;
             int total = 0;
             t.for_box(sys, lo, hi, [&](size_t i) {
@@ -1806,10 +1807,11 @@ extern "C"
     MSCORE_API int MSCore_rockreg_seg(int sys, const double a[3], const double b[3], double margin_m, MsRegRock* out, int max)
     {
         return rr_run([&] {
-            if (!a || !b) return 0;
+            double mg = 0.0;
+            if (!a || !b || !rr_ok3(a) || !rr_ok3(b) || !rr_len(margin_m, mg)) return 0;
             const RrTable& t = rr_st().tab;
             std::vector<size_t> idx;
-            t.within_seg(sys, a, b, margin_m, idx);
+            t.within_seg(sys, a, b, mg, idx);
             for (size_t k = 0; out && k < idx.size() && static_cast<int>(k) < max; ++k) rr_fill(t.rocks[idx[k]], out[k]);
             return static_cast<int>(idx.size());
         });
@@ -1820,7 +1822,8 @@ extern "C"
     MSCORE_API int MSCore_rockreg_nearest_n(int sys, void* item, const double p[3], const int* skip_ids, int nskip, double max_m, int n, MsRegRock* out, double* dist_out)
     {
         return rr_run([&] {
-            if (!p || !out || n <= 0 || !(max_m > 0.0)) return 0;
+            double mm = 0.0;
+            if (!p || !out || n <= 0 || !rr_ok3(p) || !rr_len(max_m, mm) || !(mm > 0.0)) return 0;
             const RrState& s = rr_st();
             int16_t want = -1;
             if (item)
@@ -1832,7 +1835,7 @@ extern "C"
             std::set<int> skip;
             if (skip_ids) for (int i = 0; i < nskip; ++i) skip.insert(skip_ids[i]);
             std::vector<std::pair<double, size_t>> rows;
-            s.tab.nearest_n(sys, want, p, skip.empty() ? nullptr : &skip, max_m, static_cast<size_t>(n), rows);
+            s.tab.nearest_n(sys, want, p, skip.empty() ? nullptr : &skip, mm, static_cast<size_t>(n), rows);
             for (size_t k = 0; k < rows.size(); ++k)
             {
                 rr_fill(s.tab.rocks[rows[k].second], out[k]);
@@ -1847,10 +1850,11 @@ extern "C"
     MSCORE_API int MSCore_rockreg_nearest_surface(int sys, const double p[3], int skip_id, double unknown_rad_m, MsRegRock* out, double* surf_m)
     {
         return rr_run([&] {
-            if (!p || !out) return 0;
+            double ur = 0.0;
+            if (!p || !out || !rr_ok3(p) || !rr_len(unknown_rad_m, ur)) return 0;
             const RrTable& t = rr_st().tab;
             double sm = 0.0;
-            const size_t i = t.nearest_surface(sys, p, unknown_rad_m, sm, skip_id);
+            const size_t i = t.nearest_surface(sys, p, ur, sm, skip_id);
             if (i == RrTable::npos) return 0;
             rr_fill(t.rocks[i], *out);
             if (surf_m) *surf_m = sm;
@@ -1861,7 +1865,7 @@ extern "C"
     // 1 when the area around p (m, one chunk each way, system sys) is inside a seeded zone (all its saves read), 0 when not (use the rocks already known).
     MSCORE_API int MSCore_rockreg_area_ready(int sys, const double p[3])
     {
-        return rr_run([&] { return (p && rr_area_ready(sys, p)) ? 1 : 0; });
+        return rr_run([&] { return (p && rr_ok3(p) && rr_area_ready(sys, p)) ? 1 : 0; });
     }
 
     // writes a report file to <MSCore mod folder>\rockreg and the one-line text into out. kind 0 dump around p (RockRegDump.txt), 1 query (arg = radius m,
