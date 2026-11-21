@@ -193,6 +193,13 @@ static void scrub_tests() {
     CHECK(scrub_design_bytes(dsg, {{kMod, kStkLong, ""}}).st == ScrubSt::Refused);
     CHECK(scrub_design_bytes("XXXX" + ss::fstr(kMod), pairs).st == ScrubSt::Refused);
     CHECK(scrub_design_bytes("GVAS nothing", pairs).st == ScrubSt::Skip);
+    // restore the originals from the first backup (fresh backup of the scrubbed files first), then scrub again
+    RestoreResult rr = restore_saves(run.backup_dir, sd, bk, false);
+    CHECK(rr.restored >= 3 && rr.failed == 0 && read_text(sd / L"A_S.sav") == a && read_text(sd / L"A_M.sav") == "meta");
+    CHECK(read_text(rr.fresh_backup / L"A_S.sav") == o.data && fs::exists(rr.fresh_backup / L"RESTORE.txt"));
+    CHECK(read_text(sd / L"Designs" / L"d1.sav") == dsg);
+    CHECK(restore_saves(run.backup_dir / L"nope", sd, bk, false).failed == 1);
+    CHECK(scrub_saves(sd, bk, pairs, false).scrubbed() == 1 && read_text(sd / L"A_S.sav") == o.data);
     CHECK(run.text().find("REFUSED C_S.sav") != std::string::npos);
     std::error_code ec;
     fs::remove_all(t, ec);

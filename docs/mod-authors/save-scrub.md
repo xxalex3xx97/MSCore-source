@@ -48,6 +48,16 @@ Only when the mod is removed (Disable never touches saves). The game must be clo
 
 1. Every `*_S.sav` in `%LOCALAPPDATA%\MainSequence\Saved\SaveGames` (Autosaves too) that holds one of your class paths is copied, with its `_M.sav`, to `ue4ss\Mods\MSCore\save-backup\<yyyymmdd-hhmmss>\` together with a `RESTORE.txt`. The backup is never deleted.
 2. Objects of your class become the stock class, the statistics counts are merged into the stock entry, and the unused class-table slot gets an unused vanilla class. The result is checked by re-reading it. If anything is doubtful the save is left untouched and listed as refused.
-3. Saved designs (`SaveGames\Designs\*.sav`) that use your class cannot be rewritten. They are moved to `SaveGames\DesignsBackup\` (never overwritten).
+3. Saved designs (`SaveGames\Designs\*.sav`) that use your class are rewritten in place, never moved (a ship points at its design, and the game crashes when the file is gone). Only the class path strings change, and only when the stock path has the same length, so no length field of the file changes. The original goes to `save-backup\<time>\Designs\`. A design that cannot be rewritten that way is left alone and listed as refused.
+
+## Choice of the stock class
+
+The stock class must be the block the game itself uses for that job. For the Mining Unit that is `BPO_WorkstationBlock` (default machine `BPO_Workbench`): it is the donor the Mining Unit was cloned from and it is the ship workbench block of the stock game (present in the ship tables of saves that never saw the mod). After the scrub the ship shows the stock block with the donor's footprint, which looks different from your own mesh.
+
+The class-table slot of your class gets an unused vanilla class so the table keeps its length and no path appears twice (the game never writes duplicate table entries). The scrub rewrites every place that names your class: objects, the table, statistics, per-ship tables. Numbers in the save that merely equal the table index are object ids, not class references.
+
+## Other commands
+
+`MSCoreManager.exe --scrub-designs <mod>` fixes only designs and also takes designs an older Remove moved to `DesignsBackup` back into `Designs`. `--restore-saves <save-backup folder>` puts the originals of an earlier scrub back (after a fresh backup of the files it replaces), so a scrub can be run again.
 
 `MSCoreManager.exe --scrub-saves <mod> --dry-run` lists what would change without writing anything. `--saves <dir>` uses another save folder.

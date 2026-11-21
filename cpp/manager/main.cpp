@@ -2,7 +2,7 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
-//      --scrub-designs <ModName> [--dry-run] (designs only, restores moved ones), --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
+//      --restore-saves <save-backup folder> [--dry-run], --scrub-designs <ModName> [--dry-run] (designs only, restores moved ones), --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
 //      --version (prints the manager version and exits)
 //      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
@@ -475,6 +475,19 @@ int remove_cli(const fs::path& win64, const std::string& mod) {
     return sum.refused() || sum.designs_refused() ? 3 : 0;
 }
 
+// --restore-saves <save-backup folder> [--dry-run]: originals back into the save folder (fresh backup of the current files first).
+int restore_cli(const fs::path& win64, const std::wstring& dir, bool dry) {
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    if (!dry && game_running_under(win64)) {
+        log_line("restore-saves: game is running - close it first");
+        return 1;
+    }
+    mscl::RestoreResult r = mscl::restore_saves(dir, save_dir(), p.core / L"save-backup", dry);
+    log_line(r.text);
+    out_text(r.text);
+    return r.failed ? 3 : 0;
+}
+
 // --scrub-saves <mod> [--dry-run]: what Remove does to the saves and designs, on its own.
 // --scrub-designs <mod> [--dry-run]: only designs; also takes designs an older Remove moved to DesignsBackup back into Designs.
 int scrub_cli(const fs::path& win64, const std::string& mod, bool dry, bool designs_only = false) {
@@ -924,7 +937,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     INITCOMMONCONTROLSEX ic{sizeof ic, ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&ic);
 
-    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg, scrub_designs_arg;
+    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg, scrub_designs_arg, restore_arg;
     bool dry_run = false;
     bool headless = false;
     int argc = 0;
@@ -937,6 +950,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
         else if (a == L"--scrub-saves" && i + 1 < argc) scrub_arg = argv[++i];
         else if (a == L"--scrub-designs" && i + 1 < argc) scrub_designs_arg = argv[++i];
+        else if (a == L"--restore-saves" && i + 1 < argc) restore_arg = argv[++i];
         else if (a == L"--dry-run") dry_run = true;
         else if (a == L"--saves" && i + 1 < argc) g_saves_override = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
@@ -949,7 +963,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         }
     }
     LocalFree(argv);
-    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty() || !scrub_designs_arg.empty()) headless = true;
+    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty() || !scrub_designs_arg.empty() || !restore_arg.empty()) headless = true;
     if (!source_arg.empty()) {
         mscl::g_allow_local = true;
         mscl::g_local_root = mscl::to_utf8(source_arg);
@@ -971,6 +985,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         if (!add_arg.empty()) return add_cli(g_paths.win64, mscl::to_utf8(add_arg));  // owner/repo or GitHub URL, parsed in add_cli
         if (!remove_arg.empty()) return remove_cli(g_paths.win64, mscl::to_utf8(remove_arg));
         if (!update_arg.empty()) return update_cli(g_paths.win64, mscl::to_utf8(update_arg));
+        if (!restore_arg.empty()) return restore_cli(g_paths.win64, restore_arg, dry_run);
         if (!scrub_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_arg), dry_run);
         if (!scrub_designs_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_designs_arg), dry_run, true);
         return install_cli(g_paths.win64);

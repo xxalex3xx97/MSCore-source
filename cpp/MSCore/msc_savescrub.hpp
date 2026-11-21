@@ -647,6 +647,69 @@ inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_
     return S;
 }
 
+// Puts the originals from one save-backup\<time>\ folder back (saves, metas, Designs\, DesignsBackup\), after a fresh backup of
+// the files they replace (new save-backup\<time>\ folder). Used to re-run a scrub with a better policy. Never throws.
+struct RestoreResult {
+    int restored = 0, failed = 0;
+    fs::path fresh_backup;
+    std::string text;
+};
+
+inline RestoreResult restore_saves(const fs::path& backup_dir, const fs::path& savedir, const fs::path& backup_root, bool dry) {
+    RestoreResult R;
+    std::error_code ec;
+    if (!fs::is_directory(backup_dir, ec) || !fs::is_directory(savedir, ec)) {
+        R.failed = 1;
+        R.text = "restore: backup folder or save folder not found\n";
+        return R;
+    }
+    std::vector<fs::path> files;  // paths relative to backup_dir
+    for (auto it = fs::recursive_directory_iterator(backup_dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file(ec) && it->path().filename() != L"RESTORE.txt") files.push_back(fs::relative(it->path(), backup_dir));
+    std::sort(files.begin(), files.end());
+    if (files.empty()) {
+        R.failed = 1;
+        R.text = "restore: nothing to restore in " + to_utf8(backup_dir.wstring()) + "\n";
+        return R;
+    }
+    if (!dry) {
+        char st[32];
+        std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        std::strftime(st, sizeof st, "%Y%m%d-%H%M%S", &tm);
+        fs::path d = backup_root / (std::string(st) + "-before-restore");
+        for (int i = 1; fs::exists(d, ec); ++i) d = backup_root / (std::string(st) + "-before-restore-" + std::to_string(i));
+        fs::create_directories(d, ec);
+        R.fresh_backup = d;
+        write_text(d / L"RESTORE.txt", "Files that were in the save folder just before a restore from\n  " + to_utf8(backup_dir.wstring()) +
+                                           "\nCopy them back into\n  " + to_utf8(savedir.wstring()) + "\nto undo the restore.\n");
+    }
+    for (const auto& rel : files) {
+        fs::path src = backup_dir / rel, dst = savedir / rel;
+        std::string name = to_utf8(rel.wstring());
+        try {
+            if (!dry) {
+                if (fs::exists(dst, ec)) {
+                    fs::create_directories((R.fresh_backup / rel).parent_path(), ec);
+                    fs::copy_file(dst, R.fresh_backup / rel, fs::copy_options::overwrite_existing);
+                }
+                fs::create_directories(dst.parent_path(), ec);
+                write_verified(dst, read_bin(src));
+            }
+            ++R.restored;
+            R.text += std::string(dry ? "  would restore " : "  restored ") + name + "\n";
+        } catch (const std::exception& e) {
+            ++R.failed;
+            R.text += "  FAILED " + name + ": " + e.what() + "\n";
+        }
+    }
+    R.text = std::string(dry ? "Restore (dry run): " : "Restore: ") + std::to_string(R.restored) + " file(s), " + std::to_string(R.failed) +
+             " failed.\n" + R.text;
+    if (!R.fresh_backup.empty()) R.text += "  fresh backup of the replaced files: " + to_utf8(R.fresh_backup.wstring()) + "\n";
+    return R;
+}
+
 // Built-in declarations for mods released before they carried save_scrub lines in mscore.mod.
 inline std::vector<SaveScrub> builtin_save_scrub(const std::string& mod) {
     const std::string B = "/Game/Blueprints/BuildingBlocks/", M = "/Game/Blueprints/Machines/";
