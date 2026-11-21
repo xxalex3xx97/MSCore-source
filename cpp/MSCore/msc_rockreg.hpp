@@ -644,6 +644,8 @@ namespace
                 STR(" pass=") + std::to_wstring(s.pass));
     }
 
+    void rr_cache_fail(RrState& s, const char* kind);   // defined with the writer below
+
     // WHAT: ends a pass: rocks it did not see are killed; the self-check is due; the cache is written when it is missing or the table changed a lot.
     void rr_seed_finish(RrState& s)
     {
