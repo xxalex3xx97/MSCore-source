@@ -5,6 +5,41 @@ nav_order: 6
 
 # Changelog
 
+## 0.8.15 - Holograms, item icons, fleets, repair, ship hull
+- **Fixed:** MSCore.fleets.capture(true): hook now reads AddInputCommand(receiver, cmd) correctly and dumps every FleetTagInput property (dev probe, sends nothing).
+- **Fixed:** stations names: DisplayName read failed on StationObject, now tries DisplayName, Blueprint.DisplayName, StationName, CustomName (first non-empty); selfcheck world.stations logs a one-shot probe and the winning source. C API unchanged.
+- **New:** MSCore.wbp.open_fleets_window() (the game's own fleet window, ShowWidget(WBP_Fleet, PlayerObject)), open_fleet_assign(shipId) (add-to-fleet popup, enabled: WidgetSubsystem:ShowPopup(WBP_TagSelectPopup_C, shipObject, nil, false); logs "[MSCore.wbp] open_fleet_assign ship=.. class=.. ok=.."), fleet_assign_caps() ("ok" or "off:<why>"), probe_fleet_popup() (dev capture, logs the ShowPopup widget class name, sends nothing). Contract widgets fleet_window / fleet_tag_popup, selfcheck wbp.fleet_open. Lua API stays 3.
+- **New:** fleets module: C exports MSCore_fleet_tags / MSCore_fleet_ships (MsFleetTag 200 B, MsFleetShip 48 B), Lua natives fleets_read / fleet_cmd / fleets_probe, Lua mscore_fleets.lua (MSCore.fleets.list / of_ship, write wrappers), caps fleets and fleets_write (off: unverified), kill switch module_disable("fleets"), selfcheck world.fleets / world.fleets_write / fleets.list. Native API 12 -> 13. Lua API stays 3.
+- **New:** C export `MSCore_stations(MsStationName*, int)` (id + DisplayName of every live station), caps `stations`, kill switch `module_disable("stations")`, selfcheck `world.stations`. Native API 11 -> 12. C only.
+- **New:** MSCore_ship_repair / MSCore_ship_repair_need (game's RepairFrameInputCommand, bCreative = free), caps repair, kill switch module_disable('repair'), selfcheck world.repair. Native API 10 -> 11. C only (no Lua wrapper, like the flight exports).
+- **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): ship_hologram (primary, returns the texture; hologram_texture alias) + set_ship_hologram wrapper, item_icon + set_item_icon wrapper, texture lifetime rule, pictures need opts.host (widgets parented to the consumer's hidden panel so the GC keeps them), hologram_release(host) on close and at open; created once per ship per window (refresh OFF, C.holo_refresh=false: re-rendering an existing widget crashed the game; 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
+- **New:** mscore_wbp item_list() ({key,name} sorted, cached from the item map, no extra FindAllOf), selfcheck items.list. Lua API stays 3.
+- **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
+- **New:** C export `MSCore_ship_hull(ship, cur, max)` (GetCurrentHull / GetTotalHull, whole units, bitmask 1 cur ok / 2 max ok, -2 module off, -1 exception). Kill switch `module_disable("ships")`. Native API 13 -> 14 (`MSCore_api()` returns `14`). Lua API stays 3.
+- **New:** C export `MSCore_ship_mining_caps(ship)` (bitmask 1 MiningLaser, 2 ItemScooper, 0 no mining weapon, -1 unknown, -2 module off). Weapon names read in `cpp\MSCore\msc_weapons.hpp`; kill switch `module_disable("ships")`; selfcheck `ships.mining_caps`. Native API 14 -> 15 (`MSCore_api()` returns `15`). Lua API stays 3.
+- **New:** C export `MSCore_presence_step(bad_n, listed, read, bad_out)`: pure debounce (a ship read absent 3 times in a row is dropped; never-listed ships rejected at once; any read other than 0 or 1, e.g. -1, holds). Header `cpp\MSCore\msc_presence.hpp`, native unit test `tests\test_presence.cpp` run by `scripts\test-native.ps1` (from `scripts\check.ps1`).
+- **Fixed:** scan `piloted` flag: a ship counts as piloted when its PilotID matches the controller id or the PlayerObject id. Logs the pilot tuple once on change (`SCAN pilot`).
+- **Fixed:** `items` never caches an empty item map; the next call reads it again.
+- **Fixed:** wbp fleets window counts as open only when it is in the viewport and visible (a cached hidden `WBP_Fleet_C` no longer counts).
+- **Fixed:** wbp hologram queue: queue purge, items stall guard, pruning of dead entities, nil guards. No in-place re-render without refresh_ok (refresh stays OFF).
+- **Changed:** native fleet unassign sends `bRemove=true` (`false` is ADD, per the 2026-11-20 log). Verified in game 2026-11-21: the pill trash removes a fleet from a ship. Other fleet write ops (create, rename, delete, assign, reparent) stay unverified and off (`fleet_write` refuses them; `fleets_write` cap off by default).
+- **Changed:** selftest `world.fleets_write` arms the cap only for the verified factory `CreateInputFleetTag` (FText, int and bool params). Any other FleetTagInput factory keeps `fleets_write` off.
+- **Fixed:** fleets scan skips a ship whose `FleetTagIDs` layout is unexpected (counted) and fails (module off) only when no ship could be read. `MSCore.module_disable("fleets")` also switches off native `fleets_write` (new narrow native `MSCoreNative_module_disable`, names `fleets` / `fleets_write` only).
+- **Known issues:**
+  - `open_fleet_assign` (mscore_wbp.lua): in standalone mode the `holo.hold - now <= 3` bypass is always true, so the 3 s settle hold never blocks the + (add to fleet) click. Left unchanged: standalone mode has no warp/load event, so a bypass limited to "this session start" cannot be told apart from a warp without the live game. The + flow is confirmed working in game; the warp guard stays as before. Follow-up: a warp/load signal for standalone mode.
+  - Native fleets export: only the first 8 fleet tag ids per ship are exported (`MsFleetShip.tags[8]`). A ship in 9+ fleets shows 8 ids; `total` has the real count.
+  - Native exports that walk game objects (`ship_repair_need`, `ship_hull`, `fleet_tags`, `fleet_ships`, `stations`) must be called from the game thread. SEH only catches access violations.
+  - A hologram widget dropped after its ship disappears stays parented to the host panel until `hologram_release`. Memory grows in very long sessions.
+  - The hologram render queue can hold a ship behind an abandoned queued ship for up to 10 s.
+  - `MSCore_stations` does a full scan per call (no cache). Count call + fill call = two scans.
+  - `MSCore.caps().fleets` reports `ok` from the Lua side only. A native fleets module off is not reflected yet.
+  - The `piloted` flag accepts a PilotID equal to the controller id or the player object id.
+- **Changed:** `MSCore.fleets.list(true)` bypasses the cache. `open_fleet_assign` scans ships on its first click.
+- **New:** `MSCore.fleets.on_fleet_cmd` (a function you set; nil clears it): called with `(FleetTagID, bRemove)` whenever the game sends a FleetTagInput, even with the log muted. ID 0 = create fleet.
+- **New:** mscore_wbp `close_fleets_window()` closes the game's fleet window again after the add-to-fleet popup; `fleets_window_open()` reports whether it is open.
+- **Docs:** hologram ownership contract and test checklist (`docs/mod-authors/lua-api/ui.md`). Native API 11 to 14 sections and the quick reference updated to API 14.
+- **Dev:** aimed tests in `mods/MSCore/tests/` for fleets, fleet open, hologram and item icon. The class contract test passes: `C.classes.player_obj` (`DMSPlayerObject`) has its mirror `kClsPlayerObj` in `cpp/MSCore/msc_contract.hpp` (`cls_name("player_obj")`).
+
 ## 0.8.14 - Game update 2026-11-20 + pause query
 - **New:** C export `MSCore_world_paused()` (1 paused, 0 running, -1 unknown, -2 module off; UGameplayStatics::IsGamePaused by reflection, no patterns), caps `world`, selfcheck `world.paused`. API stays 10.
 - **Fixed:** selfcheck no longer expects `MSCore.native.rename_ship` (it is a Lua wrapper over `rename_dock`); new check `factory_native.rename_ship` instead. Game build 149329408 is now the verified build (Lua `verified_build` and comments).

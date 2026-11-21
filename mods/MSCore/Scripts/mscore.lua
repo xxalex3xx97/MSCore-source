@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 6).
-local MSCore = { api = 3, version = "0.8.14", verified_build = 149329408 }
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 15).
+local MSCore = { api = 3, version = "0.8.15", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
 local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
@@ -669,6 +669,13 @@ function MSCore.find_item(res)
     return nil, "'" .. tostring(res) .. "' matches " .. n .. " Items (ambiguous)"
 end
 
+-- Item icons: implementation lives in mscore_wbp (mods load only that); MSCore.items = aliases for MSCore's own state.
+local items = {
+    icon = function(k) local W = MSCore.wbp; if not (W and W.item_icon) then return nil, "off:missing" end return W.item_icon(k) end,
+    set_icon = function(i, k) local W = MSCore.wbp; if not (W and W.set_item_icon) then return false, "off:missing" end return W.set_item_icon(i, k) end,
+}
+MSCore.items = items
+
 ---------------------------------------------------------------- world scan + chunk hold (native; see docs/mod-authors/lua-api/scan.md)
 local SCAN_KINDS = { ship = 0, asteroid = 1, station = 2 }
 
@@ -1013,6 +1020,7 @@ if MSCore.factory then
 end
 load_optional("mscore_inv", function(mod, M) mod.install(M) end)
 load_optional("mscore_wbp", function(mod, M) mod.install(M) end)
+load_optional("mscore_fleets", function(mod, M) mod.install(M) end)
 load_optional("mscore_blocks", function(mod, M) mod.install(M) end)
 
 ---------------------------------------------------------------- hook (never throws)
@@ -1037,12 +1045,24 @@ function MSCore.caps()
     if MSCore.blocks and MSCore.blocks.caps then
         local s, c = pcall(MSCore.blocks.caps); t.blocks = s and c or "off:error"
     end
+    t.hologram = (MSCore.wbp and MSCore.wbp.hologram_caps) and MSCore.wbp.hologram_caps() or "off:missing"
+    t.items_icon = (MSCore.wbp and MSCore.wbp.items_caps) and MSCore.wbp.items_caps() or "off:missing"
+    t.fleets = MSCore.fleets and MSCore.fleets.caps() or "off:missing"
+    t.fleets_write = MSCore.fleets and MSCore.fleets.write_caps() or "off:missing"
     t.rocks = rocksOff and ("off:" .. rocksOff) or nativeCap("rocks")
     return t
 end
 function MSCore.module_disable(name, why)
     if name == "widgets" and MSCore.wbp and MSCore.wbp.disable then pcall(MSCore.wbp.disable, why or "disabled") return true end
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
+    if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
+    if name == "items" and MSCore.wbp and MSCore.wbp.items_disable then pcall(MSCore.wbp.items_disable, why) return true end
+    if name == "fleets" then   -- fleets kill switch: native 'fleets' and 'fleets_write' are disabled too (fail closed), then the Lua fleets module (reads return off:<why>, writes refused)
+        local nd = rawget(_G, "MSCoreNative_module_disable")
+        if type(nd) == "function" then pcall(nd, "fleets") pcall(nd, "fleets_write") end
+        if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end
+        return true
+    end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

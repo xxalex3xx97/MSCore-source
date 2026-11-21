@@ -174,6 +174,9 @@ namespace
         msc_log(STR("SCAN walk ship"));
         UObject* ctrl = first_of(STR("DMSPlayerController"));
         const int cid = alive(ctrl) ? obj_id(ctrl) : -1;
+        UObject* pobj = alive(ctrl) ? get_obj_prop(ctrl, STR("PlayerObject")) : nullptr;
+        const int pid = alive(pobj) ? obj_id(pobj) : -1;
+        int piloted_id = -1;
         std::vector<UObject*> ships;
         UObjectGlobals::FindAllOf(STR("DMSPlayerShipObject"), ships);
         for (UObject* s : ships)
@@ -191,7 +194,8 @@ namespace
                 int32_t v = 0;
                 if (get_int_prop(s, STR("DockID"), v)) { r.dock_id = v; r.docked = v != 0; }
                 int32_t pilot = -1;
-                r.piloted = cid > 0 && get_int_prop(s, STR("PilotID"), pilot) && pilot == cid;
+                r.piloted = get_int_prop(s, STR("PilotID"), pilot) && pilot > 0 && (pilot == cid || pilot == pid);
+                if (r.piloted && piloted_id < 0) piloted_id = r.id;
                 if (call_int(s, STR("GetCurrentHull"), v)) r.hull = v;
                 if (get_int_prop(s, STR("MaxHealth"), v)) r.max_hull = v;
                 if (get_int_prop(s, STR("CurrentOrderIndex"), v)) fill_order(r, s, v);
@@ -202,6 +206,13 @@ namespace
                 out.push_back(entry_of(r, no_ores));
             }
             catch (...) {}
+        }
+        // WHY: piloted-ship debugging; log only when (ctrl id, player id, piloted ship id) changes. No per-scan string build.
+        static int last_cid = -2, last_pid = -2, last_ship = -2;
+        if (cid != last_cid || pid != last_pid || piloted_id != last_ship)
+        {
+            last_cid = cid; last_pid = pid; last_ship = piloted_id;
+            msc_log(STR("SCAN pilot ctrl=") + std::to_wstring(cid) + STR(" player=") + std::to_wstring(pid) + STR(" piloted=") + std::to_wstring(piloted_id));
         }
     }
 

@@ -35,6 +35,12 @@ The warp follows the manual warp the player sends: `SetPilotingInput` on, `ShipT
 | Function | Args | Returns | Notes |
 |---|---|---|---|
 | `MSCore.find_item` | `res` | item object, or `nil, why` | Matches the object name, the display name (case-insensitive) or a numeric ID. Zero matches or several matches return `nil` with the reason. The item list is cached 5 s. |
+| `MSCore.items.icon` | `key` | texture, or `nil, why` | Icon texture of the item whose object name is `key` (for example `ITEM_TitaniumOre`). `why` = `no item <key>`, `no icon`, `off:...`. One `FindAllOf` builds the name map; found textures are kept for the session; a missing key refreshes the map at most every 30 s. |
+| `MSCore.items.set_icon` | `img, key` | `true`, or `false, why` | Sets the Image `img` brush to the item icon. `why` = `bad image`, `SetBrush failed`, or the `items.icon` reasons. |
+
+Mods load only `mscore_wbp` and call `WBP.item_icon(key)` / `WBP.set_item_icon(img, key)` (same returns; `MSCore.items.*` = aliases inside MSCore's own state). Kill switch also `WBP.items_disable(why)`, caps `WBP.items_caps()`. `WBP.item_list()` returns `{key, name}` rows, same kill switch and caps.
+
+Caps key `items_icon` (`ok` or `off:why`). Kill switch `MSCore.module_disable("items")`. Selfcheck: `items.icon`.
 
 ## Example
 

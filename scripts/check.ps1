@@ -3,4 +3,9 @@ $luac = if ($env:MS_LUAC) { $env:MS_LUAC } elseif (Get-Command luac -ErrorAction
 $bad = 0
 Get-ChildItem -Recurse -Filter *.lua (Join-Path (Split-Path -Parent $PSScriptRoot) 'mods') | ForEach-Object {
     & $luac -p $_.FullName; if ($LASTEXITCODE -ne 0) { $bad++ } }
-if ($bad) { Write-Host "$bad file(s) with syntax errors"; exit 1 } else { Write-Host "lua syntax OK"; exit 0 }
+if ($bad) { Write-Host "$bad file(s) with syntax errors"; exit 1 } else { Write-Host "lua syntax OK" }
+
+# Native unit tests (tests\test_*.cpp, see test-native.ps1). Exit 1 on failure.
+& "$PSScriptRoot\test-native.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host "native tests FAILED"; exit 1 }
+exit 0

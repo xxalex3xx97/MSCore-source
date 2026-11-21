@@ -39,6 +39,25 @@ function M.run(MSCore)
         local o = StaticFindObject(R.controllerPath) return yes(S.valid(o), R.controllerPath) end)
     check("resolve.item (FindAllOf)", function()
         local l = FindAllOf(R.item) return yes(l and #l > 0, l and (#l .. " items") or "nil") end)
+    check("items.icon", function()
+        local I = MSCore.items
+        if not (I and I.icon and I.set_icon) then return "BROKEN", "items API missing in mscore" end
+        local l = FindAllOf(R.item) if not (l and #l > 0) then return "SKIP", "no items" end
+        local withIcon = 0
+        for _, it in ipairs(l) do local ok, ic = pcall(function() return it.Icon end) if ok and S.valid(ic) then withIcon = withIcon + 1 end end
+        local t, why = I.icon("ITEM_TitaniumOre")
+        local d = withIcon .. "/" .. #l .. " items have Icon; ITEM_TitaniumOre=" .. (t and "icon" or tostring(why))
+        if tostring(why):find("^off:") then return "BROKEN", d end
+        if withIcon > 0 then return "OK", d end
+        return "SKIP", d .. " (0: ores have no runtime Icon, Mining keeps its baked textures)"
+    end)
+    check("items.list", function()
+        local W = MSCore.wbp
+        if not (W and W.item_list) then return "BROKEN", "wbp.item_list missing" end
+        local l, why = W.item_list()
+        if not l then if tostring(why):find("^off:") then return "BROKEN", tostring(why) end return "SKIP", tostring(why) end
+        return yes(#l > 0, #l .. " items, first=" .. tostring(l[1] and l[1].name))
+    end)
     check("ui.mk/setText", function()
         local c = live("controller") if not c then return "SKIP", "no controller" end
         local tb = UI.mk("TextBlock", c) UI.setText(tb, "selfcheck") return yes(S.valid(tb)) end)
@@ -68,6 +87,69 @@ function M.run(MSCore)
         if allok then return "OK", detail .. " caps=" .. W.caps() end
         if tostring(W.caps()):find("^off:error") or tostring(detail):find("^killed") then return "BROKEN", detail end
         return "SKIP", detail
+    end)
+    check("wbp.fleet_open", function()   -- resolves only, never opens a window
+        local W = MSCore.wbp
+        if not (W and W.open_fleets_window and W.fleets_window_open and W.close_fleets_window and W.open_fleet_assign and W.fleet_assign_caps and W.probe_fleet_popup) then return "BROKEN", "fleet open API missing in mscore_wbp" end
+        local a, b = W.widget("fleet_window"), W.widget("fleet_tag_popup")
+        local d = "fleet_window=" .. tostring(a ~= nil) .. " tag_popup=" .. tostring(b ~= nil) .. " assign=" .. tostring(W.fleet_assign_caps())
+        if a and b then return "OK", d end
+        if a and not b then
+            local names = {}
+            for i, c in ipairs(W.fleet_popup_candidates() or {}) do names[i] = c.name end
+            return "SKIP", d .. " candidates=" .. (#names > 0 and table.concat(names, ",") or "none")
+        end
+        return "SKIP", d
+    end)
+    check("wbp.hologram", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_texture and W.set_ship_hologram and W.hologram_caps) then return "BROKEN", "hologram API missing in mscore_wbp" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.hologram_texture(sh.id)
+        if t then return yes(S.valid(t), "ship " .. sh.id .. " " .. S.objName(t)) end
+        if tostring(why):find("^off:") then return "BROKEN", why end
+        return "SKIP", tostring(why)
+    end)
+    -- the three wbp.hologram checks below need a consumer host (opts.host, a panel of a live window). The selfcheck state has none and MSCore never
+    -- creates unrooted widgets, so they SKIP with "no host" here; run them from a consumer that passes its host.
+    check("wbp.hologram ttl", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_stats) then return "BROKEN", "hologram_stats missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.hologram_texture(sh.id)
+        if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
+        local a = W.hologram_stats()
+        W.hologram_texture(sh.id)
+        local b = W.hologram_stats()
+        if b.reuses == a.reuses + 1 and b.renders == a.renders then return "OK", "reuse, renders=" .. b.renders end
+        return "BROKEN", "second call did not reuse"
+    end)
+    check("wbp.hologram refresh", function()
+        local W = MSCore.wbp
+        if not (W and W.hologram_stats) then return "BROKEN", "hologram_stats missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        if not W.hologram_texture(sh.id) then return "SKIP", "no picture yet" end
+        local a = W.hologram_stats()
+        local t, why = W.hologram_texture(sh.id, { force = true, refresh_ok = true })
+        local b = W.hologram_stats()
+        if tostring(why):find("^off:") then return "BROKEN", why end
+        local flag = W.refresh_enabled and "ON" or "OFF"
+        if W.refresh_enabled then return "SKIP", "refresh constant is ON, not asserted" end
+        if b.renders == a.renders and b.created == a.created then return "OK", "no re-render (refresh " .. flag .. " by design)" end
+        return "BROKEN", "re-rendered although refresh is " .. flag
+    end)
+    check("wbp.hologram consumer", function()
+        -- one Lua state only: a true second-state test (a mod requiring mscore_wbp alone) is not possible here; this calls the same module table a mod gets
+        local W = MSCore.wbp
+        if not (W and W.ship_hologram and W.hologram_texture) then return "BROKEN", "ship_hologram missing" end
+        local sh = MSCore.ships.list()[1] if not sh then return "SKIP", "no ships" end
+        local t, why = W.ship_hologram(sh.id)
+        if not t then return tostring(why):find("^off:") and "BROKEN" or "SKIP", tostring(why) end
+        if not S.valid(t) then return "BROKEN", "returned texture not valid" end
+        local t2, why2 = W.ship_hologram(sh.id)
+        if not t2 then return "SKIP", "second call: " .. tostring(why2) end
+        if not S.valid(t2) then return "BROKEN", "refreshed texture not valid" end
+        return "OK", "old handle after refresh: " .. (S.valid(t) and "still valid" or "invalid (stale)")
     end)
     check("blocks.contract", function()
         local B = MSCore.blocks
@@ -157,9 +239,18 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "chunks", "paused" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write" }) do
         check("world." .. n, nativeCheck(n))
     end
+    check("ships.mining_caps", nativeCheck("mining_caps"))   -- API 15, C++ check_one "mining_caps" (first live ship)
+    check("fleets.list", function()
+        if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end
+        local l, why = MSCore.fleets.list()
+        if not l then return "BROKEN", tostring(why) end
+        if #l == 0 then return "SKIP", "no fleets in this save" end
+        local o = MSCore.fleets.of_ship(l[1].ships[1] or 0)
+        return yes(type(o) == "table", #l .. " fleets, first=" .. l[1].name .. " ships=" .. #l[1].ships)
+    end)
     check("scan.api", function()
         if type(MSCore.scan) ~= "function" or type(MSCore.chunks.hold) ~= "function" or type(MSCore.chunks.release) ~= "function" then
             return "BROKEN", "MSCore.scan / chunks.hold / chunks.release missing"

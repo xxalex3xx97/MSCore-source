@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 10.** `MSCore_api()` returns `10`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section).
+**Native API version: 15.** `MSCore_api()` returns `15`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`10`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`14`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -161,6 +161,43 @@ Notes:
 | 256 | lp_frac | double | POWER | `FlightModel.MaxLowPowerSpeed` (fraction) |
 
 Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_POSE (ch, loc_raw, quat), 16 AUTOPILOT (`bAutopilot` true), 32 DOCK_AP (`bDockingAutopilot` true), 64 TRAVELLING (`bTravelling` true), 128 GRID, 256 LP_KNOWN, 512 LP_ON, 1024 LP_LIMITS, 2048 THROTTLE, 4096 STEPS, 8192 COLL (`CollisionRadius` > 0). The three bool bits are set only when true, so a false bool and an unreadable bool look the same.
+
+## API 11: repair
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_repair` | `int sid, int count, int creative, wchar_t* err, int errlen` | `int` (`1` ok, `0` fail) | Sends the game's `RepairFrameInputCommand` (`CreateInputRepair(count, bCreative)`, receiver = ship id) through `AddInputCommand`. `creative` non-zero = free (no repair items used). One item heals 10 Health. Kill switch: `module_disable("repair")`. Source `cpp\MSCore\msc_repair.hpp`. |
+| `MSCore_ship_repair_need` | `int sid` | `int` (`>0` items needed, `0` full hull, `-1` unreadable or exception, `-2` repair module off) | `ceil((GetTotalHull - GetCurrentHull) / 10)`. |
+
+## API 12: station names
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Each call does a full scan (the count call and the fill call are two scans). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
+
+## API 13: fleets
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_fleet_tags` | `MsFleetTag* out, int max, int max_age_ms` | `int` (`n` tags, `-2` fleets module off, `-1` fault) | `MsFleetTag { int32 id; int32 parent; wchar_t name[96]; }` (200 B). `max_age_ms = 0` rescans now (no cache); otherwise a snapshot younger than `min(max_age_ms, 10000)` is reused. The export has no default: the caller passes it (Lua `fleets_read()` with no argument passes `0`; `mscore_fleets.lua` passes `3000`). Kill switch `module_disable("fleets")`. Source `cpp\MSCore\msc_fleets.hpp`. |
+| `MSCore_fleet_ships` | `MsFleetShip* out, int max, int max_age_ms` | `int` (`n` ships, `-2` fleets module off, `-1` fault) | `MsFleetShip { int32 ship; int32 count; int32 total; int32 pad; int32 tags[8]; }` (48 B). `count` = ids stored (at most 8), `total` = real number of fleet ids, so a ship in 9+ fleets shows 8 ids. Same `max_age_ms` rule, kill switch and source. |
+
+## API 14: ship hull (0.8.15)
+
+Call from the game thread (`MSCore_ship_hull` walks game objects).
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_hull` | `void* ship, int* cur, int* max` | `int` bitmask: `1` cur readable, `2` max readable, `0` none (or ship not alive), `-2` ships module off, `-1` exception | Hull in whole units from `GetCurrentHull` / `GetTotalHull` (int). `cur` / `max` get `-1` when unreadable. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_ships.hpp`. Native API 14. |
+
+## API 15: mining caps and presence debounce (0.8.15)
+
+Call from the game thread (`MSCore_ship_mining_caps` reads game objects). `MSCore_presence_step` is pure and has no game access.
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_mining_caps` | `void* ship` | `int` bitmask: `1` MiningLaser present, `2` ItemScooper present, `0` readable with no mining weapon, `-1` unknown, `-2` ships module off, `-1` also on exception | Reads `DMSPlayerShipObject.Weapons` and matches each weapon's class name (`MiningLaser`, `ItemScooper`). `-1` unknown: ship null or dead, array unreadable, count outside 0..100000, or a native fault (logged once). An empty readable array is `0`, not `-1`. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_weapons.hpp`. Native API 15. |
+| `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, any other value (`-1` unknown) = unknown. `read 1`: bad = 0, listed. Unknown: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
 
 ## Error convention
 

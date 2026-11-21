@@ -36,7 +36,12 @@ using namespace RC::Unreal;
 #include "msc_chunks.hpp"
 #include "msc_scan.hpp"
 #include "msc_ships.hpp"
+#include "msc_weapons.hpp"
+#include "msc_presence.hpp"
 #include "msc_flight.hpp"
+#include "msc_repair.hpp"
+#include "msc_stnames.hpp"
+#include "msc_fleets.hpp"
 #include "msc_world.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
@@ -47,7 +52,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.14";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = "0.8.15";   // keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -132,6 +137,44 @@ namespace
             detail = "shields cur=" + std::to_string(cur) + " max=" + std::to_string(max);
             return (r & 1) != 0;
         }
+        if (name == "mining_caps")
+        {
+            if (!module_ok(STR("ships"))) { detail = "ships off: " + caps_text(); return false; }
+            if (!alive(ship)) { detail = "SKIP no ships"; return false; }
+            const int r = ship_mining_caps_read(ship);
+            detail = "mining_caps=" + std::to_string(r);
+            return r >= 0;
+        }
+        if (name == "stations")
+        {
+            if (!module_ok(STR("stations"))) { detail = "stations off: " + caps_text(); return false; }
+            stn_probe_log();
+            std::vector<MsStationName> rows;
+            if (!stations_read(rows)) { detail = "stations read faulted (module stations off until reload)"; module_disable(STR("stations"), STR("selfcheck fault")); return false; }
+            if (rows.empty()) { detail = "SKIP no stations"; return false; }
+            int named = 0;
+            for (const auto& r : rows) if (r.name[0]) ++named;
+            const std::wstring stn_src = stn_src_get();
+            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with name, via " + (stn_src.empty() ? std::string("none") : narrow(stn_src));
+            return named > 0;
+        }
+        if (name == "fleets")
+        {
+            if (!module_ok(STR("fleets"))) { detail = "fleets off: " + caps_text(); return false; }
+            if (!alive(ship)) { detail = "SKIP no ships"; return false; }
+            std::vector<MsFleetTag> t; std::vector<MsFleetShip> s;
+            const int r = fleets_get(0, t, s);
+            if (r != 1) { detail = "fleets read faulted or off (module fleets off until reload)"; return false; }
+            detail = std::to_string(t.size()) + " tags, " + std::to_string(s.size()) + " ships with tags";
+            return true;
+        }
+        if (name == "fleets_write")
+        {
+            bool ok = false;
+            if (!seh_run([&] { ok = fleets_write_selftest(detail); })) { detail = "fleets_write selftest faulted"; return false; }
+            detail += module_ok(STR("fleets_write")) ? " [write ON]" : " [write OFF: unverified]";
+            return ok;
+        }
         if (name == "paused")
         {
             if (!module_ok(STR("world"))) { detail = "world off: " + caps_text(); return false; }
@@ -156,6 +199,13 @@ namespace
                      " grid=" + ((f.flags & FF_GRID) ? "1" : "0") + " lpflag=" + ((f.flags & FF_LP_KNOWN) ? ((f.flags & FF_LP_ON) ? "1" : "0") : "n/a") +
                      " console=" + std::to_string(console);
             return (f.flags & FF_THROTTLE) && (f.flags & FF_STEPS) && (f.flags & FF_OBJ_POSE) && f.steps > 0;
+        }
+        if (name == "repair")
+        {
+            if (!module_ok(STR("repair"))) { detail = "repair off: " + caps_text(); return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = repair_selftest(detail); })) { detail = "repair selftest faulted"; module_disable(STR("repair"), STR("selfcheck fault")); return false; }
+            return ok;
         }
         if (name == "chunks")
         {
@@ -906,6 +956,56 @@ namespace
         return 2;
     }
 
+    // Lua: fleets_read(maxAgeMs int) -> text, true | reason, false   (text format: msc_fleets.hpp)
+    int lua_fleets_read(const LuaMadeSimple::Lua& lua)
+    {
+        try {
+            const long long age = nums(lua, 1) ? static_cast<long long>(arg_int(lua)) : 0;
+            std::vector<MsFleetTag> t; std::vector<MsFleetShip> s;
+            const int r = fleets_get(age, t, s);
+            if (r == 1) { lua.set_string(fleets_text(t, s)); lua.set_bool(true); return 2; }
+            lua.set_string(r == -2 ? "fleets module off" : "fleets read fault"); lua.set_bool(false); return 2;
+        } catch (...) { module_disable(STR("fleets"), STR("fleets_read exception")); lua.set_string("exception"); lua.set_bool(false); return 2; }
+    }
+
+    // Lua: fleet_cmd(op string, a int, b int, name string) -> ok, err   (writes only while cap 'fleets_write' is on: the selftest arms it only for the verified CreateInputFleetTag layout; unassign verified in game 2026-11-21)
+    int lua_fleet_cmd(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        std::wstring err;
+        try {
+            if (lua_type(lua.get_lua_state(), 1) != LUA_TSTRING || lua_type(lua.get_lua_state(), 2) != LUA_TNUMBER || lua_type(lua.get_lua_state(), 3) != LUA_TNUMBER || lua_type(lua.get_lua_state(), 4) != LUA_TSTRING) err = STR("fleet_cmd needs op string, a number, b number, name string");
+            else { const std::string op = arg_bytes(lua); const int a = arg_int(lua); const int b = arg_int(lua); const std::string name = arg_bytes(lua); ok = factory_guard([&] { return fleet_write(op, a, b, name, err); }, err); }
+        } catch (...) { ok = false; err = STR("exception"); }
+        return lua_result(lua, ok, err);
+    }
+
+    // Lua: module_disable(name) -> ok   (narrow: only 'fleets' and 'fleets_write'; the Lua fleets kill switch calls it)
+    int lua_module_disable(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        try {
+            if (lua_type(lua.get_lua_state(), 1) == LUA_TSTRING)
+            {
+                const std::string name = arg_bytes(lua);
+                if (name == "fleets") { module_disable(STR("fleets"), STR("lua kill switch")); ok = true; }
+                else if (name == "fleets_write") { module_disable(STR("fleets_write"), STR("lua kill switch")); ok = true; }
+            }
+        } catch (...) { ok = false; }
+        lua.set_bool(ok);
+        return 1;
+    }
+
+    // Lua: fleets_probe() -> text   (FleetTagInput layout dump)
+    int lua_fleets_probe(const LuaMadeSimple::Lua& lua)
+    {
+        std::string out;
+        try { if (!seh_run([&] { out = fleets_probe_text(); })) out = "fleets_probe faulted"; }
+        catch (...) { out = "fleets_probe exception"; }
+        lua.set_string(out);
+        return 1;
+    }
+
     // Lua: set_dock_filter(receiverId int, index int, itemName string, bLoading 0|1) -> ok, err   (native StationConsoleInput SetFilter)
     int lua_set_dock_filter(const LuaMadeSimple::Lua& lua)
     {
@@ -1186,6 +1286,10 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_read_station", lua_read_station);
     lua.register_function("MSCoreNative_read_inventory", lua_read_inventory);
     lua.register_function("MSCoreNative_read_docks", lua_read_docks);
+    lua.register_function("MSCoreNative_fleets_read", lua_fleets_read);
+    lua.register_function("MSCoreNative_fleet_cmd", lua_fleet_cmd);
+    lua.register_function("MSCoreNative_module_disable", lua_module_disable);
+    lua.register_function("MSCoreNative_fleets_probe", lua_fleets_probe);
     lua.register_function("MSCoreNative_rename_dock", lua_rename_dock);
     lua.register_function("MSCoreNative_set_dock_filter", lua_set_dock_filter);
     lua.register_function("MSCoreNative_inv_split", lua_inv_split);
@@ -1205,7 +1309,7 @@ public:
     MSCoreMod() : CppUserModBase()
     {
         ModName = STR("MSCore");
-        ModVersion = STR("0.8.14");
+        ModVersion = STR("0.8.15");
         ModDescription = STR("MSCore native helpers for Main Sequence mods");
         ModAuthors = STR("local");
         Output::send<LogLevel::Normal>(STR("[MSCore] native DLL loaded\n"));
@@ -1225,7 +1329,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); world_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1242,8 +1346,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 10; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe). set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 15; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1468,11 +1572,83 @@ extern "C"
         catch (...) { module_disable(STR("ships"), STR("ship_shields exception")); return -1; }
     }
 
+    // ship hull (API 14): cur / max (GetCurrentHull / GetTotalHull) in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive). Call from the game thread.
+    // -2 when the ships module is off, -1 on exception. cur / max may be NULL.
+    MSCORE_API int MSCore_ship_hull(void* ship, int* cur, int* max)
+    {
+        try { if (!module_ok(STR("ships"))) return -2;
+              int32_t c = -1, m = -1;
+              ship_hull_read(static_cast<UObject*>(ship), c, m);
+              if (cur) *cur = c;
+              if (max) *max = m;
+              return (c >= 0 ? 1 : 0) | (m >= 0 ? 2 : 0); }
+        catch (...) { module_disable(STR("ships"), STR("ship_hull exception")); return -1; }
+    }
+
+    // ship mining caps (API 15): bitmask 1 = MiningLaser, 2 = ItemScooper, 0 = readable with no mining weapon.
+    // -1 unknown (ship null or dead, Weapons unreadable, count out of 0..100000, native fault), -2 ships module off, -1 on exception. Call from the game thread.
+    MSCORE_API int MSCore_ship_mining_caps(void* ship)
+    {
+        try { if (!module_ok(STR("ships"))) return -2; return ship_mining_caps_read(static_cast<UObject*>(ship)); }
+        catch (...) { module_disable(STR("ships"), STR("ship_mining_caps exception")); return -1; }
+    }
+
+    // presence debounce (API 15): pure, no game access. read 1 present, 0 absent, -1 unknown. Returns the listed flag (1 / 0); bad_out (may be null) gets the absent count (0..3).
+    MSCORE_API int MSCore_presence_step(int bad_n, int listed, int read, int* bad_out)
+    {
+        return presence_step(bad_n, listed, read, bad_out);
+    }
+
     // world paused (API 10): 1 paused, 0 running, -1 unknown or exception, -2 world module off. Mods treat only 1 as paused.
     MSCORE_API int MSCore_world_paused()
     {
         try { if (!module_ok(STR("world"))) return -2; return world_paused_read(); }
         catch (...) { module_disable(STR("world"), STR("world_paused exception")); return -1; }
+    }
+
+    // station names (API 12): n stations written (at most max), or total count when out is null or max <= 0; -2 stations module off, -1 fault or exception. Each call does a full scan (count call + fill call = two scans).
+    MSCORE_API int MSCore_stations(MsStationName* out, int max)
+    {
+        try
+        {
+            if (!module_ok(STR("stations"))) return -2;
+            std::vector<MsStationName> rows;
+            if (!stations_read(rows)) { module_disable(STR("stations"), STR("stations read fault")); return -1; }
+            const int n = static_cast<int>(rows.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = rows[i];
+            return n;
+        }
+        catch (...) { module_disable(STR("stations"), STR("stations exception")); return -1; }
+    }
+
+    // fleet tags (API 13): n tags written (at most max), or total count when out is null or max <= 0; -2 fleets module off, -1 fault or exception. max_age_ms: 0 = rescan, cap 10000.
+    MSCORE_API int MSCore_fleet_tags(MsFleetTag* out, int max, int max_age_ms)
+    {
+        try
+        {
+            std::vector<MsFleetTag> t; std::vector<MsFleetShip> s;
+            const int r = fleets_get(max_age_ms, t, s);
+            if (r != 1) return r;
+            const int n = static_cast<int>(t.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = t[i];
+            return n;
+        }
+        catch (...) { module_disable(STR("fleets"), STR("fleet_tags exception")); return -1; }
+    }
+
+    // fleet ships (API 13): ships with at least one fleet tag, same return rules as MSCore_fleet_tags.
+    MSCORE_API int MSCore_fleet_ships(MsFleetShip* out, int max, int max_age_ms)
+    {
+        try
+        {
+            std::vector<MsFleetTag> t; std::vector<MsFleetShip> s;
+            const int r = fleets_get(max_age_ms, t, s);
+            if (r != 1) return r;
+            const int n = static_cast<int>(s.size());
+            if (out && max > 0) for (int i = 0; i < n && i < max; ++i) out[i] = s[i];
+            return n;
+        }
+        catch (...) { module_disable(STR("fleets"), STR("fleet_ships exception")); return -1; }
     }
 
     // flight state of ship sid (API 10): mask = FL_* groups, out = MsFlight with out->size = sizeof(MsFlight).
@@ -1506,6 +1682,24 @@ extern "C"
             if (!module_ok(STR("flight"))) { e = STR("flight module off"); return false; }
             return flight_zero(sid, e);
         }, err, errlen, STR("flight"));
+    }
+
+    // repair ship sid with the game's RepairFrameInputCommand(count, bCreative): creative 1 = free (no repair items used). 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_ship_repair(int sid, int count, int creative, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return ship_repair(sid, count, creative != 0, e); }, err, errlen, STR("repair"));
+    }
+
+    // repair items needed to fully repair ship sid: ceil((GetTotalHull - GetCurrentHull) / 10). 0 full, -1 unreadable or exception, -2 repair module off.
+    MSCORE_API int MSCore_ship_repair_need(int sid)
+    {
+        try {
+            if (!module_ok(STR("repair"))) return -2;
+            int r = -1;
+            if (!seh_run([&] { r = ship_repair_need(sid); })) { module_disable(STR("repair"), STR("repair_need fault")); return -1; }
+            return r;
+        }
+        catch (...) { module_disable(STR("repair"), STR("repair_need exception")); return -1; }
     }
 
     // PilotConsoleObject id of ship sid (ShipID first, then ParentID). >0 id, 0 none, -2 flight module off, -1 exception.

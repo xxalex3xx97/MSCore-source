@@ -79,4 +79,19 @@ namespace
         max = m;
         return ok;
     }
+
+    // WHAT: current and total hull of ship (GetCurrentHull / GetTotalHull, int). Unreadable value = -1. true when at least one value was read.
+    // WHY: the export derives its bitmask from cur >= 0 / tot >= 0. Same call style as ship_repair_need (msc_repair.hpp).
+    bool ship_hull_read(UObject* ship, int32_t& cur, int32_t& tot)
+    {
+        cur = -1;
+        tot = -1;
+        if (!alive(ship)) return false;
+        int32_t c = -1, t = -1;
+        bool a = false, b = false;
+        if (!seh_run([&] { a = call_int(ship, STR("GetCurrentHull"), c); b = call_int(ship, STR("GetTotalHull"), t); })) return false;
+        cur = a ? c : -1;
+        tot = b ? t : -1;
+        return a || b;
+    }
 }
