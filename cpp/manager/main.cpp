@@ -868,9 +868,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--source" && i + 1 < argc) source_arg = argv[++i];
         else if (a == L"--version") {
             LocalFree(argv);
-            if (AttachConsole(ATTACH_PARENT_PROCESS)) std::freopen("CONOUT$", "w", stdout);
-            std::puts(version_text().c_str());
-            std::fflush(stdout);
+            std::string v = version_text() + "\r\n";
+            log_line(version_text());
+            HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);  // redirected/piped: use it as is
+            if (!out || out == INVALID_HANDLE_VALUE) {
+                AttachConsole(ATTACH_PARENT_PROCESS);
+                out = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            }
+            DWORD n = 0;
+            if (out && out != INVALID_HANDLE_VALUE) WriteFile(out, v.data(), static_cast<DWORD>(v.size()), &n, nullptr);
             return 0;
         }
     }
