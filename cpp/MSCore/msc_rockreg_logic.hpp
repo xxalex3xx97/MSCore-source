@@ -216,7 +216,7 @@ namespace
             if (it != by_id_.end())
             {
                 RrRock& r = rocks[it->second];
-                if (!r.alive) { r.alive = true; ++version; }
+                if (!r.alive) { r.alive = true; ++alive_n_; ++version; }
                 std::copy(c, c + 3, r.c);
                 if (ore) std::copy(ore, ore + 4, r.ore);
                 return it->second;
@@ -230,6 +230,7 @@ namespace
             by_id_[id] = i;
             grid_[cell_key(sys, c)].push_back(i);
             sys_list_[sys].push_back(i);
+            ++alive_n_;
             ++version;
             return i;
         }
@@ -251,8 +252,25 @@ namespace
             RrRock& r = rocks[i];
             r.alive = false;
             r.destroyed_at = tick;
+            --alive_n_;
             ++version;
             return true;
+        }
+
+        // WHAT: number of alive rocks (kept by add / kill / revive / clear, O(1)).
+        size_t alive_count() const { return alive_n_; }
+
+        // WHAT: drops every rock, index, zone and ore name (a different world was loaded: the old rows must never be reused). The targeted set is kept.
+        void clear()
+        {
+            rocks.clear();
+            kinds.clear();
+            zones.clear();
+            by_id_.clear();
+            grid_.clear();
+            sys_list_.clear();
+            alive_n_ = 0;
+            ++version;
         }
 
         // WHAT: sets the radius of a rock (m), marks it known (0 is a valid cached value).
@@ -450,6 +468,7 @@ namespace
         }
 
     private:
+        size_t alive_n_ = 0;
         std::unordered_map<int, size_t> by_id_;
         std::unordered_map<RrCell, std::vector<size_t>, RrCellHash> grid_;
         std::unordered_map<int, std::vector<size_t>> sys_list_;
@@ -470,6 +489,25 @@ namespace
             if (t.kill(t.rocks[i].id, tick)) ++gone;
         }
         return gone;
+    }
+
+    // WHAT: sanity guard of a finished seed pass. live_n = live saves the pass saw, ref = alive rocks known before it (table / cache). A pass that saw
+    //       fewer than half of them is incomplete (world not fully loaded): no mass kill, no cache write, retry later. ref 0 = first pass: sane.
+    inline bool rr_seed_sane(size_t live_n, size_t ref) { return ref == 0 || live_n * 2 >= ref; }
+
+    // WHAT: wait (ms) before a rock whose radius read failed is tried again: 500 ms doubling per failure, at most 60 s.
+    inline uint64_t rr_rad_backoff_ms(unsigned fails)
+    {
+        const unsigned sh = fails > 8 ? 8 : (fails ? fails - 1 : 0);
+        const uint64_t v = 500ull << sh;
+        return v > 60000ull ? 60000ull : v;
+    }
+
+    // WHAT: sorts v and removes the duplicates.
+    inline void rr_sort_unique(std::vector<size_t>& v)
+    {
+        std::sort(v.begin(), v.end());
+        v.erase(std::unique(v.begin(), v.end()), v.end());
     }
 
     // WHAT: world tracker. id = identity of the loaded world (0 = unreadable), read each tick. LOADED = a different readable world than before

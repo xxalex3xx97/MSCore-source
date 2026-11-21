@@ -352,8 +352,70 @@ static void t_bad_bounds()
     CHECK(t.nearest_surface(7, nanp, 50.0, sm) == RrTable::npos);
 }
 
+// review fixes: alive counter, clear, seed sanity, radius backoff, sort_unique
+static void t_review()
+{
+    RrTable t;
+    CHECK(t.alive_count() == 0);
+    rr_add(t, 1, 7, 0, 0, 0);
+    rr_add(t, 2, 7, 10, 0, 0);
+    rr_add(t, 3, 7, 20, 0, 0);
+    CHECK(t.alive_count() == 3);
+    rr_add(t, 2, 7, 11, 0, 0);                        // same id again: no new row
+    CHECK(t.alive_count() == 3 && t.rocks.size() == 3);
+    CHECK(t.kill(2, 5) && t.alive_count() == 2);
+    CHECK(!t.kill(2, 6) && t.alive_count() == 2);     // already dead
+    rr_add(t, 2, 7, 11, 0, 0);                        // revive
+    CHECK(t.alive_count() == 3);
+    size_t n = 0;
+    for (const RrRock& r : t.rocks) if (r.alive) ++n;
+    CHECK(n == t.alive_count());
+    t.target_set(9, true);
+    const uint64_t v0 = t.version;
+    t.kinds.push_back("Iron");
+    t.zones_begin(1, std::vector<RrSrc>{RrSrc{}}, 12);
+    t.clear();                                        // new world: nothing of the old one is reusable
+    CHECK(t.alive_count() == 0 && t.rocks.empty() && t.kinds.empty() && t.zones.empty() && t.version > v0);
+    CHECK(t.index_of(1) == RrTable::npos && t.get(2) == nullptr && !t.is_alive(3));
+    const double o[3] = {0, 0, 0};
+    std::vector<size_t> v;
+    CHECK(t.within(7, o, 1e6, v) == 0);
+    CHECK(t.targeted().count(9) == 1);
+    rr_add(t, 1, 7, 5, 0, 0);                         // the same id can be added again, fresh
+    CHECK(t.alive_count() == 1 && t.index_of(1) == 0 && t.within(7, o, 100.0, v) == 1);
+
+    // seed sanity: unknown reference = sane; under half of the known rocks = incomplete
+    CHECK(rr_seed_sane(0, 0) && rr_seed_sane(100, 0));
+    CHECK(rr_seed_sane(50, 100) && rr_seed_sane(100, 100) && rr_seed_sane(500, 100));
+    CHECK(!rr_seed_sane(49, 100) && !rr_seed_sane(0, 100) && !rr_seed_sane(0, 1));
+
+    // radius retry backoff: 500 ms, doubling, capped at 60 s
+    CHECK(rr_rad_backoff_ms(0) == 500 && rr_rad_backoff_ms(1) == 500 && rr_rad_backoff_ms(2) == 1000 && rr_rad_backoff_ms(3) == 2000);
+    CHECK(rr_rad_backoff_ms(8) == 60000 && rr_rad_backoff_ms(250) == 60000);
+    for (unsigned f = 1; f < 40; ++f) CHECK(rr_rad_backoff_ms(f + 1) >= rr_rad_backoff_ms(f));
+    // an unread radius stays unknown: the rock is still wanted next time
+    RrTable r2;
+    const size_t i0 = rr_add(r2, 1, 7, 0, 0, 0);
+    std::vector<size_t> w;
+    r2.radius_wanted(7, {{0.0, 0.0, 0.0}}, 1000.0, 10, w);
+    CHECK(w.size() == 1 && !r2.rocks[i0].rad_known);
+    r2.set_radius(i0, 0.0);                           // a successful read of zero is stored as known
+    w.clear();
+    r2.radius_wanted(7, {{0.0, 0.0, 0.0}}, 1000.0, 10, w);
+    CHECK(w.empty() && r2.rocks[i0].rad_known);
+
+    // sort + unique
+    std::vector<size_t> u = {5, 1, 5, 3, 1, 3, 9};
+    rr_sort_unique(u);
+    CHECK((u == std::vector<size_t>{1, 3, 5, 9}));
+    std::vector<size_t> e;
+    rr_sort_unique(e);
+    CHECK(e.empty());
+}
+
 int main()
 {
+    t_review();
     t_bad_bounds();
     t_table();
     t_world_track();

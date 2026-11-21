@@ -18,7 +18,7 @@
 //       written in chunks over ticks (tmp file + rename). The old per-mod MiningRegistryCache.bin files are not used (orphaned, safe to delete).
 // DRIVER: MSCore has no frame hook for this. Each mod calls MSCore_rockreg_feed(owner, ships, targets) every ~0.25 s; the feeds younger than
 //       RR_FEED_MAX_MS are merged (ships by sid, targets as a set) and rr_tick runs when >= RR_TICK_MS passed since the last tick.
-// SAFETY: game thread only. Every export body runs in seh_run (rr_run). A fault or exception turns the module 'rockreg' off for the session
+// SAFETY: game thread only. Every export body runs in seh_run (rr_run); there is no in-tick fault recovery, a fault disables the module. A fault or exception turns the module 'rockreg' off for the session
 //       (caps row, module_disable); every export then returns -2 (-1 on exception). rr_selftest turns it off when a save object lacks the fields.
 // UNITS: metres (see msc_rockreg_logic.hpp). Ship positions come from the callers (actor location / 100), not from a game call here.
 // DEPENDS ON: msc_rockreg_logic.hpp, msc_api.hpp (MsReg*), msc_cmd.hpp (alive, seh_run), msc_caps.hpp, msc_ue.hpp (obj_id, get_bool_prop, get_obj_prop,
@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <random>
@@ -203,8 +204,11 @@ namespace
         bool world_wait = false;           // world changed: the next seed waits RR_EMPTY_RETRY_MS (freed saves of the old world)
         RrWorldTrack wt;
         bool seed_due = false;
-        bool in_tick = false;              // set during rr_tick; still set at entry = the last tick faulted
-        int tick_faults = 0;
+        int cache_verdict = -1;            // verdict of the cache sample (RrCacheVerdict), -1 = not decided; kept until a pass finishes, so an aborted pass re-applies it
+        size_t prev_alive = 0;             // alive rocks known when the running pass began (table + cache): the sanity reference
+        int insane_n = 0;                  // consecutive passes rejected by rr_seed_sane
+        std::vector<uint8_t> rad_fail;     // per rock index: failed GetRadius reads in a row
+        std::vector<ULONGLONG> rad_next;   // per rock index: earliest next GetRadius try (GetTickCount64)
         ULONGLONG seed_ms = 0, self_ms = 0, stats_ms = 0, slow_ms = 0, sys_ms = 0, trig_ms = 0, last_tick_ms = 0;
         std::string self_summary = "SUMMARY n/a (no selfcheck yet)";
         bool self_due = false;
@@ -222,8 +226,9 @@ namespace
     struct RrDeadQ { std::mutex mx; std::vector<const void*> q; bool overflow = false; };
     RrDeadQ& rr_dead() { static RrDeadQ* s = new RrDeadQ; return *s; }
     struct RrListener;
-    RrListener* g_rr_listener = nullptr;
-    bool g_rr_listener_gone = false;   // released: never registered again this session
+    // WHY atomic: the release (game thread, ~MSCoreMod) and OnUObjectArrayShutdown (engine thread) can run together; exchange / compare_exchange make sure only one removes.
+    std::atomic<RrListener*> g_rr_listener{nullptr};
+    std::atomic<bool> g_rr_listener_gone{false};   // released: never registered again this session
     struct RrListener : FUObjectDeleteListener
     {
         void NotifyUObjectDeleted(const UObjectBase* o, int32_t) override
@@ -237,22 +242,23 @@ namespace
         // WHY: the engine asserts at shutdown that every delete listener removed itself inside this callback.
         void OnUObjectArrayShutdown() override
         {
-            if (g_rr_listener == this) { UObjectArray::RemoveUObjectDeleteListener(this); g_rr_listener = nullptr; g_rr_listener_gone = true; }
+            RrListener* self = this;
+            g_rr_listener_gone = true;
+            if (g_rr_listener.compare_exchange_strong(self, nullptr)) UObjectArray::RemoveUObjectDeleteListener(this);
         }
     };
     // WHAT: unregisters the delete listener (mod destructor: the listener code lives in this DLL, which is unloaded at game exit). Not deleted.
     void rr_listener_release()
     {
         g_rr_listener_gone = true;
-        if (!g_rr_listener) return;
-        UObjectArray::RemoveUObjectDeleteListener(g_rr_listener);
-        g_rr_listener = nullptr;
+        RrListener* l = g_rr_listener.exchange(nullptr);
+        if (l) UObjectArray::RemoveUObjectDeleteListener(l);
     }
 
     // WHAT: grows the per-rock side arrays to cover index i.
     void rr_side(RrState& s, size_t i)
     {
-        if (s.save.size() <= i) { s.save.resize(i + 1, nullptr); s.seen.resize(i + 1, 0); }
+        if (s.save.size() <= i) { s.save.resize(i + 1, nullptr); s.seen.resize(i + 1, 0); s.rad_fail.resize(i + 1, 0); s.rad_next.resize(i + 1, 0); }
     }
     // WHAT: sets the save pointer of rock i (nullptr clears it) and keeps save_at in step.
     void rr_bind(RrState& s, size_t i, UObject* o)
@@ -362,13 +368,8 @@ namespace
         return fresh;
     }
 
-    // WHAT: rocks alive in the table.
-    size_t rr_alive_count(const RrState& s)
-    {
-        size_t n = 0;
-        for (const RrRock& r : s.tab.rocks) if (r.alive) ++n;
-        return n;
-    }
+    // WHAT: rocks alive in the table (running counter of the table).
+    size_t rr_alive_count(const RrState& s) { return s.tab.alive_count(); }
 
     // WHAT: the player's system and a world identity (controller + PlayerObject); run under seh_run. sys = 0 when unreadable.
     struct RrWorldCtx { int sys = 0; uint64_t id = 0; };
@@ -484,6 +485,7 @@ namespace
         s.ring.clear();
         s.order.clear();
         s.sample_done = !s.cache_pending;
+        s.prev_alive = std::max<size_t>(s.tab.alive_count(), s.cache_pending ? static_cast<size_t>(s.cache_save_n) : 0);
         s.ordered = false;
         s.near_done = false;
         s.notready_logged = false;
@@ -529,18 +531,34 @@ namespace
         s.need.push_back(o);
     }
 
+    // WHAT: applies the cache verdict to the unverified bound rocks cand: reseed = their saves are read again (queued in 'need'); trust / merge = verified.
+    void rr_sample_apply(RrState& s, const std::vector<size_t>& cand, RrCacheVerdict v, size_t checked, size_t bad)
+    {
+        if (v == RCV_RESEED)
+        {
+            for (size_t i : cand) if (s.save[i]) s.need.push_back(s.save[i]);
+            msc_log(STR("RR cache reseed: sample checked=") + std::to_wstring(checked) + STR(" bad=") + std::to_wstring(bad) +
+                    STR(" cached rocks read again=") + std::to_wstring(cand.size()));
+            return;
+        }
+        for (size_t i : cand) s.tab.rocks[i].unverified = false;
+        msc_log(std::wstring(v == RCV_TRUST ? STR("RR cache trusted") : STR("RR cache merged")) + STR(" saves=") + std::to_wstring(s.live_n) +
+                STR(" cache_saves=") + std::to_wstring(s.cache_save_n) + STR(" checked=") + std::to_wstring(checked) + STR(" bad=0 bound=") +
+                std::to_wstring(cand.size()));
+    }
+
     // WHAT: one-shot sample check of a loaded cache: the unverified rocks nearest to the ships and as many random ones are read (position, ore
     //       names) and compared with the table. rr_cache_verdict decides: trust, merge (new reads only) or reseed (all cache rocks re-read).
     void rr_sample_stage(RrState& s)
     {
-        s.sample_done = true;
-        s.cache_pending = false;
+        s.sample_done = true;   // cache_pending stays set until a pass FINISHES: an aborted pass runs this stage again
         std::vector<size_t> cand;
         for (size_t i = 0; i < s.tab.rocks.size(); ++i)
         {
             const RrRock& r = s.tab.rocks[i];
             if (r.unverified && r.alive && i < s.save.size() && s.save[i]) cand.push_back(i);
         }
+        if (s.cache_verdict >= 0) { rr_sample_apply(s, cand, static_cast<RrCacheVerdict>(s.cache_verdict), 0, 0); return; }   // restarted pass: same verdict
         std::vector<std::pair<double, size_t>> by_dist;
         by_dist.reserve(cand.size());
         for (size_t i : cand)
@@ -583,17 +601,8 @@ namespace
         });
         if (!ok) ++bad;
         const RrCacheVerdict v = rr_cache_verdict(s.cache_save_n, s.live_n, checked, bad);
-        if (v == RCV_RESEED)
-        {
-            for (size_t i : cand) if (s.save[i]) s.need.push_back(s.save[i]);
-            msc_log(STR("RR cache reseed: sample checked=") + std::to_wstring(checked) + STR(" bad=") + std::to_wstring(bad) +
-                    STR(" cached rocks read again=") + std::to_wstring(cand.size()));
-            return;
-        }
-        for (size_t i : cand) s.tab.rocks[i].unverified = false;
-        msc_log(std::wstring(v == RCV_TRUST ? STR("RR cache trusted") : STR("RR cache merged")) + STR(" saves=") + std::to_wstring(s.live_n) +
-                STR(" cache_saves=") + std::to_wstring(s.cache_save_n) + STR(" checked=") + std::to_wstring(checked) + STR(" bad=0 bound=") +
-                std::to_wstring(cand.size()));
+        s.cache_verdict = static_cast<int>(v);
+        rr_sample_apply(s, cand, v, checked, bad);
     }
 
     // WHAT: ring of one 'need' save: system and chunk (cheap reads). A save that cannot be read gets RR_RING_FAR.
@@ -624,7 +633,20 @@ namespace
     void rr_seed_finish(RrState& s)
     {
         s.seeding = false;
-        // a pass that found no save at all (world not ready) kills nothing: every rock would look gone
+        // sanity: a pass that saw fewer than half of the rocks known before it (world not fully loaded) is incomplete: nothing is killed, the cache is
+        // not touched, the pass is retried after RR_EMPTY_RETRY_MS. Three incomplete passes in a row are accepted (the world really shrank).
+        if (!rr_seed_sane(s.live_n, s.prev_alive) && s.insane_n < 3)
+        {
+            ++s.insane_n;
+            msc_log(STR("RR seed incomplete saves=") + std::to_wstring(s.live_n) + STR(" known=") + std::to_wstring(s.prev_alive) + STR(" try=") +
+                    std::to_wstring(s.insane_n) + STR(" (nothing killed, no cache write, retry)"));
+            s.world_wait = true;
+            s.seed_ms = GetTickCount64();
+            rr_seed_release(s);
+            return;
+        }
+        s.insane_n = 0;
+        s.cache_pending = false;
         const size_t gone = s.live_n ? rr_kill_unseen(s.tab, s.seen, s.pass, s.ticks) : 0;
         s.tab.zones_ready(s.pass);
         s.self_due = true;
@@ -788,26 +810,44 @@ namespace
         }
     }
 
-    // WHAT: GetRadius of the rocks near a ship (or targeted), RR_RAD_TICK per tick. Each rock once; zero is cached too.
-    void rr_radius_stage(RrState& s, const std::vector<MsRegShip>& ships)
+    // WHAT: GetRadius of the rocks near a ship, near an approach segment or targeted: at most RR_RAD_SEG_TICK + RR_RAD_TICK reads per tick for ALL ships
+    //       together, and the loop stops when the tick budget is spent. A read that fails is NOT stored (the radius stays unknown); that rock is tried
+    //       again after rr_rad_backoff_ms. ponytail: rocks in backoff still occupy candidate slots (4 x the read cap), so 200 permanently failing rocks near a ship could starve others.
+    void rr_radius_stage(RrState& s, const std::vector<MsRegShip>& ships, ULONGLONG now)
     {
+        constexpr size_t CAP = RR_RAD_SEG_TICK + RR_RAD_TICK;
+        constexpr size_t GATHER = CAP * 4;
         std::vector<size_t> want;
-        for (const MsRegShip& sh : ships) if (sh.has_seg) s.tab.radius_wanted_seg(sh.sys, sh.p, sh.q, RR_RAD_SEG_M, RR_RAD_SEG_TICK, want);
-        for (const MsRegShip& sh : ships) s.tab.radius_wanted(sh.sys, {{sh.p[0], sh.p[1], sh.p[2]}}, RR_RAD_NEAR_M, want.size() + RR_RAD_TICK, want);
+        for (const MsRegShip& sh : ships) if (sh.has_seg) s.tab.radius_wanted_seg(sh.sys, sh.p, sh.q, RR_RAD_SEG_M, GATHER, want);
+        for (const MsRegShip& sh : ships) s.tab.radius_wanted(sh.sys, {{sh.p[0], sh.p[1], sh.p[2]}}, RR_RAD_NEAR_M, GATHER, want);
         for (int id : s.tab.targeted())
         {
             const size_t i = s.tab.index_of(id);
-            if (i != RrTable::npos && !s.tab.rocks[i].rad_known && want.size() < RR_RAD_SEG_TICK + RR_RAD_TICK) want.push_back(i);
+            if (i != RrTable::npos && !s.tab.rocks[i].rad_known && want.size() < GATHER && std::find(want.begin(), want.end(), i) == want.end()) want.push_back(i);
         }
+        LARGE_INTEGER t0;
+        QueryPerformanceCounter(&t0);
+        size_t reads = 0;
         for (size_t i : want)
         {
-            if (i >= s.save.size() || !s.tab.rocks[i].alive) continue;
+            if (reads >= CAP || (reads > 0 && rr_over_budget(rr_perf_ms(t0)))) break;
+            if (i >= s.save.size() || !s.tab.rocks[i].alive || s.tab.rocks[i].rad_known) continue;
             UObject* sv = s.save[i];
             if (!sv) continue;   // not bound yet
+            if (now < s.rad_next[i]) continue;   // in backoff
             if (!alive_seh(sv)) { s.tab.kill(s.tab.rocks[i].id, s.ticks); rr_bind(s, i, nullptr); continue; }
+            ++reads;
             int64_t rad = 0;
-            const double raw = call_pnum(sv, STR("GetRadius"), rad) ? static_cast<double>(rad) : 0.0;
-            s.tab.set_radius(i, raw / RR_RAW_PER_M);
+            if (call_pnum(sv, STR("GetRadius"), rad))
+            {
+                s.tab.set_radius(i, static_cast<double>(rad) / RR_RAW_PER_M);
+                s.rad_fail[i] = 0;
+            }
+            else
+            {
+                if (s.rad_fail[i] < 250) ++s.rad_fail[i];
+                s.rad_next[i] = now + rr_rad_backoff_ms(s.rad_fail[i]);
+            }
         }
     }
 
@@ -816,7 +856,7 @@ namespace
     {
         std::vector<size_t> cand;
         for (const MsRegShip& sh : ships) s.tab.within(sh.sys, sh.p, RR_NEAR_M, cand);
-        std::sort(cand.begin(), cand.end());
+        rr_sort_unique(cand);
         size_t n = 0, last = 0;
         bool limited = false;
         for (size_t i : cand)
@@ -998,7 +1038,7 @@ namespace
     // WHAT: drains the delete queue. Returns the rock indexes whose bound save object was deleted (sorted, unique); overflow = the queue overflowed.
     std::vector<size_t> rr_drain_dead(RrState& s, bool& overflow)
     {
-        if (!g_rr_listener && !g_rr_listener_gone) { g_rr_listener = new RrListener; UObjectArray::AddUObjectDeleteListener(g_rr_listener); }
+        if (!g_rr_listener.load() && !g_rr_listener_gone.load()) { RrListener* l = new RrListener; g_rr_listener = l; UObjectArray::AddUObjectDeleteListener(l); }
         std::vector<const void*> dead;
         {
             RrDeadQ& d = rr_dead();
@@ -1018,22 +1058,35 @@ namespace
         return hit;
     }
 
-    // WHAT: the registry tick. A writing tick runs the writer only. Otherwise: triggers, seed slice (own budget), then the other stages in order;
-    //       a stage is skipped when its budget is spent.
+    // WHAT: a different world was loaded or the world is gone: the table is emptied (its rows belong to the old world and must never be reused), every
+    //       object pointer and the running pass are dropped, a running cache write is aborted, the cache state starts over (a later seed of the new world
+    //       writes the cache again; an emptied table is never written: rr_seed_finish needs alive rocks).
+    void rr_world_reset(RrState& s)
+    {
+        if (s.cw.on) rr_cache_write_abort(s, "world changed");
+        rr_seed_abort(s);
+        rr_seed_unbind(s);
+        s.tab.clear();
+        s.save.clear();
+        s.seen.clear();
+        s.rad_fail.clear();
+        s.rad_next.clear();
+        s.sys_done.clear();
+        s.valid_cur = 0;
+        s.cache_ok = false;
+        s.cache_pending = false;
+        s.cache_verdict = -1;
+        s.insane_n = 0;
+        s.prev_alive = 0;
+        s.self_due = false;
+        s.notready_logged = false;
+    }
+
+    // WHAT: the registry tick: deletes, world check, triggers, then the writer (writing ticks) or the seed slice (own budget), then the cheap stages
+    //       (validate, radius; they also run on writing ticks) and the heavy ones (self-check, stats) on non-writing ticks. A stage is skipped when its budget is spent.
+    // NOTE: no recovery code for a faulted tick: every export runs under seh_run (rr_run); a fault disables the module for the session.
     void rr_tick(RrState& s, const std::vector<MsRegShip>& ships, const std::vector<int>& targets)
     {
-        if (s.in_tick)
-        {
-            // the previous tick never cleared the flag: it faulted. Drop the pass and the object pointers.
-            ++s.tick_faults;
-            msc_log(STR("RR tick faulted last time, seed aborted n=") + std::to_wstring(s.tick_faults));
-            rr_seed_abort(s);
-            rr_seed_unbind(s);
-            s.seed_ms = GetTickCount64();
-            s.world_wait = true;   // reseed after RR_EMPTY_RETRY_MS, not the 10 min refresh
-        }
-        struct TickGuard { RrState& s; ~TickGuard() { s.in_tick = false; } } guard{s};   // a C++ exception clears the flag; an SEH fault does not unwind
-        s.in_tick = true;
         LARGE_INTEGER t0;
         QueryPerformanceCounter(&t0);
         const ULONGLONG now = GetTickCount64();
@@ -1043,21 +1096,27 @@ namespace
         // deletes first (before any save is read this tick)
         bool overflow = false;
         const std::vector<size_t> hit = rr_drain_dead(s, overflow);
-        // world probe EVERY tick. A world load or a lost world (debounced) drops the pass and the save pointers; a warp does not.
+        // world probe EVERY tick, through the rr_world_step debounce (one failed player read changes nothing; RR_NOWORLD_TICKS in a row = LOST).
         RrWorldCtx wc;
         const bool rd = seh_run([&] { rr_world_probe(wc); }) && wc.sys > 0;
         const RrWorldEv we = rr_world_step(s.wt, rd ? wc.id : 0, RR_NOWORLD_TICKS);
         if (rd) s.world_sys = wc.sys;   // a warp only updates the system: pointers stay bound
         s.world_ok = s.wt.ok;
         const bool mass = overflow || hit.size() > RR_MASS_DEAD;
-        const bool world_bad = we != RWE_NONE || !s.world_ok || !rd || mass;   // a failed read this tick: no save is read, pointers stay until LOST/LOADED
-        if (we != RWE_NONE || mass)
+        const bool world_bad = we != RWE_NONE || !s.world_ok || mass;
+        if (we != RWE_NONE)
         {
-            // save load, world gone, or a mass delete of save objects: the old pass and the save pointers are dropped, nothing is killed
-            msc_log(std::wstring(STR("RR world ")) + (we == RWE_LOADED ? STR("loaded") : we == RWE_LOST ? STR("lost") : STR("changed (mass delete)")) + STR(", pointers dropped"));
-            rr_seed_unbind(s);
+            msc_log(std::wstring(STR("RR world ")) + (we == RWE_LOADED ? STR("loaded") : STR("lost")) + STR(", table cleared"));
+            rr_world_reset(s);
             s.seed_due = false;   // a pending seed must not skip the RR_EMPTY_RETRY_MS wait after the new world
             s.world_sys = rd ? wc.sys : 0;
+        }
+        else if (mass)
+        {
+            // a mass delete of save objects (a world unload): pointers dropped, nothing killed, the same rows are bound again by the next pass
+            msc_log(STR("RR world changed (mass delete), pointers dropped"));
+            rr_seed_unbind(s);
+            s.seed_due = false;
         }
         else
         {
@@ -1074,13 +1133,13 @@ namespace
             s.world_wait = true;
         }
         if (!world_bad && !s.world_wait) rr_target_stage(s);
-        // seed triggers, no ship needed: first tick, 10 min refresh, world loaded / reseed after a fault, no alive rock (retry every 5 s),
+        // seed triggers, no ship needed: first tick, 10 min refresh, world loaded / incomplete pass (after RR_EMPTY_RETRY_MS), no alive rock (retry every 5 s),
         // a ship in a system no pass covered (also restarts a running pass)
         if (now - s.trig_ms >= RR_TRIG_MS)
         {
             s.trig_ms = now;
             if (s.world_wait && s.world_ok && now - s.seed_ms >= RR_EMPTY_RETRY_MS) { s.world_wait = false; s.seed_due = true; }
-            if (!s.seeding && s.world_ok && rr_alive_count(s) == 0 && now - s.seed_ms >= RR_EMPTY_RETRY_MS) s.seed_due = true;
+            if (!s.seeding && s.world_ok && s.tab.alive_count() == 0 && now - s.seed_ms >= RR_EMPTY_RETRY_MS) s.seed_due = true;
         }
         bool sys_new = false;
         if (now - s.sys_ms >= RR_SYS_MS)
@@ -1090,7 +1149,7 @@ namespace
         }
         if (s.cw.on)
         {
-            rr_cache_write_step(s, RR_CACHE_WRITE_MS);   // a writing tick does the writer only
+            rr_cache_write_step(s, RR_CACHE_WRITE_MS);   // a writing tick: the writer, then only the cheap stages
         }
         else
         {
@@ -1108,16 +1167,19 @@ namespace
             if (s.seeding && !s.world_ok) { rr_seed_abort(s); rr_seed_unbind(s); s.seed_ms = now; }
             if (s.seeding) rr_seed_slice(s, rr_seed_budget(s, now));
             // stats and dump: not budget-gated (cheap, once a minute)
-            LARGE_INTEGER t1;
-            QueryPerformanceCounter(&t1);
             if (now - s.stats_ms >= RR_STATS_MS)
             {
                 s.stats_ms = now;
                 rr_stats_stage(s);
                 if (!ships.empty()) rr_dump_file(s, ships[0].sys, ships[0].p, L"RockRegDump.txt");
             }
-            if (!rr_over_budget(rr_perf_ms(t1))) rr_validate_stage(s, ships);
-            if (!world_bad && !s.world_wait && !rr_over_budget(rr_perf_ms(t1))) rr_radius_stage(s, ships);
+        }
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&t1);
+        if (!rr_over_budget(rr_perf_ms(t1))) rr_validate_stage(s, ships);
+        if (!world_bad && !s.world_wait && !rr_over_budget(rr_perf_ms(t1))) rr_radius_stage(s, ships, now);
+        if (!s.cw.on)
+        {
             if (!rr_over_budget(rr_perf_ms(t1))) rr_self_stage(s);
             if (s.self_ms == 0 && !s.seeding) s.self_ms = now;   // the periodic self-check counts from the first full pass
             if (!s.seeding && !s.self_due && now - s.self_ms >= RR_SELF_MS) s.self_due = true;
@@ -1131,7 +1193,6 @@ namespace
             s.slow_ms = now;
             msc_log(STR("RR slow ms=") + std::to_wstring(ms) + STR(" rocks=") + std::to_wstring(s.tab.rocks.size()));
         }
-        s.tick_faults = 0;
     }
 
     // WHAT: merges the feeds younger than RR_FEED_MAX_MS: ships by sid (first feed wins), targets as a set. Older feeds are dropped.
