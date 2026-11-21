@@ -623,6 +623,32 @@ inline bool same_deps(const std::vector<Dep>& a, const std::vector<Dep>& b) {
     return true;
 }
 
+// mscore.mod "save_scrub=<modded class path>><stock class path>" (repeatable): what Remove rewrites in the user's saves.
+// Paths exactly as in the save's class table, e.g. /Game/Blueprints/BuildingBlocks/BPO_X.BPO_X_C. standin = optional
+// vanilla class that takes the now unused class-table slot (empty = msc_savescrub.hpp picks one). Bad lines are ignored.
+struct SaveScrub {
+    std::string modded, stock, standin;
+};
+
+inline std::vector<SaveScrub> parse_save_scrub(const std::string& text) {
+    std::vector<SaveScrub> out;
+    std::istringstream in(text.compare(0, 3, "\xEF\xBB\xBF") == 0 ? text.substr(3) : text);
+    std::string line;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.compare(0, 11, "save_scrub=") != 0) continue;
+        std::string v = line.substr(11);
+        size_t gt = v.find('>');
+        if (gt == std::string::npos) continue;
+        SaveScrub s{trim(v.substr(0, gt)), trim(v.substr(gt + 1)), ""};
+        if (s.modded.empty() || s.stock.empty() || s.modded == s.stock || s.modded[0] != '/' || s.stock[0] != '/' ||
+            s.stock.find('>') != std::string::npos)
+            continue;
+        out.push_back(s);
+    }
+    return out;
+}
+
 struct Mod {
     std::string name, repo, version;
     fs::path dir;

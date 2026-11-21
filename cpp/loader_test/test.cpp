@@ -1,5 +1,6 @@
 // msc_loader tests: plain asserts. Prints ALL OK, exit 1 on first failure.
 #include "msc_loader.hpp"
+#include "msc_savescrub.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -59,6 +60,118 @@ MSDevMenu : 1
 static bool zip_ok(std::vector<std::string> v) {
     std::string e;
     return zip_entries_ok(v, e);
+}
+
+// ---- synthetic minimal _S.sav (same layout as the real format, see msc_savescrub.hpp)
+static std::string w32(uint32_t v) { return ss::pk(v); }
+static const std::string kMod = "/Game/Blueprints/BuildingBlocks/BPO_ModBlock.BPO_ModBlock_C";
+static const std::string kStk = "/Game/Blueprints/BuildingBlocks/BPO_StkBlock.BPO_StkBlock_C";   // same length
+static const std::string kStkLong = "/Game/Blueprints/BuildingBlocks/BPO_StockBlockLonger.BPO_StockBlockLonger_C";
+static const std::string kOth = "/Game/Blueprints/BuildingBlocks/BPO_Other.BPO_Other_C";
+// table: 6 fixed classes, then stock(6) modded(7) other(8)
+static std::string make_save(bool withStock, bool withMod, bool shipStr, bool stats, int nodes, bool stockLong = false) {
+    const std::string& stk = stockLong ? kStkLong : kStk;
+    std::vector<std::string> T = {"/Script/A.ResearchState", "/Script/A.FactionManager", "/Script/A.M1",
+                                  "/Script/A.M2", "/Script/A.Statistics", "/Script/A.StarCluster"};
+    if (withStock) T.push_back(stk);
+    if (withMod) T.push_back(kMod);
+    T.push_back(kOth);
+    std::string b = w32(0) + w32(39) + w32(static_cast<uint32_t>(T.size()));
+    for (auto& t : T) b += ss::fstr(t);
+    for (uint32_t v : {1u, 1u, 5u, 2u, 3u, 4u, 5000u, 777u}) b += w32(v);
+    b += w32(0xAAAAAAAAu) + w32(0xBBBBBBBBu);
+    uint32_t mi = 6 + (withStock ? 1 : 0);
+    uint32_t si = withStock ? 6 : 0;
+    for (int i = 0; i < nodes; ++i) b += w32(0) + w32(0) + w32(mi) + w32(100 + i) + w32(0) + w32(0xCCCCCCCCu);
+    b += w32(65536) + w32(0) + w32(si) + w32(900) + w32(0) + w32(0xDDDDDDDDu);
+    if (stats) {
+        b += w32(0xEEEEEEEEu) + w32(3);
+        b += ss::fstr(kOth) + w32(9) + ss::fstr(withStock ? stk : kOth + "x") + w32(5) + ss::fstr(kMod) + w32(2);
+        b += w32(0xEEEEEEEEu);
+    }
+    if (shipStr) b += w32(0x11112222u) + ss::fstr(kMod) + w32(0x33334444u);
+    b += w32(0xFFFFFFF0u);
+    return b;
+}
+
+static void scrub_tests() {
+    std::vector<SaveScrub> pairs = {{kMod, kStk, ""}};
+    // ok: nodes, table, stats merge, ship string
+    std::string a = make_save(true, true, true, true, 3);
+    ScrubOut o = scrub_bytes(a, pairs);
+    CHECK(o.st == ScrubSt::Ok);
+    CHECK(o.data.find(kMod) == std::string::npos);
+    CHECK(o.rep.nodes == 3 && o.rep.table == 1 && o.rep.merged == 1 && o.rep.paths == 1);
+    ss::Parsed PA, PC;
+    std::string why;
+    CHECK(ss::parse(a, PA, why) && ss::parse(o.data, PC, why));
+    CHECK(PC.table.size() == PA.table.size() && PC.table[7] == ss::standins()[0] && PC.table[6] == kStk && PC.table[8] == kOth);
+    CHECK(ss::usage(o.data, 7, PC).empty());
+    CHECK(ss::usage(o.data, 6, PC).size() == ss::usage(a, 6, PA).size() + 3);
+    auto fm = ss::find_flatmaps(o.data, kStk, PC.tab_end);
+    CHECK(fm.size() == 1 && fm[0].N == 2);
+    auto md = ss::mapdict(o.data, fm[0].p);
+    CHECK(md.size() == 2 && md[0].first == kOth && md[0].second == 9 && md[1].first == kStk && md[1].second == 7);
+    // size: stats entry removed, table slot renamed to the stand-in (other length)
+    CHECK(o.data.size() == a.size() - (ss::fstr(kMod).size() + 4) + (ss::fstr(ss::standins()[0]).size() - ss::fstr(kMod).size()));
+    // scrubbing again is a no-op (nothing modded left)
+    CHECK(scrub_bytes(o.data, pairs).st == ScrubSt::Skip);
+
+    // stock entry absent in the stats map: key renamed, N unchanged
+    std::string a2 = make_save(true, true, false, true, 1);
+    {
+        size_t k = a2.find(ss::fstr(kStk), a2.find(w32(0xEEEEEEEEu)));
+        CHECK(k != std::string::npos);
+        std::string alt = kStk;
+        alt.replace(alt.find("BPO_Stk"), 7, "BPO_Xyz");
+        a2.replace(k, ss::fstr(kStk).size(), ss::fstr(alt));
+        ScrubOut o2 = scrub_bytes(a2, pairs);
+        CHECK(o2.st == ScrubSt::Ok && o2.rep.renamed == 1 && o2.rep.merged == 0);
+        CHECK(o2.data.find(kMod) == std::string::npos);
+    }
+
+    // refusals: stock not in table; per-ship path with another length. Nothing is returned to write.
+    CHECK(scrub_bytes(make_save(false, true, false, false, 1), pairs).st == ScrubSt::Refused);
+    ScrubOut r = scrub_bytes(make_save(true, true, true, true, 1, true), {{kMod, kStkLong, ""}});
+    CHECK(r.st == ScrubSt::Refused && r.data.empty() && r.why.find("another length") != std::string::npos);
+    // save without the class: skipped, not written
+    CHECK(scrub_bytes(make_save(true, false, false, false, 0), pairs).st == ScrubSt::Skip);
+    // garbage that holds the path is refused, not touched
+    CHECK(scrub_bytes("junk" + kMod, pairs).st == ScrubSt::Refused);
+    // declarations
+    auto d = parse_save_scrub("name=X\nsave_scrub=" + kMod + ">" + kStk + "\nsave_scrub=bad\nsave_scrub=/a>/a\n#save_scrub=/x>/y\n");
+    CHECK(d.size() == 1 && d[0].modded == kMod && d[0].stock == kStk);
+
+    // files: backup, atomic write, other saves untouched, designs moved (never overwritten), dry run writes nothing
+    std::random_device rd;
+    char nm[40];
+    std::snprintf(nm, sizeof nm, "msc_scrub_%08x", rd());
+    fs::path t = fs::temp_directory_path() / nm, sd = t / L"SaveGames", bk = t / L"save-backup";
+    write_text(sd / L"A_S.sav", a);
+    write_text(sd / L"A_M.sav", "meta");
+    write_text(sd / L"B-Autosave_S.sav", make_save(true, false, false, false, 0));
+    write_text(sd / L"B-Autosave_M.sav", "metaB");
+    write_text(sd / L"C_S.sav", make_save(false, true, false, false, 1));  // refused: stock missing
+    write_text(sd / L"Designs" / L"d1.sav", "GVAS " + kMod + " x");
+    write_text(sd / L"Designs" / L"d2.sav", "GVAS nothing");
+    write_text(sd / L"DesignsBackup" / L"d1.sav", "older");
+    std::string bB = read_text(sd / L"B-Autosave_S.sav"), bC = read_text(sd / L"C_S.sav");
+    ScrubSummary dry = scrub_saves(sd, bk, pairs, true);
+    CHECK(dry.scrubbed() == 1 && dry.refused() == 1 && dry.designs.size() == 1 && dry.backup_dir.empty());
+    CHECK(read_text(sd / L"A_S.sav") == a && fs::exists(sd / L"Designs" / L"d1.sav") && !fs::exists(bk));
+    ScrubSummary run = scrub_saves(sd, bk, pairs, false);
+    CHECK(run.scrubbed() == 1 && run.refused() == 1 && run.designs.size() == 1);
+    CHECK(read_text(sd / L"A_S.sav") == o.data);
+    CHECK(read_text(run.backup_dir / L"A_S.sav") == a && read_text(run.backup_dir / L"A_M.sav") == "meta" &&
+          fs::exists(run.backup_dir / L"RESTORE.txt"));
+    CHECK(read_text(sd / L"B-Autosave_S.sav") == bB && read_text(sd / L"C_S.sav") == bC);
+    CHECK(!fs::exists(run.backup_dir / L"B-Autosave_S.sav") && !fs::exists(sd / L"A_S.sav.scrubtmp"));
+    CHECK(!fs::exists(sd / L"Designs" / L"d1.sav") && fs::exists(sd / L"Designs" / L"d2.sav"));
+    CHECK(read_text(sd / L"DesignsBackup" / L"d1.sav") == "older" &&
+          read_text(sd / L"DesignsBackup" / L"d1_1.sav") == "GVAS " + kMod + " x");
+    CHECK(run.text().find("REFUSED C_S.sav") != std::string::npos);
+    std::error_code ec;
+    fs::remove_all(t, ec);
 }
 
 int main(int argc, char** argv) {
@@ -297,6 +410,8 @@ int main(int argc, char** argv) {
         fs::remove_all(P.core / L"installed" / L"MiningBenchMod.txt");
     }
 
+    scrub_tests();
+
     // version constants the manager shows
     CHECK(std::string(kVersion) == "0.8.15" && kNativeApi >= 16);
 
@@ -484,6 +599,25 @@ int main(int argc, char** argv) {
     CHECK(run_mgr("--update Upd") == 0);
     CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
+    // save scrub through the real manager: --scrub-saves --dry-run changes nothing, --remove backs up and scrubs
+    {
+        fs::path saves = e2e / L"saves";
+        std::string sv = make_save(true, true, true, true, 2);
+        write_text(saves / L"S1_S.sav", sv);
+        write_text(saves / L"S1_M.sav", "meta");
+        write_text(EP.mods / L"SMod" / L"mscore.mod", "name=SMod\nversion=1.0.0\nsave_scrub=" + kMod + ">" + kStk + "\n");
+        write_text(EP.mods / L"SMod" / L"dlls" / L"main.dll", "x");
+        std::string sa = " --saves \"" + saves.string() + "\"";
+        CHECK(run_mgr("--scrub-saves SMod --dry-run" + sa) == 0);
+        CHECK(read_text(saves / L"S1_S.sav") == sv && !fs::exists(EP.core / L"save-backup"));
+        CHECK(run_mgr("--remove SMod" + sa) == 0);
+        CHECK(!fs::exists(EP.mods / L"SMod"));
+        CHECK(read_text(saves / L"S1_S.sav") == scrub_bytes(sv, {{kMod, kStk, ""}}).data);
+        CHECK(read_text(saves / L"S1_S.sav").find(kMod) == std::string::npos);
+        bool bkok = false;
+        for (auto& e : fs::directory_iterator(EP.core / L"save-backup")) bkok = bkok || read_text(e.path() / L"S1_S.sav") == sv;
+        CHECK(bkok);
+    }
     fs::remove_all(e2e, dec);
 
     std::printf("ALL OK\n");

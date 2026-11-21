@@ -2,10 +2,12 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
+//      --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
 //      --version (prints the manager version and exits)
 //      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
 #include "msc_loader.hpp"
+#include "msc_savescrub.hpp"
 
 #include <commctrl.h>
 #include <shellapi.h>
@@ -45,6 +47,24 @@ std::vector<mscl::Check> g_rows;
 std::string version_text() {
     return std::string("MSCore Manager v") + mscl::kVersion + "  native API " + std::to_string(mscl::kNativeApi) + "  build " + __DATE__;
 }
+
+// text to stdout (redirected/piped handle as is, else the parent console) + the headless log
+void out_text(const std::string& text) {
+    std::string v = text;
+    for (size_t i = 0; (i = v.find('\n', i)) != std::string::npos; i += 2)
+        if (i == 0 || v[i - 1] != '\r') v.insert(i, "\r");
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!out || out == INVALID_HANDLE_VALUE) {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+        out = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    }
+    DWORD n = 0;
+    if (out && out != INVALID_HANDLE_VALUE) WriteFile(out, v.data(), static_cast<DWORD>(v.size()), &n, nullptr);
+}
+
+fs::path g_saves_override;  // --saves <dir> (tests); else %LOCALAPPDATA%\MainSequence\Saved\SaveGames
+
+fs::path save_dir() { return g_saves_override.empty() ? mscl::default_save_dir() : g_saves_override; }
 
 // ---------- log / status ----------
 
@@ -428,13 +448,38 @@ int remove_cli(const fs::path& win64, const std::string& mod) {
     mscl::Paths p = mscl::paths_from_win64(win64);
     std::vector<std::string> deps = mscl::dependents_of(p, mod);
     if (!deps.empty()) log_line("remove: warning: required by " + join_names(deps) + ": they will stop working");
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, mod);  // before the mscore.mod files are deleted
     std::string err;
     if (!mscl::remove_mod(p, mod, err)) {
         log_line("remove: FAILED " + err);
+        out_text("remove: FAILED " + err + "\n");
         return 1;
     }
     log_line("remove: OK " + mod);
-    return 0;
+    out_text("remove: OK " + mod + "\n");
+    if (decl.empty()) return 0;
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, false);
+    log_line(sum.text());
+    out_text(sum.text());
+    return sum.refused() ? 3 : 0;
+}
+
+// --scrub-saves <mod> [--dry-run]: what Remove does to the saves, on its own.
+int scrub_cli(const fs::path& win64, const std::string& mod, bool dry) {
+    if (!dry && game_running_under(win64)) {
+        log_line("scrub-saves: game is running - close it first");
+        return 1;
+    }
+    mscl::Paths p = mscl::paths_from_win64(win64);
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, mod);
+    if (decl.empty()) {
+        out_text("scrub-saves: no save_scrub declaration for " + mod + "\n");
+        return 1;
+    }
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, dry);
+    log_line(sum.text());
+    out_text(sum.text());
+    return sum.refused() ? 3 : 0;
 }
 
 // ---------- background work ----------
@@ -724,14 +769,25 @@ void do_remove() {
     std::string q = "Remove " + name + "?\n\nThis deletes " + std::to_string(items.size()) +
                     " file(s) installed by " + name +
                     ", its backup and its mods.txt lines. Nothing of it stays loadable.\n"
+                    "Saves containing this mod's blocks will be backed up and scrubbed.\n"
                     "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
     if (!deps.empty()) q += "\n\nRequired by " + join_names(deps) + ": they will stop working";
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;
-    run_work([p, name]() -> std::string {
+    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, name);  // before the mscore.mod files are deleted
+    fs::path sd = save_dir();
+    run_work([p, name, decl, sd]() -> std::string {
         if (game_running_under(p.win64)) return "Game is running - close it first";
         std::string e;
-        if (mscl::remove_mod(p, name, e)) return "Removed " + name + ".";
-        return "Remove " + name + " failed: " + e;
+        if (!mscl::remove_mod(p, name, e)) return "Remove " + name + " failed: " + e;
+        std::string r = "Removed " + name + ".";
+        if (decl.empty()) return r;
+        mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false);
+        log_line(sum.text());
+        r += " Saves scrubbed: " + std::to_string(sum.scrubbed()) + ", refused: " + std::to_string(sum.refused()) +
+             ", designs moved: " + std::to_string(sum.designs.size());
+        if (!sum.backup_dir.empty()) r += ". Backup: " + mscl::to_utf8(sum.backup_dir.wstring());
+        if (sum.refused()) r += ". Refused saves still need the mod: see MSCoreManager.log";
+        return r;
     });
 }
 
@@ -854,7 +910,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     INITCOMMONCONTROLSEX ic{sizeof ic, ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&ic);
 
-    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg;
+    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg;
+    bool dry_run = false;
     bool headless = false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -864,24 +921,20 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--add" && i + 1 < argc) add_arg = argv[++i];
         else if (a == L"--remove" && i + 1 < argc) remove_arg = argv[++i];
         else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
+        else if (a == L"--scrub-saves" && i + 1 < argc) scrub_arg = argv[++i];
+        else if (a == L"--dry-run") dry_run = true;
+        else if (a == L"--saves" && i + 1 < argc) g_saves_override = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
         else if (a == L"--source" && i + 1 < argc) source_arg = argv[++i];
         else if (a == L"--version") {
             LocalFree(argv);
-            std::string v = version_text() + "\r\n";
             log_line(version_text());
-            HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);  // redirected/piped: use it as is
-            if (!out || out == INVALID_HANDLE_VALUE) {
-                AttachConsole(ATTACH_PARENT_PROCESS);
-                out = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-            }
-            DWORD n = 0;
-            if (out && out != INVALID_HANDLE_VALUE) WriteFile(out, v.data(), static_cast<DWORD>(v.size()), &n, nullptr);
+            out_text(version_text() + "\n");
             return 0;
         }
     }
     LocalFree(argv);
-    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty()) headless = true;
+    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty()) headless = true;
     if (!source_arg.empty()) {
         mscl::g_allow_local = true;
         mscl::g_local_root = mscl::to_utf8(source_arg);
@@ -903,6 +956,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         if (!add_arg.empty()) return add_cli(g_paths.win64, mscl::to_utf8(add_arg));  // owner/repo or GitHub URL, parsed in add_cli
         if (!remove_arg.empty()) return remove_cli(g_paths.win64, mscl::to_utf8(remove_arg));
         if (!update_arg.empty()) return update_cli(g_paths.win64, mscl::to_utf8(update_arg));
+        if (!scrub_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_arg), dry_run);
         return install_cli(g_paths.win64);
     }
 
