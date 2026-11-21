@@ -145,15 +145,40 @@ inline std::vector<FMap> find_flatmaps(const std::string& b, const std::string& 
     return res;
 }
 
-// nodes [0|65536][0][idx][id<=NextId][0]; returns the offset of idx. Pattern matches do not overlap (like regex finditer).
+// Candidate object nodes of class index idx. A node is [classIdx][id][0] followed by the block/machine base payload whose
+// fixed words are ... [0][6][parent id] at +44 / +48 / +52 (same for every BuildingBlockObject and machine node seen in the
+// real saves; both the block and the machine node of a Mining Unit have it). The words BEFORE the node are NOT used: a node
+// that follows a child-bearing node or is the first child has any value there (that is what the old signature missed).
+// Needs 1 <= id <= NextId, and the id unique among the hits of this idx (a repeated id is a repeated record, not an object).
+inline bool node_shape(const std::string& b, size_t pos, const Parsed& P) {
+    return U(b, pos + 4) >= 1 && U(b, pos + 4) <= P.nextid && U(b, pos + 8) == 0 && U(b, pos + 44) == 0 && U(b, pos + 48) == 6 &&
+           U(b, pos + 52) >= 1 && U(b, pos + 52) <= P.nextid;
+}
+
 inline std::vector<size_t> usage(const std::string& b, uint32_t idx, const Parsed& P) {
-    std::vector<size_t> r;
+    std::vector<size_t> hits, r;
     std::string key = pk(idx);
-    for (size_t pos = b.find(key); pos != std::string::npos; pos = b.find(key, pos + 4)) {
-        if (pos > P.tab_end && pos >= 8 && U(b, pos - 4) == 0 && (U(b, pos - 8) == 0 || U(b, pos - 8) == 65536) &&
-            U(b, pos + 4) >= 1 && U(b, pos + 4) <= P.nextid && U(b, pos + 8) == 0)
-            r.push_back(pos);
-    }
+    for (size_t pos = b.find(key); pos != std::string::npos; pos = b.find(key, pos + 4))
+        if (pos > P.tab_end && node_shape(b, pos, P)) hits.push_back(pos);
+    std::map<uint32_t, int> cnt;
+    for (size_t h : hits) ++cnt[U(b, h + 4)];
+    for (size_t h : hits)
+        if (cnt[U(b, h + 4)] == 1) r.push_back(h);
+    return r;
+}
+
+// Fail-closed residual scan: after the rewrite, every plausible reference to a neutralised class index that is not
+// understood. Plausible = [idx][id in 1..NextId][0] preceded by a 0 word (what a sibling node looks like) with an id that is
+// not repeated by another hit (repeated ids are repeated records, e.g. the embedded blueprint copies). Returns offsets.
+inline std::vector<size_t> residual(const std::string& b, uint32_t idx, const Parsed& P) {
+    std::vector<size_t> hits, r;
+    std::string key = pk(idx);
+    for (size_t pos = b.find(key); pos != std::string::npos; pos = b.find(key, pos + 4))
+        if (pos > P.tab_end && pos >= 4 && U(b, pos + 4) >= 1 && U(b, pos + 4) <= P.nextid && U(b, pos + 8) == 0) hits.push_back(pos);
+    std::map<uint32_t, int> cnt;
+    for (size_t h : hits) ++cnt[U(b, h + 4)];
+    for (size_t h : hits)
+        if (cnt[U(b, h + 4)] == 1 && U(b, h - 4) == 0) r.push_back(h);
     return r;
 }
 
@@ -373,6 +398,20 @@ inline ScrubOut scrub_bytes(const std::string& b, const std::vector<SaveScrub>& 
         if (edits[i - 1].e > edits[i].a) return refuse("overlapping edits");
 
     std::string out = apply_edits(b, edits);
+    {
+        Parsed PO;
+        std::string w2;
+        if (!parse(out, PO, w2)) return refuse("re-parse failed: " + w2);
+        for (const auto& kv : mp) {
+            std::vector<size_t> rs = residual(out, kv.first, PO);
+            if (!rs.empty()) {
+                std::string at;
+                for (size_t i = 0; i < rs.size() && i < 5; ++i) at += (i ? "," : "") + std::to_string(rs[i]);
+                return refuse("cannot revert safely: " + std::to_string(rs.size()) + " unexplained reference(s) to class index " +
+                              std::to_string(kv.first) + " (" + T[kv.first] + ") at offset(s) " + at + ": save left untouched");
+            }
+        }
+    }
     std::string v = verify(b, out, mp, pairs);
     if (!v.empty()) return refuse("verification failed: " + v);
     R.st = ScrubSt::Ok;
@@ -632,8 +671,13 @@ inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_
                 S.designs.push_back(skip);
                 continue;
             }
+            ScrubOut sc = scrub_design_bytes(b, pairs);  // a design already in Designs, scrubbed or not, is the same design
             bool same = false;
-            for (const auto& h : have) same = same || (fs::file_size(h, ec) == b.size() && read_bin(h) == b);
+            for (const auto& h : have) {
+                if (fs::file_size(h, ec) != b.size()) continue;
+                std::string hb = read_bin(h);
+                same = same || hb == b || (sc.st == ScrubSt::Ok && hb == sc.data);
+            }
             if (same) {
                 skip.why = "same content as a design in Designs, left in DesignsBackup";
                 S.designs.push_back(skip);

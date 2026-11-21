@@ -82,8 +82,13 @@ static std::string make_save(bool withStock, bool withMod, bool shipStr, bool st
     b += w32(0xAAAAAAAAu) + w32(0xBBBBBBBBu);
     uint32_t mi = 6 + (withStock ? 1 : 0);
     uint32_t si = withStock ? 6 : 0;
-    for (int i = 0; i < nodes; ++i) b += w32(0) + w32(0) + w32(mi) + w32(100 + i) + w32(0) + w32(0xCCCCCCCCu);
-    b += w32(65536) + w32(0) + w32(si) + w32(900) + w32(0) + w32(0xDDDDDDDDu);
+    // node payload as in the real saves: [idx][id][0][..][..][..][0][0][0][-5][395][0][6][parent]; word before = anything
+    auto node = [&](uint32_t idx, uint32_t id) {
+        return w32(idx) + w32(id) + w32(0) + w32(262144) + w32(262144) + w32(65536) + w32(0) + w32(0) + w32(0) + w32(0xFFFFFFFBu) + w32(395) +
+               w32(0) + w32(6) + w32(1) + w32(0xCCCCCCCCu);
+    };
+    for (int i = 0; i < nodes; ++i) b += w32(i == 0 ? 10u : 0u) + w32(0) + node(mi, 100 + i);  // first one is off the old signature
+    b += w32(65536) + w32(0) + node(si, 900);
     if (stats) {
         b += w32(0xEEEEEEEEu) + w32(3);
         b += ss::fstr(kOth) + w32(9) + ss::fstr(withStock ? stk : kOth + "x") + w32(5) + ss::fstr(kMod) + w32(2);
@@ -136,6 +141,18 @@ static void scrub_tests() {
     CHECK(r.st == ScrubSt::Refused && r.data.empty() && r.why.find("another length") != std::string::npos);
     // save without the class: skipped, not written
     CHECK(scrub_bytes(make_save(true, false, false, false, 0), pairs).st == ScrubSt::Skip);
+    // fail closed: a plausible reference to the modded slot that is not a known node shape leaves the save untouched
+    {
+        std::string sus = make_save(true, true, false, true, 1);
+        sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]: looks like a node, wrong payload
+        ScrubOut rf = scrub_bytes(sus, pairs);
+        CHECK(rf.st == ScrubSt::Refused && rf.data.empty() && rf.why.find("cannot revert safely") != std::string::npos);
+        // the same shape with a repeated id is a repeated record: explained, not a refusal
+        std::string rep2 = make_save(true, true, false, true, 1) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);
+        CHECK(scrub_bytes(rep2, pairs).st == ScrubSt::Ok);
+    }
+    // the off-signature first node was found (3 nodes, the first preceded by 10)
+    CHECK(o.rep.nodes == 3 && ss::usage(a, 7, PA).size() == 3);
     // garbage that holds the path is refused, not touched
     CHECK(scrub_bytes("junk" + kMod, pairs).st == ScrubSt::Refused);
     // declarations
