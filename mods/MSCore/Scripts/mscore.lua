@@ -1057,7 +1057,12 @@ function MSCore.module_disable(name, why)
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
     if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
     if name == "items" and MSCore.wbp and MSCore.wbp.items_disable then pcall(MSCore.wbp.items_disable, why) return true end
-    if name == "fleets" and MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") return true end
+    if name == "fleets" then   -- native fleets + fleets_write off too (fail closed), then the Lua side
+        local nd = rawget(_G, "MSCoreNative_module_disable")
+        if type(nd) == "function" then pcall(nd, "fleets") pcall(nd, "fleets_write") end
+        if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end
+        return true
+    end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end
     return false
 end

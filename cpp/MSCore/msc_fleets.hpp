@@ -69,7 +69,7 @@ namespace
         }
         all.clear();
         if (!seh_run([&] { UObjectGlobals::FindAllOf(widen(kClsShip).c_str(), all); })) return false;
-        bool bad = false;
+        int layout_bad = 0, read_ok = 0;   // ships with a FleetTagIDs layout surprise are skipped (counted); fail only when none could be read
         for (UObject* o : all)
         {
             MsFleetShip s{};
@@ -80,7 +80,8 @@ namespace
                 if (s.ship <= 0) return;
                 FProperty* p = o->GetPropertyByNameInChain(STR("FleetTagIDs"));
                 auto* ap = p ? CastField<FArrayProperty>(p) : nullptr;
-                if (!ap || !ap->GetInner() || !CastField<FIntProperty>(ap->GetInner())) { bad = true; return; }
+                if (!ap || !ap->GetInner() || !CastField<FIntProperty>(ap->GetInner())) { ++layout_bad; return; }
+                ++read_ok;
                 auto* arr = reinterpret_cast<TArray<int32_t>*>(reinterpret_cast<uint8_t*>(o) + p->GetOffset_Internal());
                 const int n = arr->Num();
                 if (n <= 0 || n > 1000) return;   // ships without a fleet are not listed
@@ -88,9 +89,10 @@ namespace
                 for (int i = 0; i < n && i < kFleetMaxTags; ++i) s.tags[s.count++] = (*arr)[i];
                 keep = true;
             });
-            if (!ok || bad) return false;
+            if (!ok) return false;
             if (keep) ships.push_back(s);
         }
+        if (layout_bad > 0 && read_ok == 0) return false;   // no ship could be read: layout surprise, module off
         return true;
     }
 
@@ -169,6 +171,8 @@ namespace
         UFunction* fn = nullptr;
         for (UFunction* f : c->ForEachFunction()) if (f->GetName().rfind(STR("CreateInput"), 0) == 0) { fn = f; break; }
         if (!fn) { detail = "FleetTagInput CreateInput not found"; return false; }
+        // the one factory proven in game (2026-11-21 unassign, bRemove=true); any other factory layout keeps fleets_write off
+        if (fn->GetName() != STR("CreateInputFleetTag")) { detail = "FleetTagInput factory " + fleets_utf8(fn->GetName().c_str()) + " not the verified CreateInputFleetTag"; return false; }
         bool has_text = false, has_int = false, has_bool = false;
         for (FProperty* q : fn->ForEachProperty())
         {

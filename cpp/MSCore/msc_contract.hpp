@@ -31,7 +31,7 @@ namespace
     constexpr const char* kClsItemCrate = "BP_ItemCrateObject_C";
     constexpr const char* kClsShip = "DMSPlayerShipObject";
     constexpr const char* kClsFleetTag = "FleetTag";
-    constexpr const char* kClsPlayerObj = "DMSPlayerObject";   // player object class (FindFirstOf fallback when the controller's PlayerObject is unreadable)
+    constexpr const char* kClsPlayerObj = "DMSPlayerObject";   // player object class: mirrors C.classes.player_obj in the Lua contract. The C++ scan reads the controller's PlayerObject directly (no FindFirstOf fallback)
     struct ClassName { const char* logical; const char* name; };
     constexpr ClassName kClasses[] = {
         { "asteroid", kClsAsteroid }, { "asteroid_actor", kClsAsteroidActor }, { "floating_ore", kClsFloatingOre },

@@ -282,13 +282,11 @@ local function hologram_texture_impl(id, opts)
   local now = os.clock()
   stalled(now)
   local e, at = holo.ent[id], holo.at[id]
-  if e then hstep("holo reuse id=" .. id) end
   local tex = e and holoTex(e) or nil
   local dec = M.holo_decide(at and now - at or nil, opts.ttl, opts.force, opts.refresh_ok, tex ~= nil)
   if tex and dec == "reuse" then   -- no ship scan / SetShip / FindAllOf on this path
     holo.stats.reuses = holo.stats.reuses + 1
     if M.holo_due(at and now - at or nil, opts.ttl, false) then holo.stats.stale_reuses = holo.stats.stale_reuses + 1 end
-    hstep("holo reuse ok id=" .. id)
     return tex
   end
   if e and at and not tex then   -- texture missing or invalid right now: just built = wait, else drop the widget and build a new one (below)

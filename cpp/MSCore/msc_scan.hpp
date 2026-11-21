@@ -176,7 +176,7 @@ namespace
         const int cid = alive(ctrl) ? obj_id(ctrl) : -1;
         UObject* pobj = alive(ctrl) ? get_obj_prop(ctrl, STR("PlayerObject")) : nullptr;
         const int pid = alive(pobj) ? obj_id(pobj) : -1;
-        std::wstring sig;
+        int piloted_id = -1;
         std::vector<UObject*> ships;
         UObjectGlobals::FindAllOf(STR("DMSPlayerShipObject"), ships);
         for (UObject* s : ships)
@@ -195,7 +195,7 @@ namespace
                 if (get_int_prop(s, STR("DockID"), v)) { r.dock_id = v; r.docked = v != 0; }
                 int32_t pilot = -1;
                 r.piloted = get_int_prop(s, STR("PilotID"), pilot) && pilot > 0 && (pilot == cid || pilot == pid);
-                sig += std::to_wstring(r.id) + STR(":") + std::to_wstring(pilot) + STR(",");
+                if (r.piloted && piloted_id < 0) piloted_id = r.id;
                 if (call_int(s, STR("GetCurrentHull"), v)) r.hull = v;
                 if (get_int_prop(s, STR("MaxHealth"), v)) r.max_hull = v;
                 if (get_int_prop(s, STR("CurrentOrderIndex"), v)) fill_order(r, s, v);
@@ -207,13 +207,12 @@ namespace
             }
             catch (...) {}
         }
-        // WHY: piloted-ship debugging; log only when the pilot tuple changes.
-        static std::wstring last;
-        const std::wstring key = std::to_wstring(cid) + STR(" ") + std::to_wstring(pid) + STR(" ") + sig;
-        if (key != last)
+        // WHY: piloted-ship debugging; log only when (ctrl id, player id, piloted ship id) changes. No per-scan string build.
+        static int last_cid = -2, last_pid = -2, last_ship = -2;
+        if (cid != last_cid || pid != last_pid || piloted_id != last_ship)
         {
-            last = key;
-            msc_log(STR("SCAN pilot ctrl=") + std::to_wstring(cid) + STR(" player=") + std::to_wstring(pid) + STR(" ships=") + sig);
+            last_cid = cid; last_pid = pid; last_ship = piloted_id;
+            msc_log(STR("SCAN pilot ctrl=") + std::to_wstring(cid) + STR(" player=") + std::to_wstring(pid) + STR(" piloted=") + std::to_wstring(piloted_id));
         }
     }
 

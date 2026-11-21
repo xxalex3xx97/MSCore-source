@@ -37,6 +37,6 @@ C.holo_ttl, C.holo_per_window, C.holo_window, C.items_refresh = 30, 2, 0.25, 30
 -- hologram refresh is OFF: re-rendering an existing widget (SetShip again / ship scan for it) crashed the game in-game (2x). Pictures are created
 -- once per ship per session. Do not enable without an in-game proof. holo_debug = HOLO STEP log markers; set false after the crash hunt.
 C.holo_refresh = false
-C.holo_debug = true
+C.holo_debug = false
 C.blocks = { registry = "BuildingBlockRegistry", research_class = "ResearchTechnology", research_dir = "/Game/Data/Research/", category = "Functional Blocks" }
 return C

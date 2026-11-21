@@ -20,7 +20,10 @@ nav_order: 6
 - **Fixed:** `items` never caches an empty item map; the next call reads it again.
 - **Fixed:** wbp fleets window counts as open only when it is in the viewport and visible (a cached hidden `WBP_Fleet_C` no longer counts).
 - **Fixed:** wbp hologram queue: queue purge, items stall guard, pruning of dead entities, nil guards. No in-place re-render without refresh_ok (refresh stays OFF).
-- **Changed:** native fleet unassign sends `bRemove=true` (`false` is ADD, per the 2026-11-20 log). The fleet write path is still unverified in game (`fleets_write` caps off).
+- **Changed:** native fleet unassign sends `bRemove=true` (`false` is ADD, per the 2026-11-20 log). Verified in game 2026-11-21: the pill trash removes a fleet from a ship. Other fleet write ops (create, rename, delete, assign, reparent) stay unverified and off (`fleet_write` refuses them; `fleets_write` cap off by default).
+- **Changed:** selftest `world.fleets_write` arms the cap only for the verified factory `CreateInputFleetTag` (FText, int and bool params). Any other FleetTagInput factory keeps `fleets_write` off.
+- **Fixed:** fleets scan skips a ship whose `FleetTagIDs` layout is unexpected (counted) and fails (module off) only when no ship could be read. `MSCore.module_disable("fleets")` also switches off native `fleets_write` (new narrow native `MSCoreNative_module_disable`, names `fleets` / `fleets_write` only).
+- **Known issues:** `open_fleet_assign` (mscore_wbp.lua): in standalone mode the `holo.hold - now <= 3` bypass is always true, so the 3 s settle hold never blocks the + (add to fleet) click. Left unchanged: standalone mode has no warp/load event, so a bypass limited to "this session start" cannot be told apart from a warp without the live game. The + flow is confirmed working in game; the warp guard stays as before. Follow-up: a warp/load signal for standalone mode.
 - **Changed:** `MSCore.fleets.list(true)` bypasses the cache. `open_fleet_assign` scans ships on its first click.
 - **New:** `MSCore.fleets.on_fleet_cmd` (a function you set; nil clears it): called with `(FleetTagID, bRemove)` whenever the game sends a FleetTagInput, even with the log muted. ID 0 = create fleet.
 - **New:** mscore_wbp `close_fleets_window()` closes the game's fleet window again after the add-to-fleet popup; `fleets_window_open()` reports whether it is open.

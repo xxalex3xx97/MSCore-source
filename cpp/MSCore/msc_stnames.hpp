@@ -8,6 +8,7 @@
 // DEPENDS ON: msc_cmd.hpp (alive, seh_run), msc_ue.hpp (obj_id), msc_contract.hpp (kClsStation), msc_caps.hpp.
 #pragma once
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,9 @@ namespace
 
     void stnames_resolve() { static bool done = false; if (done) return; done = true; caps_add("stations", true, ""); }
 
+    std::mutex g_stn_mx;      // guards g_stn_src (written by stn_name on the game thread, read by the selfcheck)
     std::wstring g_stn_src;   // which candidate hit first ("DisplayName", "Blueprint.DisplayName", ...)
+    std::wstring stn_src_get() { std::lock_guard<std::mutex> lk(g_stn_mx); return g_stn_src; }
 
     // WHAT: where a station name may live. inner==nullptr: plain property on the station; else field `inner` inside the struct property `outer`.
     struct StnCand { const TCHAR* outer; const TCHAR* inner; };
@@ -54,7 +57,10 @@ namespace
         {
             std::wstring n = stn_cand(o, c);
             if (n.empty()) continue;
-            if (g_stn_src.empty()) g_stn_src = c.inner ? std::wstring(c.outer) + STR(".") + c.inner : std::wstring(c.outer);
+            {
+                std::lock_guard<std::mutex> lk(g_stn_mx);
+                if (g_stn_src.empty()) g_stn_src = c.inner ? std::wstring(c.outer) + STR(".") + c.inner : std::wstring(c.outer);
+            }
             return n;
         }
         return STR("");

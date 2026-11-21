@@ -144,7 +144,8 @@ namespace
             if (rows.empty()) { detail = "SKIP no stations"; return false; }
             int named = 0;
             for (const auto& r : rows) if (r.name[0]) ++named;
-            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with name, via " + (g_stn_src.empty() ? std::string("none") : narrow(g_stn_src));
+            const std::wstring stn_src = stn_src_get();
+            detail = std::to_string(rows.size()) + " stations, " + std::to_string(named) + " with name, via " + (stn_src.empty() ? std::string("none") : narrow(stn_src));
             return named > 0;
         }
         if (name == "fleets")
@@ -969,6 +970,22 @@ namespace
         return lua_result(lua, ok, err);
     }
 
+    // Lua: module_disable(name) -> ok   (narrow: only 'fleets' and 'fleets_write'; the Lua fleets kill switch calls it)
+    int lua_module_disable(const LuaMadeSimple::Lua& lua)
+    {
+        bool ok = false;
+        try {
+            if (lua_type(lua.get_lua_state(), 1) == LUA_TSTRING)
+            {
+                const std::string name = arg_bytes(lua);
+                if (name == "fleets") { module_disable(STR("fleets"), STR("lua kill switch")); ok = true; }
+                else if (name == "fleets_write") { module_disable(STR("fleets_write"), STR("lua kill switch")); ok = true; }
+            }
+        } catch (...) { ok = false; }
+        lua.set_bool(ok);
+        return 1;
+    }
+
     // Lua: fleets_probe() -> text   (FleetTagInput layout dump)
     int lua_fleets_probe(const LuaMadeSimple::Lua& lua)
     {
@@ -1261,6 +1278,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_read_docks", lua_read_docks);
     lua.register_function("MSCoreNative_fleets_read", lua_fleets_read);
     lua.register_function("MSCoreNative_fleet_cmd", lua_fleet_cmd);
+    lua.register_function("MSCoreNative_module_disable", lua_module_disable);
     lua.register_function("MSCoreNative_fleets_probe", lua_fleets_probe);
     lua.register_function("MSCoreNative_rename_dock", lua_rename_dock);
     lua.register_function("MSCoreNative_set_dock_filter", lua_set_dock_filter);

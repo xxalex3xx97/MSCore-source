@@ -118,7 +118,7 @@ function M.probe()
 end
 
 -- dev tool: ARM ONCE. Logs every property (class chain, name:type=value) of each FleetTagInput the game sends to
--- DMSPlayerController:AddInputCommand(receiverId, cmd), max 20 dumps; other command classes = 1 line per class per 30 s. Sends nothing.
+-- DMSPlayerController:AddInputCommand(receiverId, cmd), max 40 dumps; other command classes = 1 line per class per 30 s. Sends nothing.
 -- capture(true) -> true armed | false (no RegisterHook / hook failed); capture(false) mutes the log (hook stays, cheap early return).
 local hooked, capOn, capDumps, capSeen = false, false, 0, {}
 local CAP_DUMP_MAX, CAP_RATE = 40, 30
@@ -165,6 +165,7 @@ end
 -- M.on_fleet_cmd = function(tid, bRemove) (set/cleared by the caller): called when a FleetTagInput is sent, even with the log muted/capped; called with (FleetTagID, bRemove); ID 0 = create fleet
 function M.capture(on)
     if on == false then capOn = false; return false end
+    capDumps = 0   -- each arm gets its own dump budget
     if hooked then capOn = true; return true end
     if type(RegisterHook) ~= "function" then return false end
     local ok = pcall(RegisterHook, "/Script/MainSequence.DMSPlayerController:AddInputCommand", function(self, recvp, cmdp)
