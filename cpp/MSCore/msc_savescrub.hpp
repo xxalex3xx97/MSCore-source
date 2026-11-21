@@ -381,6 +381,55 @@ inline ScrubOut scrub_bytes(const std::string& b, const std::vector<SaveScrub>& 
     return R;
 }
 
+// ---------- designs (GVAS DesignSaveGame) ----------
+
+// A design holds class paths as plain FStrings. Same-length substitution keeps every length field of the file valid,
+// so that is the only edit made: each occurrence of a modded path must be a whole FString ([u32 len+1][path][NUL]) and the
+// stock path must have the same length. Anything else = Refused, the design is left alone. The design must not be moved
+// away either: ships reference their design and the game crashes (0x110) when it is missing.
+inline ScrubOut scrub_design_bytes(const std::string& b, const std::vector<SaveScrub>& pairs_in) {
+    using namespace ss;
+    ScrubOut R;
+    std::vector<SaveScrub> pairs;
+    for (const auto& p : pairs_in)
+        if (!p.modded.empty() && p.modded != p.stock && b.find(p.modded) != std::string::npos) pairs.push_back(p);
+    if (pairs.empty()) return R;  // Skip
+    auto refuse = [&](const std::string& w) {
+        R.st = ScrubSt::Refused;
+        R.why = w;
+        R.data.clear();
+        return R;
+    };
+    if (b.compare(0, 4, "GVAS") != 0) return refuse("not a GVAS design file");
+    std::string out = b;
+    std::vector<std::pair<size_t, size_t>> ranges;  // replaced [begin, end)
+    for (const auto& p : pairs) {
+        if (p.stock.size() != p.modded.size()) return refuse("stock path has another length than " + p.modded + ": design left alone");
+        for (size_t occ = b.find(p.modded); occ != std::string::npos; occ = b.find(p.modded, occ + p.modded.size())) {
+            size_t e = occ + p.modded.size();
+            if (occ < 4 || U(b, occ - 4) != p.modded.size() + 1 || e >= b.size() || b[e] != 0)
+                return refuse("modded path is not a whole string at offset " + std::to_string(occ) + ": design left alone");
+            out.replace(occ, p.modded.size(), p.stock);
+            ranges.push_back({occ, e});
+            ++R.rep.paths;
+        }
+    }
+    // independent check: same length, nothing outside the replaced ranges changed, ranges hold the stock path, no modded left
+    if (out.size() != b.size()) return refuse("length changed");
+    std::sort(ranges.begin(), ranges.end());
+    size_t pos = 0;
+    for (const auto& r : ranges) {
+        if (r.first < pos || out.compare(pos, r.first - pos, b, pos, r.first - pos) != 0) return refuse("bytes outside the replaced strings changed");
+        pos = r.second;
+    }
+    if (out.compare(pos, std::string::npos, b, pos, std::string::npos) != 0) return refuse("tail changed");
+    for (const auto& p : pairs)
+        if (out.find(p.modded) != std::string::npos) return refuse("modded path left");
+    R.st = ScrubSt::Ok;
+    R.data = out;
+    return R;
+}
+
 // ---------- files ----------
 
 struct ScrubFile {
@@ -389,27 +438,28 @@ struct ScrubFile {
     std::string why;
     ScrubRep rep;
     bool written = false;
+    bool restored = false;  // design taken back from DesignsBackup
 };
 
 struct ScrubSummary {
-    std::vector<ScrubFile> files;
-    std::vector<std::string> designs;  // designs moved to DesignsBackup (or that would be, dry run)
-    fs::path backup_dir;               // empty = nothing backed up
+    std::vector<ScrubFile> files;    // saves
+    std::vector<ScrubFile> designs;  // designs (scrubbed in place, never moved away)
+    fs::path backup_dir;             // empty = nothing backed up
     bool dry = false;
-    int scrubbed() const {
+    static int count(const std::vector<ScrubFile>& v, ScrubSt s) {
         int n = 0;
-        for (const auto& f : files) n += f.st == ScrubSt::Ok;
+        for (const auto& f : v) n += f.st == s;
         return n;
     }
-    int refused() const {
-        int n = 0;
-        for (const auto& f : files) n += f.st == ScrubSt::Refused;
-        return n;
-    }
+    int scrubbed() const { return count(files, ScrubSt::Ok); }
+    int refused() const { return count(files, ScrubSt::Refused); }
+    int designs_scrubbed() const { return count(designs, ScrubSt::Ok); }
+    int designs_refused() const { return count(designs, ScrubSt::Refused); }
     std::string text() const {
         std::string t = std::string(dry ? "Save scrub (dry run, nothing written): " : "Save scrub: ") + std::to_string(scrubbed()) +
-                        (dry ? " save(s) would change, " : " save(s) scrubbed, ") + std::to_string(refused()) + " refused, " +
-                        std::to_string(designs.size()) + " design(s) " + (dry ? "would be moved" : "moved") + ".\n";
+                        (dry ? " save(s) would change, " : " save(s) scrubbed, ") + std::to_string(refused()) + " refused; " +
+                        std::to_string(designs_scrubbed()) + (dry ? " design(s) would change, " : " design(s) scrubbed in place, ") +
+                        std::to_string(designs_refused()) + " refused.\n";
         for (const auto& f : files) {
             if (f.st == ScrubSt::Ok)
                 t += "  " + std::string(dry ? "would scrub " : "scrubbed ") + f.name + " (nodes " + std::to_string(f.rep.nodes) + ", stats merged " +
@@ -417,7 +467,15 @@ struct ScrubSummary {
             else if (f.st == ScrubSt::Refused)
                 t += "  REFUSED " + f.name + ": " + f.why + "\n";
         }
-        for (const auto& d : designs) t += "  design moved: " + d + "\n";
+        for (const auto& f : designs) {
+            if (f.st == ScrubSt::Ok)
+                t += "  design " + std::string(dry ? "would be " : "") + (f.restored ? "restored from DesignsBackup and scrubbed: " : "scrubbed: ") + f.name +
+                     " (" + std::to_string(f.rep.paths) + " path(s))\n";
+            else if (f.st == ScrubSt::Refused)
+                t += "  design REFUSED " + f.name + ": " + f.why + "\n";
+            else if (!f.why.empty())
+                t += "  design skipped " + f.name + ": " + f.why + "\n";
+        }
         if (!backup_dir.empty()) t += "  backup folder: " + to_utf8(backup_dir.wstring()) + "\n";
         return t;
     }
@@ -439,17 +497,32 @@ inline std::string read_bin(const fs::path& f) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-inline fs::path unique_path(const fs::path& dir, const fs::path& name) {
+// temp file next to f, read back and compared, then renamed over f
+inline void write_verified(const fs::path& f, const std::string& data) {
     std::error_code ec;
-    fs::path t = dir / name;
-    for (int i = 1; fs::exists(t, ec); ++i)
-        t = dir / (name.stem().wstring() + L"_" + std::to_wstring(i) + name.extension().wstring());
-    return t;
+    fs::path tmp = f;
+    tmp += L".scrubtmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(data.data(), static_cast<std::streamsize>(data.size()));
+        out.close();
+        if (out.fail()) throw std::runtime_error("write failed");
+    }
+    if (read_bin(tmp) != data) {
+        fs::remove(tmp, ec);
+        throw std::runtime_error("written file differs from the verified result");
+    }
+    fs::rename(tmp, f);  // replaces the original
 }
 
-// Scrubs every *_S.sav in savedir that holds a modded path (backup first), moves Designs\*.sav that hold one to
-// DesignsBackup\. dry = report only. Never throws; a failing save is reported as Refused and left untouched.
-inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_root, const std::vector<SaveScrub>& pairs, bool dry) {
+enum : int { kScrubSaves = 1, kScrubDesigns = 2, kRestoreDesigns = 4 };
+
+// what: kScrubSaves = every *_S.sav in savedir that holds a modded path (backup first);
+//       kScrubDesigns = Designs\*.sav rewritten in place (same-length substitution, backup first);
+//       kRestoreDesigns = designs a former Remove moved to DesignsBackup\ (no same-named file in Designs\, not a byte copy of
+//       one) go back into Designs\ scrubbed. dry = report only. Never throws; a failing file is Refused and left untouched.
+inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_root, const std::vector<SaveScrub>& pairs, bool dry,
+                                int what = kScrubSaves | kScrubDesigns) {
     ScrubSummary S;
     S.dry = dry;
     std::error_code ec;
@@ -466,76 +539,111 @@ inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_
         fs::create_directories(d, ec);
         if (ec) return false;
         write_text(d / L"RESTORE.txt",
-                   "Originals of the saves MSCore Manager scrubbed when a mod was removed.\n"
+                   "Originals of the saves and designs MSCore Manager scrubbed when a mod was removed.\n"
                    "To undo: close the game, copy the files here back into\n  " + to_utf8(savedir.wstring()) +
-                       "\n(both <slot>_S.sav and <slot>_M.sav). They need the removed mod's pak to load.\n");
+                       "\n(saves: <slot>_S.sav and <slot>_M.sav; designs: the Designs subfolder go into SaveGames\\Designs).\n"
+                       "They need the removed mod's pak to load.\n");
         S.backup_dir = d;
         return true;
     };
-    std::vector<fs::path> saves;
-    for (auto& e : fs::directory_iterator(savedir, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        std::wstring n = e.path().filename().wstring();
-        if (n.size() > 6 && n.compare(n.size() - 6, 6, L"_S.sav") == 0) saves.push_back(e.path());
+    auto has_modded = [&](const std::string& b) {
+        for (const auto& p : pairs)
+            if (!p.modded.empty() && b.find(p.modded) != std::string::npos) return true;
+        return false;
+    };
+    if (what & kScrubSaves) {
+        std::vector<fs::path> saves;
+        for (auto& e : fs::directory_iterator(savedir, ec)) {
+            if (!e.is_regular_file(ec)) continue;
+            std::wstring n = e.path().filename().wstring();
+            if (n.size() > 6 && n.compare(n.size() - 6, 6, L"_S.sav") == 0) saves.push_back(e.path());
+        }
+        std::sort(saves.begin(), saves.end());
+        for (const auto& f : saves) {
+            ScrubFile r;
+            r.name = to_utf8(f.filename().wstring());
+            try {
+                std::string b = read_bin(f);
+                ScrubOut o = scrub_bytes(b, pairs);
+                r.st = o.st;
+                r.why = o.why;
+                r.rep = o.rep;
+                if (o.st == ScrubSt::Ok && !dry) {
+                    if (!ensure_backup()) throw std::runtime_error("cannot create backup folder");
+                    fs::copy_file(f, S.backup_dir / f.filename(), fs::copy_options::overwrite_existing);
+                    fs::path m = f;
+                    std::wstring mn = f.filename().wstring();
+                    m.replace_filename(mn.substr(0, mn.size() - 6) + L"_M.sav");
+                    if (fs::is_regular_file(m, ec)) fs::copy_file(m, S.backup_dir / m.filename(), fs::copy_options::overwrite_existing);
+                    write_verified(f, o.data);
+                    r.written = true;
+                }
+            } catch (const std::exception& e) {
+                r.st = ScrubSt::Refused;
+                r.why = std::string("error, save left untouched: ") + e.what();
+            }
+            if (r.st != ScrubSt::Skip) S.files.push_back(r);
+        }
     }
-    std::sort(saves.begin(), saves.end());
-    for (const auto& f : saves) {
+    fs::path dd = savedir / L"Designs", bd = savedir / L"DesignsBackup";
+    auto list_sav = [&](const fs::path& dir) {
+        std::vector<fs::path> v;
+        for (auto& e : fs::directory_iterator(dir, ec))
+            if (e.is_regular_file(ec) && e.path().extension() == L".sav") v.push_back(e.path());
+        std::sort(v.begin(), v.end());
+        return v;
+    };
+    // one design: scrub bytes, backup the original, write dest (in place or restored), optionally drop the source
+    auto do_design = [&](const fs::path& src, const fs::path& dest, bool restored) {
         ScrubFile r;
-        r.name = to_utf8(f.filename().wstring());
+        r.name = to_utf8(src.filename().wstring());
+        r.restored = restored;
         try {
-            std::string b = read_bin(f);
-            ScrubOut o = scrub_bytes(b, pairs);
+            std::string b = read_bin(src);
+            if (!has_modded(b)) return;
+            ScrubOut o = scrub_design_bytes(b, pairs);
             r.st = o.st;
             r.why = o.why;
             r.rep = o.rep;
             if (o.st == ScrubSt::Ok && !dry) {
                 if (!ensure_backup()) throw std::runtime_error("cannot create backup folder");
-                fs::copy_file(f, S.backup_dir / f.filename(), fs::copy_options::overwrite_existing);
-                fs::path m = f;
-                std::wstring mn = f.filename().wstring();
-                m.replace_filename(mn.substr(0, mn.size() - 6) + L"_M.sav");
-                if (fs::is_regular_file(m, ec)) fs::copy_file(m, S.backup_dir / m.filename(), fs::copy_options::overwrite_existing);
-                fs::path tmp = f;
-                tmp += L".scrubtmp";
-                {
-                    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-                    out.write(o.data.data(), static_cast<std::streamsize>(o.data.size()));
-                    out.close();
-                    if (out.fail()) throw std::runtime_error("write failed");
-                }
-                if (read_bin(tmp) != o.data) {
-                    fs::remove(tmp, ec);
-                    throw std::runtime_error("written file differs from the verified result");
-                }
-                fs::rename(tmp, f);  // replaces the original
+                fs::create_directories(S.backup_dir / (restored ? L"DesignsBackup" : L"Designs"), ec);
+                fs::copy_file(src, S.backup_dir / (restored ? L"DesignsBackup" : L"Designs") / src.filename(), fs::copy_options::overwrite_existing);
+                write_verified(dest, o.data);
+                if (restored) fs::remove(src, ec);
                 r.written = true;
             }
         } catch (const std::exception& e) {
             r.st = ScrubSt::Refused;
-            r.why = std::string("error, save left untouched: ") + e.what();
+            r.why = std::string("error, design left untouched: ") + e.what();
         }
-        if (r.st != ScrubSt::Skip) S.files.push_back(r);
-    }
-    fs::path dd = savedir / L"Designs";
-    std::vector<fs::path> designs;
-    for (auto& e : fs::directory_iterator(dd, ec))
-        if (e.is_regular_file(ec) && e.path().extension() == L".sav") designs.push_back(e.path());
-    std::sort(designs.begin(), designs.end());
-    for (const auto& f : designs) {
-        try {
+        if (r.st != ScrubSt::Skip) S.designs.push_back(r);
+    };
+    if (what & kRestoreDesigns) {  // before the in-place pass: "byte copy of a design in Designs" is compared with the originals
+        std::vector<fs::path> have = list_sav(dd);
+        for (const auto& f : list_sav(bd)) {
             std::string b = read_bin(f);
-            bool has = false;
-            for (const auto& p : pairs) has = has || (!p.modded.empty() && b.find(p.modded) != std::string::npos);
-            if (!has) continue;
-            fs::path dest = unique_path(savedir / L"DesignsBackup", f.filename());
-            if (!dry) {
-                fs::create_directories(dest.parent_path(), ec);
-                fs::rename(f, dest);
+            if (!has_modded(b)) continue;  // not one of ours (the user's own backups stay)
+            fs::path dest = dd / f.filename();
+            ScrubFile skip;
+            skip.name = to_utf8(f.filename().wstring());
+            if (fs::exists(dest, ec)) {
+                skip.why = "a design with this name is already in Designs";
+                S.designs.push_back(skip);
+                continue;
             }
-            S.designs.push_back(to_utf8(f.filename().wstring()));
-        } catch (const std::exception&) {
+            bool same = false;
+            for (const auto& h : have) same = same || (fs::file_size(h, ec) == b.size() && read_bin(h) == b);
+            if (same) {
+                skip.why = "same content as a design in Designs, left in DesignsBackup";
+                S.designs.push_back(skip);
+                continue;
+            }
+            do_design(f, dest, true);
         }
     }
+    if (what & kScrubDesigns)
+        for (const auto& f : list_sav(dd)) do_design(f, f, false);
     return S;
 }
 

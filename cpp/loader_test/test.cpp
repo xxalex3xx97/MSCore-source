@@ -142,7 +142,7 @@ static void scrub_tests() {
     auto d = parse_save_scrub("name=X\nsave_scrub=" + kMod + ">" + kStk + "\nsave_scrub=bad\nsave_scrub=/a>/a\n#save_scrub=/x>/y\n");
     CHECK(d.size() == 1 && d[0].modded == kMod && d[0].stock == kStk);
 
-    // files: backup, atomic write, other saves untouched, designs moved (never overwritten), dry run writes nothing
+    // files: backup, atomic write, other saves untouched, designs rewritten in place (same length, never moved), dry run writes nothing
     std::random_device rd;
     char nm[40];
     std::snprintf(nm, sizeof nm, "msc_scrub_%08x", rd());
@@ -152,23 +152,47 @@ static void scrub_tests() {
     write_text(sd / L"B-Autosave_S.sav", make_save(true, false, false, false, 0));
     write_text(sd / L"B-Autosave_M.sav", "metaB");
     write_text(sd / L"C_S.sav", make_save(false, true, false, false, 1));  // refused: stock missing
-    write_text(sd / L"Designs" / L"d1.sav", "GVAS " + kMod + " x");
+    // GVAS-like blob: magic, a number, the class path as a whole FString (twice), tail
+    std::string dsg = "GVAS" + w32(3) + ss::fstr("/x") + ss::fstr(kMod) + w32(42) + ss::fstr(kOth) + ss::fstr(kMod) + "tail";
+    write_text(sd / L"Designs" / L"d1.sav", dsg);
     write_text(sd / L"Designs" / L"d2.sav", "GVAS nothing");
-    write_text(sd / L"DesignsBackup" / L"d1.sav", "older");
+    write_text(sd / L"Designs" / L"d3.sav", "GVAS" + w32(1) + kMod + "!");  // path not a whole FString: refused, left alone
+    write_text(sd / L"DesignsBackup" / L"old.sav", "older");               // not ours: stays
+    write_text(sd / L"DesignsBackup" / L"d1.sav", dsg);                    // same name as a design in Designs: stays
+    write_text(sd / L"DesignsBackup" / L"r1.sav", "GVAS" + w32(9) + ss::fstr(kMod));  // moved by an old Remove: comes back
+    write_text(sd / L"DesignsBackup" / L"r2.sav", dsg);                    // byte copy of d1: stays
     std::string bB = read_text(sd / L"B-Autosave_S.sav"), bC = read_text(sd / L"C_S.sav");
     ScrubSummary dry = scrub_saves(sd, bk, pairs, true);
-    CHECK(dry.scrubbed() == 1 && dry.refused() == 1 && dry.designs.size() == 1 && dry.backup_dir.empty());
-    CHECK(read_text(sd / L"A_S.sav") == a && fs::exists(sd / L"Designs" / L"d1.sav") && !fs::exists(bk));
+    CHECK(dry.scrubbed() == 1 && dry.refused() == 1 && dry.designs_scrubbed() == 1 && dry.designs_refused() == 1 && dry.backup_dir.empty());
+    CHECK(read_text(sd / L"A_S.sav") == a && read_text(sd / L"Designs" / L"d1.sav") == dsg && !fs::exists(bk));
     ScrubSummary run = scrub_saves(sd, bk, pairs, false);
-    CHECK(run.scrubbed() == 1 && run.refused() == 1 && run.designs.size() == 1);
+    CHECK(run.scrubbed() == 1 && run.refused() == 1 && run.designs_scrubbed() == 1 && run.designs_refused() == 1);
     CHECK(read_text(sd / L"A_S.sav") == o.data);
     CHECK(read_text(run.backup_dir / L"A_S.sav") == a && read_text(run.backup_dir / L"A_M.sav") == "meta" &&
           fs::exists(run.backup_dir / L"RESTORE.txt"));
     CHECK(read_text(sd / L"B-Autosave_S.sav") == bB && read_text(sd / L"C_S.sav") == bC);
     CHECK(!fs::exists(run.backup_dir / L"B-Autosave_S.sav") && !fs::exists(sd / L"A_S.sav.scrubtmp"));
-    CHECK(!fs::exists(sd / L"Designs" / L"d1.sav") && fs::exists(sd / L"Designs" / L"d2.sav"));
-    CHECK(read_text(sd / L"DesignsBackup" / L"d1.sav") == "older" &&
-          read_text(sd / L"DesignsBackup" / L"d1_1.sav") == "GVAS " + kMod + " x");
+    // design d1: same length, only the two modded strings replaced, original in the backup, d2/d3 untouched, nothing moved
+    std::string d1 = read_text(sd / L"Designs" / L"d1.sav");
+    CHECK(d1.size() == dsg.size() && d1.find(kMod) == std::string::npos);
+    std::string want = dsg;
+    for (size_t o2 = want.find(kMod); o2 != std::string::npos; o2 = want.find(kMod)) want.replace(o2, kMod.size(), kStk);
+    CHECK(d1 == want);
+    CHECK(read_text(run.backup_dir / L"Designs" / L"d1.sav") == dsg);
+    CHECK(read_text(sd / L"Designs" / L"d2.sav") == "GVAS nothing" && read_text(sd / L"Designs" / L"d3.sav") == "GVAS" + w32(1) + kMod + "!");
+    CHECK(read_text(sd / L"DesignsBackup" / L"old.sav") == "older" && !fs::exists(sd / L"Designs" / L"old.sav"));
+    CHECK(!fs::exists(sd / L"Designs" / L"r1.sav"));  // restore was not asked for
+    // restore: --scrub-designs style (r1 comes back scrubbed; d1-named and byte-copy designs stay in DesignsBackup)
+    write_text(sd / L"Designs" / L"d1.sav", dsg);  // pretend d1 is unscrubbed again so r2 is a byte copy of it
+    ScrubSummary rs = scrub_saves(sd, bk, pairs, false, kScrubDesigns | kRestoreDesigns);
+    CHECK(read_text(sd / L"Designs" / L"r1.sav") == "GVAS" + w32(9) + ss::fstr(kStk) && !fs::exists(sd / L"DesignsBackup" / L"r1.sav"));
+    CHECK(fs::exists(sd / L"DesignsBackup" / L"r2.sav") && fs::exists(sd / L"DesignsBackup" / L"d1.sav") && fs::exists(sd / L"DesignsBackup" / L"old.sav"));
+    CHECK(read_text(rs.backup_dir / L"DesignsBackup" / L"r1.sav") == "GVAS" + w32(9) + ss::fstr(kMod));
+    CHECK(read_text(sd / L"Designs" / L"d1.sav") == want);
+    // design refusals: stock path of another length, bad magic, garbage-free skip
+    CHECK(scrub_design_bytes(dsg, {{kMod, kStkLong, ""}}).st == ScrubSt::Refused);
+    CHECK(scrub_design_bytes("XXXX" + ss::fstr(kMod), pairs).st == ScrubSt::Refused);
+    CHECK(scrub_design_bytes("GVAS nothing", pairs).st == ScrubSt::Skip);
     CHECK(run.text().find("REFUSED C_S.sav") != std::string::npos);
     std::error_code ec;
     fs::remove_all(t, ec);

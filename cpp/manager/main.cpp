@@ -2,7 +2,7 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
-//      --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
+//      --scrub-designs <ModName> [--dry-run] (designs only, restores moved ones), --scrub-saves <ModName> [--dry-run] [--saves <dir>] (headless; backup + scrub the saves of that mod's classes; --remove does it too)
 //      --version (prints the manager version and exits)
 //      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
@@ -32,7 +32,7 @@ const UINT WM_APP_WORK = WM_APP + 2;
 enum : int { ID_LIST = 100, ID_CHECK, ID_UPD_SEL, ID_UPD_ALL, ID_INSTALL, ID_ROLLBACK, ID_BROWSE, ID_GAME, ID_STATUS, ID_ADD, ID_REMOVE, ID_TOGGLE };
 const int IDD_ADDMOD = 300, IDC_REPO = 301;  // manager.rc DIALOG
 
-HWND g_hwnd = nullptr, g_list = nullptr, g_game_lbl = nullptr, g_status = nullptr;
+HWND g_hwnd = nullptr, g_list = nullptr, g_game_lbl = nullptr, g_status = nullptr, g_details = nullptr;
 HWND g_btn_check = nullptr, g_btn_add = nullptr, g_btn_upd_sel = nullptr, g_btn_upd_all = nullptr,
      g_btn_install = nullptr, g_btn_rollback = nullptr, g_btn_browse = nullptr, g_btn_remove = nullptr,
      g_btn_toggle = nullptr;
@@ -75,8 +75,19 @@ void log_line(const std::string& s) {
     f << s << "\n";
 }
 
+// One line in the status label (first line of s), the whole text, wrapped and scrollable, in the details box below it.
 void set_status(const std::string& s) {
-    if (g_status) SetWindowTextW(g_status, mscl::to_wide(s).c_str());
+    size_t nl = s.find('\n');
+    std::string first = nl == std::string::npos ? s : s.substr(0, nl);
+    if (g_status) SetWindowTextW(g_status, mscl::to_wide(first).c_str());
+    if (g_details) {
+        std::string v;
+        for (char c : s) {
+            if (c == '\n') v += '\r';
+            v += c;
+        }
+        SetWindowTextW(g_details, mscl::to_wide(v).c_str());
+    }
 }
 
 // ---------- game location ----------
@@ -461,11 +472,12 @@ int remove_cli(const fs::path& win64, const std::string& mod) {
     mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, false);
     log_line(sum.text());
     out_text(sum.text());
-    return sum.refused() ? 3 : 0;
+    return sum.refused() || sum.designs_refused() ? 3 : 0;
 }
 
-// --scrub-saves <mod> [--dry-run]: what Remove does to the saves, on its own.
-int scrub_cli(const fs::path& win64, const std::string& mod, bool dry) {
+// --scrub-saves <mod> [--dry-run]: what Remove does to the saves and designs, on its own.
+// --scrub-designs <mod> [--dry-run]: only designs; also takes designs an older Remove moved to DesignsBackup back into Designs.
+int scrub_cli(const fs::path& win64, const std::string& mod, bool dry, bool designs_only = false) {
     if (!dry && game_running_under(win64)) {
         log_line("scrub-saves: game is running - close it first");
         return 1;
@@ -476,10 +488,11 @@ int scrub_cli(const fs::path& win64, const std::string& mod, bool dry) {
         out_text("scrub-saves: no save_scrub declaration for " + mod + "\n");
         return 1;
     }
-    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, dry);
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, dry,
+                                               designs_only ? (mscl::kScrubDesigns | mscl::kRestoreDesigns) : (mscl::kScrubSaves | mscl::kScrubDesigns));
     log_line(sum.text());
     out_text(sum.text());
-    return sum.refused() ? 3 : 0;
+    return sum.refused() || sum.designs_refused() ? 3 : 0;
 }
 
 // ---------- background work ----------
@@ -784,9 +797,9 @@ void do_remove() {
         mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false);
         log_line(sum.text());
         r += " Saves scrubbed: " + std::to_string(sum.scrubbed()) + ", refused: " + std::to_string(sum.refused()) +
-             ", designs moved: " + std::to_string(sum.designs.size());
-        if (!sum.backup_dir.empty()) r += ". Backup: " + mscl::to_utf8(sum.backup_dir.wstring());
-        if (sum.refused()) r += ". Refused saves still need the mod: see MSCoreManager.log";
+             "; designs scrubbed: " + std::to_string(sum.designs_scrubbed()) + ", refused: " + std::to_string(sum.designs_refused()) +
+             (sum.refused() || sum.designs_refused() ? ". Refused files still need the mod (see below)." : ".");
+        r += "\n" + sum.text();
         return r;
     });
 }
@@ -864,6 +877,7 @@ void create_controls(HWND h) {
     g_btn_toggle = mk(h, L"BUTTON", L"Disable/Enable", BS_PUSHBUTTON, 154, 384, 136, 30, ID_TOGGLE);
     g_status = mk(h, L"STATIC", L"", 0, 12, 426, 988, 20, ID_STATUS);
     mk(h, L"STATIC", mscl::to_wide(version_text()).c_str(), SS_RIGHT, 300, 392, 700, 20, 0);
+    g_details = mk(h, L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER, 12, 452, 988, 150, 0);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -910,7 +924,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     INITCOMMONCONTROLSEX ic{sizeof ic, ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&ic);
 
-    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg;
+    std::wstring game_arg, source_arg, add_arg, remove_arg, update_arg, scrub_arg, scrub_designs_arg;
     bool dry_run = false;
     bool headless = false;
     int argc = 0;
@@ -922,6 +936,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--remove" && i + 1 < argc) remove_arg = argv[++i];
         else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
         else if (a == L"--scrub-saves" && i + 1 < argc) scrub_arg = argv[++i];
+        else if (a == L"--scrub-designs" && i + 1 < argc) scrub_designs_arg = argv[++i];
         else if (a == L"--dry-run") dry_run = true;
         else if (a == L"--saves" && i + 1 < argc) g_saves_override = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
@@ -934,7 +949,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         }
     }
     LocalFree(argv);
-    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty()) headless = true;
+    if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty() || !scrub_arg.empty() || !scrub_designs_arg.empty()) headless = true;
     if (!source_arg.empty()) {
         mscl::g_allow_local = true;
         mscl::g_local_root = mscl::to_utf8(source_arg);
@@ -957,6 +972,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         if (!remove_arg.empty()) return remove_cli(g_paths.win64, mscl::to_utf8(remove_arg));
         if (!update_arg.empty()) return update_cli(g_paths.win64, mscl::to_utf8(update_arg));
         if (!scrub_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_arg), dry_run);
+        if (!scrub_designs_arg.empty()) return scrub_cli(g_paths.win64, mscl::to_utf8(scrub_designs_arg), dry_run, true);
         return install_cli(g_paths.win64);
     }
 
@@ -978,7 +994,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     RegisterClassExW(&wc);
 
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT rc{0, 0, 1012, 460};
+    RECT rc{0, 0, 1012, 616};
     AdjustWindowRect(&rc, style, FALSE);
     g_hwnd = CreateWindowExW(0, kClass, mscl::to_wide(version_text()).c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
                              rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
