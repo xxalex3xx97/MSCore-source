@@ -50,7 +50,7 @@ std::string g_self_ver;  // version being installed by the self-update
 std::string g_last;  // last work result, shown together with the next check result
 std::vector<mscl::Check> g_rows;
 
-// "MSCore Manager v0.8.15  native API 17  build Nov 21 2026": version/API come from msc_loader.hpp (same constants as the DLL)
+// "MSCore Manager v0.8.15  native API 18  build Nov 21 2026": version/API come from msc_loader.hpp (same constants as the DLL)
 std::string version_text() {
     return std::string("MSCore Manager v") + mscl::kVersion + "  native API " + std::to_string(mscl::kNativeApi) + "  build " + __DATE__;
 }

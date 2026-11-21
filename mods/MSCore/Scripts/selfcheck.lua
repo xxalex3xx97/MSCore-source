@@ -239,7 +239,7 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write", "rockreg" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write", "rockreg", "combat" }) do
         check("world." .. n, nativeCheck(n))
     end
     check("ships.mining_caps", nativeCheck("mining_caps"))   -- API 15, C++ check_one "mining_caps" (first live ship)

@@ -27,6 +27,7 @@ C.classes = {
   item_crate      = "BP_ItemCrateObject_C",
   ship            = "DMSPlayerShipObject",
   fleet_tag       = "FleetTag",
+  enemy_ship      = "EnemyShipObject",
   player_obj      = "DMSPlayerObject",
 }
 -- blocks module names (registry class, research class and dir, default category)
