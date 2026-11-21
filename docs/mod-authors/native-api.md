@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 15.** `MSCore_api()` returns `15`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section).
+**Native API version: 16.** `MSCore_api()` returns `16`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section). Version 16 added the rock registry exports `MSCore_rockreg_*` (API 16 section).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`14`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`16`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -198,6 +198,72 @@ Call from the game thread (`MSCore_ship_mining_caps` reads game objects). `MSCor
 |---|---|---|---|
 | `MSCore_ship_mining_caps` | `void* ship` | `int` bitmask: `1` MiningLaser present, `2` ItemScooper present, `0` readable with no mining weapon, `-1` unknown, `-2` ships module off, `-1` also on exception | Reads `DMSPlayerShipObject.Weapons` and matches each weapon's class name (`MiningLaser`, `ItemScooper`). `-1` unknown: ship null or dead, array unreadable, count outside 0..100000, or a native fault (logged once). An empty readable array is `0`, not `-1`. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_weapons.hpp`. Native API 15. |
 | `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, any other value (`-1` unknown) = unknown. `read 1`: bad = 0, listed. Unknown: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
+
+## API 16: rock registry (0.8.15)
+
+One shared table of every resource asteroid, seeded from the save objects (class `SmallResourceAsteroidObject`), nearest to the ships first, cached on disk, kept current by a delete listener. Mods read it through these exports instead of walking the game. Source `cpp\MSCore\msc_rockreg.hpp` (game side) and `cpp\MSCore\msc_rockreg_logic.hpp` (pure logic, unit test `tests\test_rockreg.cpp`).
+
+Rules for every export:
+
+- **Game thread only.**
+- **Units: metres.** Frame = `chunk * 2048 + loc_raw / 65536`, which equals the actor location in uu divided by 100. `MsRegShip.p` and `.q` and every `double[3]` argument use that frame. Radii are metres too.
+- **Snapshot per call.** Each call reads the table as it is at that moment. The table changes only inside `MSCore_rockreg_feed` (the tick), so results do not change between two calls without a feed in between; keep the `out` rows, do not keep pointers.
+- **Kills.** A rock dies only when its save object is confirmed gone: the delete listener saw it freed, or an alive check failed while the world read has been OK for 4 ticks in a row. A seed pass that saw under half of the known rocks is retried; if it stays incomplete after 3 tries it is accepted but kills nothing and does not write the cache.
+- **World change.** When a different world is loaded (menu to game, save load) the table is emptied and re-seeded; `MsRegState.alive` drops to 0 and `world_wait` is set for a few seconds. A seed pass that sees fewer than half of the known rocks is treated as incomplete: nothing is killed and it is retried.
+- **Bad numbers.** Positions and boxes must be finite with every component within 1e12 m, else the call returns 0 (a feed ship with a bad `p` is dropped, a bad `q` clears `has_seg`). Lengths (`max_m`, `margin_m`, `unknown_rad_m`, report radius) are clamped to 0..1e12, so a huge number means "no limit"; NaN returns 0. A box with `lo > hi` on an axis returns 0.
+- **`-2`** = the `rockreg` module is off (caps row `rockreg`: off after a native fault, a selftest layout mismatch, or when `rocks` is off) or MSCore has not registered its caps yet at startup (keep calling; do not treat the first `-2` as permanent). **`-1`** = exception inside MSCore (the module is then also off). Every body runs under SEH; a fault turns the module off for the session.
+- Rock ids are the save object ids (`ObjectId` of the rock actor).
+- Cache file `<MSCore mod folder>\rockreg\RockRegCache.bin`. The per-mod `MiningRegistryCache.bin` files of older mining / Fleet builds are orphaned and safe to delete.
+
+**Feed protocol.** MSCore has no frame hook for the registry. Every mod that uses it calls `MSCore_rockreg_feed` from its own frame loop about every 0.25 s, with its `owner` id (**1 = standalone mining mod, 2 = Fleet**), its ships (position in metres, system id, optional approach segment to a rock centre `q`) and the rock ids its ships target. MSCore keeps the last feed per owner, merges the feeds younger than 2000 ms (ships by `sid`, targets as a set) and runs one registry tick when at least 200 ms passed since the last one, so two mods fed together still tick once. A mod that stops feeding drops out of the merge after 2 s. The first feed after the game start waits about 5 s for the world, then seeds (about 3.5 min for 100k rocks without a cache, seconds with one). Until `MSCore_rockreg_area_ready` says 1 for an area, only rocks already seeded are known there.
+
+| Export | Signature | Returns | Notes |
+|---|---|---|---|
+| `MSCore_rockreg_feed` | `int owner, const MsRegShip* ships, int n, const int* targets, int nt` | `1` | Stores the feed and runs the tick when due. `ships` and `targets` may be `NULL` with `n`/`nt` 0. |
+| `MSCore_rockreg_state` | `MsRegState* out` | `1` | Fills the state struct. |
+| `MSCore_rockreg_get` | `int id, MsRegRock* out` | `1` found (dead rocks too: check `flags` bit 0), `0` unknown | |
+| `MSCore_rockreg_box` | `int sys, const double lo[3], const double hi[3], MsRegRock* out, int max` | total alive rocks in the box | `out` gets `min(total, max)` rocks; `out = NULL` or `max = 0` counts only and writes nothing (size probing is supported). |
+| `MSCore_rockreg_seg` | `int sys, const double a[3], const double b[3], double margin_m, MsRegRock* out, int max` | total alive rocks whose centre is within `margin_m` of the segment a to b | Same `out` rule (`out = NULL` or `max = 0` counts only, writes nothing). The path check uses it. |
+| `MSCore_rockreg_nearest_n` | `int sys, void* item, const double p[3], const int* skip_ids, int nskip, double max_m, int n, MsRegRock* out, double* dist_out` | count (nearest first) | `item` = Item `UObject*`: only rocks holding that ore (matched by display name); an item no rock holds returns 0 rocks. `item = NULL`: any ore. `max_m` must be > 0. `skip_ids` may be `NULL`. `dist_out` (may be `NULL`) gets the centre distances in metres. `n` is capped at 64 and only the first 256 `skip_ids` are used. |
+| `MSCore_rockreg_nearest_surface` | `int sys, const double p[3], int skip_id, double unknown_rad_m, MsRegRock* out, double* surf_m` | `1` found, `0` none | Smallest `centre distance - radius`. A radius not read yet counts as `unknown_rad_m`. `skip_id > 0` is left out. `surf_m` may be `NULL`. |
+| `MSCore_rockreg_area_ready` | `int sys, const double p[3]` | `1` seeded, `0` not yet | `1` when the chunk of `p` and its neighbours lie inside a seeded zone (every save there is read). |
+| `MSCore_rockreg_report` | `int kind, int sys, const double p[3], double arg, wchar_t* out, int len` | `1` | Writes a report file to `<MSCore mod folder>\rockreg` and a one-line text to `out` (may start with `error`). `kind` 0 dump around `p` (`RockRegDump.txt`), 1 query (`arg` = radius m, `RockRegQuery.txt`), 2 check (`arg` = n rocks, `RockRegCheck.txt`: registry vs loaded actor positions). |
+
+Radius reads happen lazily for rocks near a ship or a targeted rock, so `flags` bit 1 may be 0 (`rad_m` is then 0).
+
+### MsRegRock (48 bytes)
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | `id` | `int32_t` | Save object id. |
+| 4 | `sys` | `int32_t` | Solar system id. |
+| 8 | `flags` | `int32_t` | bit 0 alive, bit 1 radius known. |
+| 12 | `pad` | `int32_t` | |
+| 16 | `c` | `double[3]` | Centre, metres. |
+| 40 | `rad_m` | `double` | Radius, metres (valid when bit 1). |
+
+### MsRegShip (64 bytes)
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | `sid` | `int32_t` | Ship save id. |
+| 4 | `sys` | `int32_t` | Solar system id (0 = unknown, the ship is ignored for seeding). |
+| 8 | `has_seg` | `int32_t` | Non-zero: `q` is valid (approach to a rock centre). |
+| 12 | `pad` | `int32_t` | |
+| 16 | `p` | `double[3]` | Ship centre, metres. |
+| 40 | `q` | `double[3]` | Approach target, metres. |
+
+### MsRegState (40 bytes)
+
+| Offset | Field | Type | Notes |
+|---|---|---|---|
+| 0 | `world_ok` | `int32_t` | A game world is loaded. |
+| 4 | `world_wait` | `int32_t` | World changed; the next seed waits a few seconds. |
+| 8 | `seeding` | `int32_t` | A seed pass runs. |
+| 12 | `near_done` | `int32_t` | Phase A of the pass (rocks near the ships) is read. |
+| 16 | `rocks` | `int64_t` | Rows in the table (dead included). |
+| 24 | `alive` | `int64_t` | Alive rocks. |
+| 32 | `version` | `uint64_t` | Bumped on every add, kill and revive. |
 
 ## Error convention
 

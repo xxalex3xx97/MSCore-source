@@ -118,3 +118,44 @@ static_assert(offsetof(MsFlight, max_mod_raw) == 56 && offsetof(MsFlight, max_ba
 static_assert(offsetof(MsFlight, act_loc) == 80 && offsetof(MsFlight, fw) == 104 && offsetof(MsFlight, R) == 128 && offsetof(MsFlight, U) == 152, "MsFlight frame offsets");
 static_assert(offsetof(MsFlight, loc_raw) == 176 && offsetof(MsFlight, quat) == 200 && offsetof(MsFlight, grid_prod) == 232, "MsFlight pose/power offsets");
 static_assert(offsetof(MsFlight, grid_cons) == 240 && offsetof(MsFlight, grid_eff) == 248 && offsetof(MsFlight, lp_frac) == 256, "MsFlight power offsets");
+
+// ---- API 16: rock registry (msc_rockreg.hpp). Units: metres, frame = chunk * 2048 + loc_raw / 65536 (= actor location / 100). ----
+// one rock: id = save object id, sys = solar system id, flags bit0 alive, bit1 radius known, c = centre (m), rad_m = radius (m, valid when flags bit1)
+struct MsRegRock
+{
+    int32_t id;
+    int32_t sys;
+    int32_t flags;
+    int32_t pad;
+    double c[3];
+    double rad_m;
+};
+// one ship fed to the registry: save id, system id, has_seg (q valid), p = centre (m), q = approach target (rock centre, m)
+struct MsRegShip
+{
+    int32_t sid;
+    int32_t sys;
+    int32_t has_seg;
+    int32_t pad;
+    double p[3];
+    double q[3];
+};
+// registry state: world_ok (a world is loaded), world_wait (seed waits after a world change), seeding (a pass runs), near_done (phase A of the pass done),
+// rocks = rows in the table (dead included), alive = alive rocks, version = bumped on every add / kill / revive
+struct MsRegState
+{
+    int32_t world_ok;
+    int32_t world_wait;
+    int32_t seeding;
+    int32_t near_done;
+    int64_t rocks;
+    int64_t alive;
+    uint64_t version;
+};
+
+static_assert(sizeof(MsRegRock) == 48, "MsRegRock layout must match the MSCore native API 16 doc");
+static_assert(sizeof(MsRegShip) == 64, "MsRegShip layout must match the MSCore native API 16 doc");
+static_assert(sizeof(MsRegState) == 40, "MsRegState layout must match the MSCore native API 16 doc");
+static_assert(offsetof(MsRegRock, c) == 16 && offsetof(MsRegRock, rad_m) == 40, "MsRegRock offsets");
+static_assert(offsetof(MsRegShip, p) == 16 && offsetof(MsRegShip, q) == 40, "MsRegShip offsets");
+static_assert(offsetof(MsRegState, rocks) == 16 && offsetof(MsRegState, alive) == 24 && offsetof(MsRegState, version) == 32, "MsRegState offsets");

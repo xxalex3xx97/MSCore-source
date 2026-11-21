@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 15).
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 16).
 local MSCore = { api = 3, version = "0.8.15", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
@@ -1061,6 +1061,11 @@ function MSCore.module_disable(name, why)
         local nd = rawget(_G, "MSCoreNative_module_disable")
         if type(nd) == "function" then pcall(nd, "fleets") pcall(nd, "fleets_write") end
         if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end
+        return true
+    end
+    if name == "rockreg" then   -- native rock registry kill switch (API 16): every MSCore_rockreg_* export then returns -2
+        local nd = rawget(_G, "MSCoreNative_module_disable")
+        if type(nd) == "function" then pcall(nd, "rockreg") end
         return true
     end
     if name == "scan" or name == "rocks" then rocksOff = tostring(why or "disabled"); print("[MSCore] COMPAT CAPS rocks=off:" .. rocksOff .. " (runtime)\n") return true end

@@ -42,6 +42,7 @@ using namespace RC::Unreal;
 #include "msc_repair.hpp"
 #include "msc_stnames.hpp"
 #include "msc_fleets.hpp"
+#include "msc_rockreg.hpp"
 #include "msc_world.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
@@ -127,6 +128,13 @@ namespace
             if (!module_ok(STR("rocks"))) { detail = "rocks turned off by the walk: " + caps_text(); return false; }
             detail = std::to_string(rows.size()) + " asteroids";
             return true;
+        }
+        if (name == "rockreg")
+        {
+            if (!module_ok(STR("rockreg"))) { detail = "rockreg off: " + caps_text(); return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = rr_selftest(detail); })) { detail = "rockreg selftest faulted (module rockreg off until reload)"; module_disable(STR("rockreg"), STR("selfcheck fault")); return false; }
+            return ok;
         }
         if (name == "ships")
         {
@@ -980,7 +988,7 @@ namespace
         return lua_result(lua, ok, err);
     }
 
-    // Lua: module_disable(name) -> ok   (narrow: only 'fleets' and 'fleets_write'; the Lua fleets kill switch calls it)
+    // Lua: module_disable(name) -> ok   (narrow: only 'fleets', 'fleets_write' and 'rockreg'; the Lua kill switches call it)
     int lua_module_disable(const LuaMadeSimple::Lua& lua)
     {
         bool ok = false;
@@ -989,6 +997,7 @@ namespace
             {
                 const std::string name = arg_bytes(lua);
                 if (name == "fleets") { module_disable(STR("fleets"), STR("lua kill switch")); ok = true; }
+                else if (name == "rockreg") { module_disable(STR("rockreg"), STR("lua kill switch")); ok = true; }
                 else if (name == "fleets_write") { module_disable(STR("fleets_write"), STR("lua kill switch")); ok = true; }
             }
         } catch (...) { ok = false; }
@@ -1320,6 +1329,7 @@ public:
     {
         g_loader_stop = true;   // detached worker checks this between network steps
         try { ref_uninstall(); } catch (...) {}
+        try { rr_listener_release(); } catch (...) {}
         try { chunk_hold_release_all(); }
         catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
     }
@@ -1329,7 +1339,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1346,8 +1356,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 15; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged).
+    MSCORE_API int MSCore_api() { try { return 16; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service)
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1738,6 +1748,140 @@ extern "C"
               return n; }
         catch (...) { module_disable(STR("rocks"), STR("scan_rocks_exception")); return -1; }
     }
+
+    // ---- API 16: rock registry (msc_rockreg.hpp). Game thread only. Every call returns -2 when the rockreg module is off (or faulted), -1 on exception. ----
+    // each mod calls this every ~0.25 s: owner 1 = standalone mining, 2 = Fleet. ships = n MsRegShip (positions in m), targets = nt rock ids of the ships' targets.
+    // Runs the registry tick when due. Returns 1.
+    MSCORE_API int MSCore_rockreg_feed(int owner, const MsRegShip* ships, int n, const int* targets, int nt)
+    {
+        return rr_run([&] { rr_feed(owner, ships, n, targets, nt); return 1; });
+    }
+
+    // fills out with the registry state. Returns 1.
+    MSCORE_API int MSCore_rockreg_state(MsRegState* out)
+    {
+        return rr_run([&] {
+            if (!out) return 0;
+            const RrState& s = rr_st();
+            out->world_ok = s.world_ok ? 1 : 0;
+            out->world_wait = s.world_wait ? 1 : 0;
+            out->seeding = s.seeding ? 1 : 0;
+            out->near_done = s.near_done ? 1 : 0;
+            out->rocks = static_cast<int64_t>(s.tab.rocks.size());
+            out->alive = static_cast<int64_t>(rr_alive_count(s));
+            out->version = s.tab.version;
+            return 1;
+        });
+    }
+
+    // rock by save id into out (dead rocks too: check flags bit0). Returns 1 found, 0 unknown.
+    MSCORE_API int MSCore_rockreg_get(int id, MsRegRock* out)
+    {
+        return rr_run([&] {
+            const RrRock* r = rr_st().tab.get(id);
+            if (!r || !out) return 0;
+            rr_fill(*r, *out);
+            return 1;
+        });
+    }
+
+    // alive rocks of system sys inside the box lo..hi (m). out gets min(total, max) rocks (out = nullptr or max = 0 counts only). Returns the total.
+    MSCORE_API int MSCore_rockreg_box(int sys, const double lo[3], const double hi[3], MsRegRock* out, int max)
+    {
+        return rr_run([&] {
+            if (!lo || !hi || !rr_ok3(lo) || !rr_ok3(hi) || lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2]) return 0;
+            const RrTable& t = rr_st().tab;
+            int total = 0;
+            t.for_box(sys, lo, hi, [&](size_t i) {
+                const RrRock& r = t.rocks[i];
+                if (!r.alive || r.sys != sys) return;
+                for (int k = 0; k < 3; ++k) if (r.c[k] < lo[k] || r.c[k] > hi[k]) return;
+                if (out && total < max) rr_fill(r, out[total]);
+                ++total;
+            });
+            return total;
+        });
+    }
+
+    // alive rocks of system sys whose centre lies within margin_m of the segment a->b (m). out gets min(total, max). Returns the total.
+    MSCORE_API int MSCore_rockreg_seg(int sys, const double a[3], const double b[3], double margin_m, MsRegRock* out, int max)
+    {
+        return rr_run([&] {
+            double mg = 0.0;
+            if (!a || !b || !rr_ok3(a) || !rr_ok3(b) || !rr_len(margin_m, mg)) return 0;
+            const RrTable& t = rr_st().tab;
+            std::vector<size_t> idx;
+            t.within_seg(sys, a, b, mg, idx);
+            for (size_t k = 0; out && k < idx.size() && static_cast<int>(k) < max; ++k) rr_fill(t.rocks[idx[k]], out[k]);
+            return static_cast<int>(idx.size());
+        });
+    }
+
+    // up to n alive rocks of system sys nearest to p within max_m (> 0), nearest first. item = Item UObject (only rocks holding that ore name; an item no rock
+    // has returns 0 rocks) or NULL (any ore). skip_ids = nskip rock ids to leave out. out gets the rocks, dist_out (may be NULL) their centre distances (m). Returns the count.
+    MSCORE_API int MSCore_rockreg_nearest_n(int sys, void* item, const double p[3], const int* skip_ids, int nskip, double max_m, int n, MsRegRock* out, double* dist_out)
+    {
+        return rr_run([&] {
+            double mm = 0.0;
+            if (!p || !out || n <= 0 || !rr_ok3(p) || !rr_len(max_m, mm) || !(mm > 0.0)) return 0;
+            n = std::min(n, RR_NEAREST_MAX_N);
+            nskip = std::min(nskip, RR_SKIP_MAX);
+            const RrState& s = rr_st();
+            int16_t want = -1;
+            if (item)
+            {
+                const int k = rr_ore_idx(s, static_cast<UObject*>(item));
+                if (k < 0) return 0;
+                want = static_cast<int16_t>(k);
+            }
+            static std::set<int> skip;   // game thread only: scratch reused across calls
+            static std::vector<std::pair<double, size_t>> rows;
+            skip.clear();
+            if (skip_ids) for (int i = 0; i < nskip; ++i) skip.insert(skip_ids[i]);
+            s.tab.nearest_n(sys, want, p, skip.empty() ? nullptr : &skip, mm, static_cast<size_t>(n), rows);
+            for (size_t k = 0; k < rows.size(); ++k)
+            {
+                rr_fill(s.tab.rocks[rows[k].second], out[k]);
+                if (dist_out) dist_out[k] = rows[k].first;
+            }
+            return static_cast<int>(rows.size());
+        });
+    }
+
+    // rock of system sys with the smallest surface distance (centre distance - radius, m) to p; an unread radius counts as unknown_rad_m; skip_id > 0 is left out.
+    // out = the rock, surf_m (may be NULL) = the surface distance. Returns 1 found, 0 none.
+    MSCORE_API int MSCore_rockreg_nearest_surface(int sys, const double p[3], int skip_id, double unknown_rad_m, MsRegRock* out, double* surf_m)
+    {
+        return rr_run([&] {
+            double ur = 0.0;
+            if (!p || !out || !rr_ok3(p) || !rr_len(unknown_rad_m, ur)) return 0;
+            const RrTable& t = rr_st().tab;
+            double sm = 0.0;
+            const size_t i = t.nearest_surface(sys, p, ur, sm, skip_id);
+            if (i == RrTable::npos) return 0;
+            rr_fill(t.rocks[i], *out);
+            if (surf_m) *surf_m = sm;
+            return 1;
+        });
+    }
+
+    // 1 when the area around p (m, one chunk each way, system sys) is inside a seeded zone (all its saves read), 0 when not (use the rocks already known).
+    MSCORE_API int MSCore_rockreg_area_ready(int sys, const double p[3])
+    {
+        return rr_run([&] { return (p && rr_ok3(p) && rr_area_ready(sys, p)) ? 1 : 0; });
+    }
+
+    // writes a report file to <MSCore mod folder>\rockreg and the one-line text into out. kind 0 dump around p (RockRegDump.txt), 1 query (arg = radius m,
+    // RockRegQuery.txt), 2 check (arg = n rocks, RockRegCheck.txt: registry vs loaded actor positions). Returns 1 (the text may start with "error").
+    MSCORE_API int MSCore_rockreg_report(int kind, int sys, const double p[3], double arg, wchar_t* out, int len)
+    {
+        return rr_run([&] {
+            const double zero[3] = {0, 0, 0};
+            copy_err(rr_report(kind, sys, p ? p : zero, arg), out, len);
+            return 1;
+        });
+    }
+
 
     // chunk hold for owner: returns 0 fail (err says why), 1 set, 2 unchanged. ch3 = chunk X, Y, Z (raw int64).
     MSCORE_API int MSCore_chunk_hold(int owner, int sys, const long long* ch3, wchar_t* err, int errlen)
