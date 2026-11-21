@@ -2,6 +2,7 @@
 // CLI: --game <Win64 dir>  --source <dir with manifest.txt + zips> (offline, tests)  --install (headless)
 //      --add <owner/repo> (headless; with --source: <source>/<owner>_<repo>/manifest.txt if present, else <source>/manifest.txt)
 //      --remove <ModName> (headless; deletes only the files listed in ue4ss\Mods\MSCore\installed\<mod>.txt)
+//      --version (prints the manager version and exits)
 //      --update <ModName> (headless; same as the Update button for one row: update or needs:<repo>)
 // Headless log: %TEMP%\MSCoreManager.log
 #include "msc_loader.hpp"
@@ -39,6 +40,11 @@ bool g_has_game = false;
 bool g_busy = false;
 std::string g_last;  // last work result, shown together with the next check result
 std::vector<mscl::Check> g_rows;
+
+// "MSCore Manager v0.8.15  native API 16  build Nov 21 2026": version/API come from msc_loader.hpp (same constants as the DLL)
+std::string version_text() {
+    return std::string("MSCore Manager v") + mscl::kVersion + "  native API " + std::to_string(mscl::kNativeApi) + "  build " + __DATE__;
+}
 
 // ---------- log / status ----------
 
@@ -717,7 +723,7 @@ void do_remove() {
     std::vector<std::string> deps = mscl::dependents_of(p, name);
     std::string q = "Remove " + name + "?\n\nThis deletes " + std::to_string(items.size()) +
                     " file(s) installed by " + name +
-                    ", its backup and its mods.txt line.\n"
+                    ", its backup and its mods.txt lines. Nothing of it stays loadable.\n"
                     "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
     if (!deps.empty()) q += "\n\nRequired by " + join_names(deps) + ": they will stop working";
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;
@@ -748,7 +754,8 @@ void do_toggle() {
     bool on = !mscl::mod_enabled(g_paths, name);
     std::string err;
     if (mscl::set_mod_enabled(g_paths, name, on, err))
-        set_status(std::string(on ? "Enabled " : "Disabled ") + name + ". Restart game to apply.");
+        set_status(on ? "Enabled " + name + " (files moved back). Restart game to apply."
+                      : "Disabled " + name + " (files moved to MSCore\\disabled\\" + name + "). Restart game to apply.");
     else
         set_status("Toggle " + name + " failed: " + err);
     start_check();
@@ -800,6 +807,7 @@ void create_controls(HWND h) {
     g_btn_remove = mk(h, L"BUTTON", L"Remove mod", BS_PUSHBUTTON, 12, 384, 136, 30, ID_REMOVE);
     g_btn_toggle = mk(h, L"BUTTON", L"Disable/Enable", BS_PUSHBUTTON, 154, 384, 136, 30, ID_TOGGLE);
     g_status = mk(h, L"STATIC", L"", 0, 12, 426, 988, 20, ID_STATUS);
+    mk(h, L"STATIC", mscl::to_wide(version_text()).c_str(), SS_RIGHT, 300, 392, 700, 20, 0);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -858,6 +866,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         else if (a == L"--update" && i + 1 < argc) update_arg = argv[++i];
         else if (a == L"--game" && i + 1 < argc) game_arg = argv[++i];
         else if (a == L"--source" && i + 1 < argc) source_arg = argv[++i];
+        else if (a == L"--version") {
+            LocalFree(argv);
+            if (AttachConsole(ATTACH_PARENT_PROCESS)) std::freopen("CONOUT$", "w", stdout);
+            std::puts(version_text().c_str());
+            std::fflush(stdout);
+            return 0;
+        }
     }
     LocalFree(argv);
     if (!add_arg.empty() || !remove_arg.empty() || !update_arg.empty()) headless = true;
@@ -905,7 +920,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     RECT rc{0, 0, 1012, 460};
     AdjustWindowRect(&rc, style, FALSE);
-    g_hwnd = CreateWindowExW(0, kClass, L"MSCore Manager", style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
+    g_hwnd = CreateWindowExW(0, kClass, mscl::to_wide(version_text()).c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
                              rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
     if (!g_hwnd) return 1;
     ShowWindow(g_hwnd, show);

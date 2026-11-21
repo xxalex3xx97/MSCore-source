@@ -219,6 +219,87 @@ int main(int argc, char** argv) {
     CHECK(!remove_mod(P, "Evil", err));
     CHECK(!fs::exists(P.win64 / L"evil.txt"));
 
+    // ---- regression: Remove/Disable of MiningBenchMod (install list of the real game). Old Remove restored the
+    // backup\ copies (previous version of the same files) over the deleted ones: MiningUnitUI, pak98, enabled.txt stayed.
+    {
+        const char* kList = "0.3.1\nMods/MiningBenchMod/dlls/main.dll\nMods/MiningBenchMod/enabled.txt\nMods/MiningBenchMod/mscore.mod\n"
+                            "Mods/MiningUnitUI/Scripts/main.lua\nMods/MiningUnitUI/Scripts/wbp_loader.lua\nMods/MiningUnitUI/enabled.txt\n"
+                            "Paks/pakchunk101-MSMiningModel_P.pak\nPaks/pakchunk101-MSMiningModel_P.ucas\nPaks/pakchunk101-MSMiningModel_P.utoc\n"
+                            "Paks/pakchunk95-MSMiningMesh_P.pak\nPaks/pakchunk95-MSMiningMesh_P.ucas\nPaks/pakchunk95-MSMiningMesh_P.utoc\n"
+                            "Paks/pakchunk98-MiningUnitUI_P.pak\nPaks/pakchunk98-MiningUnitUI_P.ucas\nPaks/pakchunk98-MiningUnitUI_P.utoc\n"
+                            "Paks/pakchunk99-ClonedBlock_P.pak\nPaks/pakchunk99-ClonedBlock_P.ucas\nPaks/pakchunk99-ClonedBlock_P.utoc\n";
+        std::vector<std::string> rels;
+        {
+            std::istringstream in(kList);
+            std::string l;
+            std::getline(in, l);
+            while (std::getline(in, l)) rels.push_back(l);
+        }
+        CHECK(rels.size() == 18);
+        auto build = [&]() {
+            std::error_code e2;
+            fs::remove_all(P.mods / L"MiningBenchMod", e2);
+            fs::remove_all(P.mods / L"MiningUnitUI", e2);
+            fs::remove_all(P.core / L"backup", e2);
+            fs::remove_all(P.core / L"disabled", e2);
+            for (const auto& r : rels) write_text(target_for(P, r), "NEW " + r);
+            // files an earlier update replaced were moved to backup\ (previous versions)
+            for (const char* r : {"Mods/MiningBenchMod/enabled.txt", "Mods/MiningUnitUI/enabled.txt", "Mods/MiningUnitUI/Scripts/main.lua",
+                                  "Mods/MiningUnitUI/Scripts/wbp_loader.lua", "Paks/pakchunk98-MiningUnitUI_P.pak", "Paks/pakchunk98-MiningUnitUI_P.ucas",
+                                  "Paks/pakchunk98-MiningUnitUI_P.utoc"})
+                write_text(P.core / L"backup" / L"MiningBenchMod" / to_wide(r), std::string("OLD ") + r);
+            write_text(P.core / L"installed" / L"MiningBenchMod.txt", kList);
+            write_text(P.mods / L"mods.txt", "# hdr\nMiningBenchMod : 1\nMiningUnitUI : 1\nOther : 1\n");
+            write_text(P.mods / L"Other" / L"main.dll", "other");
+            write_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini", "ini");  // user file
+        };
+        auto none_left = [&]() {
+            for (const auto& r : rels) CHECK(!fs::exists(target_for(P, r)));
+        };
+
+        build();
+        CHECK(remove_mod(P, "MiningBenchMod", err));
+        none_left();
+        CHECK(!fs::exists(P.mods / L"MiningUnitUI"));  // no empty mod folder left
+        CHECK(read_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini") == "ini");  // only the user file keeps its folder
+        CHECK(!fs::exists(P.core / L"backup" / L"MiningBenchMod"));
+        CHECK(!fs::exists(P.core / L"installed" / L"MiningBenchMod.txt"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
+        CHECK(read_text(P.mods / L"Other" / L"main.dll") == "other");
+
+        // disable: nothing loadable stays in Mods\ / Paks\, all in disabled\; enable puts it all back
+        build();
+        fs::remove(P.mods / L"MiningBenchMod" / L"MiningBench.ini");
+        CHECK(set_mod_enabled(P, "MiningBenchMod", false, err));
+        none_left();
+        CHECK(!fs::exists(P.mods / L"MiningBenchMod") && !fs::exists(P.mods / L"MiningUnitUI"));
+        for (const auto& r : rels) CHECK(read_text(P.core / L"disabled" / L"MiningBenchMod" / to_wide(r)) == "NEW " + r);
+        CHECK(!mod_enabled(P, "MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nMiningBenchMod : 0\nMiningUnitUI : 0\nOther : 1\n");
+        bool listed = false;  // still listed in the manager so it can be enabled again
+        for (const auto& m : scan_mods(P)) listed = listed || m.name == "MiningBenchMod";
+        CHECK(listed);
+        CHECK(set_mod_enabled(P, "MiningBenchMod", true, err));
+        for (const auto& r : rels)
+            if (r != "Mods/MiningBenchMod/enabled.txt") CHECK(read_text(target_for(P, r)) == "NEW " + r);
+        CHECK(fs::exists(P.mods / L"MiningBenchMod" / L"enabled.txt") && fs::exists(P.mods / L"MiningUnitUI" / L"enabled.txt"));
+        CHECK(!fs::exists(P.core / L"disabled" / L"MiningBenchMod"));
+        CHECK(mod_enabled(P, "MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nMiningBenchMod : 1\nMiningUnitUI : 1\nOther : 1\n");
+
+        // remove while disabled leaves nothing either
+        CHECK(set_mod_enabled(P, "MiningBenchMod", false, err));
+        CHECK(remove_mod(P, "MiningBenchMod", err));
+        none_left();
+        CHECK(!fs::exists(P.core / L"disabled" / L"MiningBenchMod"));
+        CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
+        fs::remove_all(P.mods / L"MiningBenchMod");
+        fs::remove_all(P.core / L"installed" / L"MiningBenchMod.txt");
+    }
+
+    // version constants the manager shows
+    CHECK(std::string(kVersion) == "0.8.15" && kNativeApi >= 16);
+
     g_allow_local = false;
     g_local_root.clear();
     std::error_code ec;

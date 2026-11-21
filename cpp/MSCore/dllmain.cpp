@@ -53,7 +53,7 @@ using namespace RC::Unreal;
 
 namespace
 {
-    constexpr const char* kVersion = "0.8.15";   // keep equal to MSCore.version in mscore.lua and mscore.mod
+    constexpr const char* kVersion = mscl::kVersion;   // single source in msc_loader.hpp; keep equal to MSCore.version in mscore.lua and mscore.mod
 
     std::string narrow(const std::wstring& s) { std::string out; for (wchar_t c : s) out += static_cast<char>(c); return out; }   // error texts are ASCII
 
@@ -1357,7 +1357,7 @@ extern "C"
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
     // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return 16; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service)
+    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service)
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
