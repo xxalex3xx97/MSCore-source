@@ -123,11 +123,7 @@ namespace
                 if (!alive(o) || o->GetName().rfind(STR("Default__"), 0) == 0) return;
                 r.id = obj_id(o);
                 if (r.id <= 0) return;
-                const std::wstring n = stn_name(o);   // name from kStnCands
-                size_t k = 0;
-                for (; k < n.size() && k < 95; ++k)
-                    r.name[k] = (n[k] == L'\t' || n[k] == L'\r' || n[k] == L'\n') ? L' ' : n[k];
-                r.name[k] = 0;
+                name_field_copy(r.name, 96, stn_name(o));   // name from kStnCands
                 keep = true;
             });
             if (!ok) return false;

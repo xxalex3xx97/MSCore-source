@@ -6,7 +6,7 @@ grand_parent: Mod authors
 
 # Fleets: MSCore.fleets
 
-Source: `mods\MSCore\Scripts\mscore_fleets.lua`. Also loadable alone: `require("mscore_fleets")`. Reads need the native DLL with API 13. Reads use a 1 s Lua cache (`TTL`). A refresh asks the native side for a snapshot up to 3000 ms old; `fleets.list(true)` passes `max_age_ms = 0` (rescan now, no cache). At 0 the native side has no cache.
+Source: `mods\MSCore\Scripts\mscore_fleets.lua`. Also loadable alone: `require("mscore_fleets")`. Reads need the native DLL with API 13. Reads use a 1 s Lua cache (`TTL`). A refresh asks the native side for a snapshot up to 3000 ms old; `fleets.list(true)` passes `max_age_ms = 0` (rescan now, no cache). At 0 the native side has no cache. After any write (create, rename, delete, assign, unassign) the next read is forced (`max_age_ms = 0`), then the 1 s TTL applies again.
 
 | Function | Params | Returns |
 |---|---|---|

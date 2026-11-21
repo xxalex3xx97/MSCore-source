@@ -19,8 +19,6 @@
 namespace
 {
     constexpr int kFleetMaxTags = 8;
-    // UNUSED: no code reads this. C has no default TTL: max_age_ms 0 = rescan. The 3000 ms value is passed by the Lua caller (mscore_fleets.lua refresh).
-    constexpr ULONGLONG kFleetTtlMs = 3000;
     constexpr long long kFleetMaxAgeMs = 10000;
 
     // WHAT: one fleet tag row, 200 bytes, exported as is by MSCore_fleet_tags.
@@ -58,11 +56,7 @@ namespace
                 int32_t par = 0;
                 get_int_prop(o, STR("ParentID"), par);
                 r.parent = par;
-                const std::wstring n = read_text_prop(o, STR("DisplayName"));
-                size_t k = 0;
-                for (; k < n.size() && k < 95; ++k)
-                    r.name[k] = (n[k] == L'\t' || n[k] == L'\r' || n[k] == L'\n' || n[k] == L'|') ? L' ' : n[k];
-                r.name[k] = 0;
+                name_field_copy(r.name, 96, read_text_prop(o, STR("DisplayName")));
                 keep = true;
             });
             if (!ok) return false;
@@ -174,14 +168,18 @@ namespace
         if (!fn) { detail = "FleetTagInput CreateInput not found"; return false; }
         // the one factory proven in game (2026-11-21 unassign, bRemove=true); any other factory layout keeps fleets_write off
         if (fn->GetName() != STR("CreateInputFleetTag")) { detail = "FleetTagInput factory " + fleets_utf8(fn->GetName().c_str()) + " not the verified CreateInputFleetTag"; return false; }
-        bool has_text = false, has_int = false, has_bool = false;
+        int n_text = 0, n_int = 0, n_bool = 0;
         for (FProperty* q : fn->ForEachProperty())
         {
-            if (CastField<FTextProperty>(q)) has_text = true;
-            else if (CastField<FIntProperty>(q)) has_int = true;
-            else if (CastField<FBoolProperty>(q)) has_bool = true;
+            if (CastField<FTextProperty>(q)) ++n_text;
+            else if (CastField<FIntProperty>(q)) ++n_int;
+            else if (CastField<FBoolProperty>(q)) ++n_bool;
         }
-        if (!(has_text && has_int && has_bool)) { detail = "FleetTagInput factory shape unexpected"; return false; }
+        if (n_text != 1 || n_int != 1 || n_bool != 1)
+        {
+            detail = "FleetTagInput factory shape unexpected (need exactly 1 text, 1 int, 1 bool; got " + std::to_string(n_text) + "/" + std::to_string(n_int) + "/" + std::to_string(n_bool) + ")";
+            return false;
+        }
         detail = "FleetTagInput factory " + fleets_utf8(fn->GetName().c_str());
         std::lock_guard<std::mutex> lk(g_caps_mx);
         if (!g_disable_logged.count("fleets_write")) caps_set_locked("fleets_write", true, "");

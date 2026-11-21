@@ -8,6 +8,7 @@
 // USED BY: dllmain.cpp (MSCore_ship_mining_caps, check_one "mining_caps").
 // DEPENDS ON: msc_cmd.hpp (alive, seh_run), msc_ue.hpp (msc_log).
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -24,19 +25,22 @@ namespace
         return (p && CastField<FArrayProperty>(p)) ? ship->GetValuePtrByPropertyNameInChain<TArray<UObject*>>(STR("Weapons")) : nullptr;
     }
 
-    // WHAT: true when the weapon's class name contains sub. A dead or null weapon is false.
-    bool weapon_is(UObject* w, const TCHAR* sub)
+    // WHAT: mining bits of one weapon from its class name (read once, both substrings tested). A dead or null weapon is 0.
+    int weapon_bits(UObject* w)
     {
-        if (!alive(w)) return false;
+        if (!alive(w)) return 0;
         const std::wstring cn = w->GetClassPrivate()->GetName();
-        return cn.find(sub) != std::wstring::npos;
+        int bits = 0;
+        if (cn.find(STR("MiningLaser")) != std::wstring::npos) bits |= kCapLaser;
+        if (cn.find(STR("ItemScooper")) != std::wstring::npos) bits |= kCapScooper;
+        return bits;
     }
 
     // WHAT: mining bits of ship (1 laser, 2 scooper), 0 none, -1 unknown. Never logs per call; a fault is logged once.
     int ship_mining_caps_read(UObject* ship)
     {
         if (!alive(ship)) return -1;
-        static bool fault_logged = false;
+        static std::atomic<bool> fault_logged{false};
         int bits = 0;
         bool ok = false;
         const bool ran = seh_run([&] {
@@ -46,15 +50,13 @@ namespace
             if (n < 0 || n > kWeaponsMaxCount) return;
             for (int32_t i = 0; i < n; ++i)
             {
-                UObject* w = (*a)[i];
-                if (weapon_is(w, STR("MiningLaser"))) bits |= kCapLaser;
-                if (weapon_is(w, STR("ItemScooper"))) bits |= kCapScooper;
+                bits |= weapon_bits((*a)[i]);
             }
             ok = true;
         });
         if (!ran)
         {
-            if (!fault_logged) { fault_logged = true; msc_log(STR("ship_mining_caps: native fault, returning -1")); }
+            if (!fault_logged.exchange(true)) { msc_log(STR("ship_mining_caps: native fault, returning -1")); }
             return -1;
         }
         return ok ? bits : -1;

@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 14).
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 15).
 local MSCore = { api = 3, version = "0.8.15", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
@@ -1057,7 +1057,7 @@ function MSCore.module_disable(name, why)
     if name == "blocks" and MSCore.blocks and MSCore.blocks.disable then pcall(MSCore.blocks.disable, why or "disabled") return true end
     if name == "hologram" and MSCore.wbp and MSCore.wbp.hologram_disable then pcall(MSCore.wbp.hologram_disable, why or "disabled") return true end
     if name == "items" and MSCore.wbp and MSCore.wbp.items_disable then pcall(MSCore.wbp.items_disable, why) return true end
-    if name == "fleets" then   -- native fleets + fleets_write off too (fail closed), then the Lua side
+    if name == "fleets" then   -- fleets kill switch: native 'fleets' and 'fleets_write' are disabled too (fail closed), then the Lua fleets module (reads return off:<why>, writes refused)
         local nd = rawget(_G, "MSCoreNative_module_disable")
         if type(nd) == "function" then pcall(nd, "fleets") pcall(nd, "fleets_write") end
         if MSCore.fleets then pcall(MSCore.fleets.disable, why or "disabled") end

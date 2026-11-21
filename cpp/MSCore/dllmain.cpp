@@ -968,7 +968,7 @@ namespace
         } catch (...) { module_disable(STR("fleets"), STR("fleets_read exception")); lua.set_string("exception"); lua.set_bool(false); return 2; }
     }
 
-    // Lua: fleet_cmd(op string, a int, b int, name string) -> ok, err   (gated off until FleetTagInput is verified)
+    // Lua: fleet_cmd(op string, a int, b int, name string) -> ok, err   (writes only while cap 'fleets_write' is on: the selftest arms it only for the verified CreateInputFleetTag layout; unassign verified in game 2026-11-21)
     int lua_fleet_cmd(const LuaMadeSimple::Lua& lua)
     {
         bool ok = false;
@@ -1572,7 +1572,7 @@ extern "C"
         catch (...) { module_disable(STR("ships"), STR("ship_shields exception")); return -1; }
     }
 
-    // ship hull (API 14): cur / max (GetCurrentHull / GetTotalHull) in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive).
+    // ship hull (API 14): cur / max (GetCurrentHull / GetTotalHull) in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive). Call from the game thread.
     // -2 when the ships module is off, -1 on exception. cur / max may be NULL.
     MSCORE_API int MSCore_ship_hull(void* ship, int* cur, int* max)
     {
@@ -1606,7 +1606,7 @@ extern "C"
         catch (...) { module_disable(STR("world"), STR("world_paused exception")); return -1; }
     }
 
-    // station names (API 12): n stations written (at most max), or total count when out is null or max <= 0; -2 stations module off, -1 fault or exception.
+    // station names (API 12): n stations written (at most max), or total count when out is null or max <= 0; -2 stations module off, -1 fault or exception. Each call does a full scan (count call + fill call = two scans).
     MSCORE_API int MSCore_stations(MsStationName* out, int max)
     {
         try

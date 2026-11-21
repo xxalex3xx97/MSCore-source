@@ -36,6 +36,11 @@ int main()
     row(3, 0, 0, 0, 3);
     row(3, 1, 0, 0, 3);
 
+    // read other than 0 or 1 = unknown: hold like -1
+    row(0, 1, 2, 1, 0);
+    row(0, 0, -2, 0, 0);
+    row(1, 1, 7, 1, 1);
+
     // null bad_out must not crash
     CHECK(presence_step(0, 1, 0, nullptr) == 1);
     CHECK(presence_step(2, 1, 0, nullptr) == 0);

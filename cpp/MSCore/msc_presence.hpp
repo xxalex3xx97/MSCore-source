@@ -1,7 +1,7 @@
 // FILE: cpp/MSCore/msc_presence.hpp
 // WHAT: pure debounce step for "is this ship still in the list": one read per tick in, the new listed flag and the absent count out.
 // WHY: mining mods must not drop a ship on one missed read. Pure function: no game access, no state outside the arguments.
-// RULES: read 1 (present) -> bad 0, listed. read -1 (unknown) -> bad unchanged, keeps the old listed value.
+// RULES: read 1 (present) -> bad 0, listed. read other than 0 or 1 (-1 unknown, or any junk value) -> bad unchanged, keeps the old listed value.
 //        read 0 (absent) -> bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read.
 // USED BY: dllmain.cpp (MSCore_presence_step, API 15). Native unit test: tests/test_presence.cpp.
 #pragma once
@@ -14,7 +14,7 @@ namespace
         int bad = bad_n;
         int out = 0;
         if (read == 1) { bad = 0; out = 1; }
-        else if (read == -1) { out = listed ? 1 : 0; }
+        else if (read != 0) { out = listed ? 1 : 0; }   // unknown (-1 or any other value): hold
         else
         {
             bad = bad_n + 1 < 3 ? bad_n + 1 : 3;

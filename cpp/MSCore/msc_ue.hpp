@@ -42,6 +42,16 @@ namespace
     // WHAT: narrow to wide by casting each byte. Names and error texts are ASCII.
     std::wstring widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 
+    // WHAT: copies a display name into a wchar buffer of cap chars (NUL included). '|', tab, CR and LF become spaces.
+    // WHY: Lua splits the native text rows on '|' and tabs/newlines; fleets and stations share this rule.
+    void name_field_copy(wchar_t* dst, size_t cap, const std::wstring& n)
+    {
+        size_t k = 0;
+        for (; k < n.size() && k + 1 < cap; ++k)
+            dst[k] = (n[k] == L'\t' || n[k] == L'\r' || n[k] == L'\n' || n[k] == L'|') ? L' ' : n[k];
+        dst[k] = 0;
+    }
+
     // WHAT: lowercase copy (towlower per character). WHY: case-insensitive name matches.
     std::wstring lower(std::wstring s)
     {

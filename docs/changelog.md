@@ -17,7 +17,7 @@ nav_order: 6
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 - **New:** C export `MSCore_ship_hull(ship, cur, max)` (GetCurrentHull / GetTotalHull, whole units, bitmask 1 cur ok / 2 max ok, -2 module off, -1 exception). Kill switch `module_disable("ships")`. Native API 13 -> 14 (`MSCore_api()` returns `14`). Lua API stays 3.
 - **New:** C export `MSCore_ship_mining_caps(ship)` (bitmask 1 MiningLaser, 2 ItemScooper, 0 no mining weapon, -1 unknown, -2 module off). Weapon names read in `cpp\MSCore\msc_weapons.hpp`; kill switch `module_disable("ships")`; selfcheck `ships.mining_caps`. Native API 14 -> 15 (`MSCore_api()` returns `15`). Lua API stays 3.
-- **New:** C export `MSCore_presence_step(bad_n, listed, read, bad_out)`: pure debounce (a ship read absent 3 times in a row is dropped; never-listed ships rejected at once; unknown read holds). Header `cpp\MSCore\msc_presence.hpp`, native unit test `tests\test_presence.cpp` run by `scripts\test-native.ps1` (from `scripts\check.ps1`).
+- **New:** C export `MSCore_presence_step(bad_n, listed, read, bad_out)`: pure debounce (a ship read absent 3 times in a row is dropped; never-listed ships rejected at once; any read other than 0 or 1, e.g. -1, holds). Header `cpp\MSCore\msc_presence.hpp`, native unit test `tests\test_presence.cpp` run by `scripts\test-native.ps1` (from `scripts\check.ps1`).
 - **Fixed:** scan `piloted` flag: a ship counts as piloted when its PilotID matches the controller id or the PlayerObject id. Logs the pilot tuple once on change (`SCAN pilot`).
 - **Fixed:** `items` never caches an empty item map; the next call reads it again.
 - **Fixed:** wbp fleets window counts as open only when it is in the viewport and visible (a cached hidden `WBP_Fleet_C` no longer counts).
@@ -31,6 +31,7 @@ nav_order: 6
   - Native exports that walk game objects (`ship_repair_need`, `ship_hull`, `fleet_tags`, `fleet_ships`, `stations`) must be called from the game thread. SEH only catches access violations.
   - A hologram widget dropped after its ship disappears stays parented to the host panel until `hologram_release`. Memory grows in very long sessions.
   - The hologram render queue can hold a ship behind an abandoned queued ship for up to 10 s.
+  - `MSCore_stations` does a full scan per call (no cache). Count call + fill call = two scans.
   - `MSCore.caps().fleets` reports `ok` from the Lua side only. A native fleets module off is not reflected yet.
   - The `piloted` flag accepts a PilotID equal to the controller id or the player object id.
 - **Changed:** `MSCore.fleets.list(true)` bypasses the cache. `open_fleet_assign` scans ships on its first click.

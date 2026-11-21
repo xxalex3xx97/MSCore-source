@@ -4,6 +4,7 @@
 local M = {}
 local TTL = 1.0
 local offReason, cache, cacheAt
+local forceNext = false   -- set by every write (cmd); the next native read is max_age 0, then the 1 s TTL applies again
 
 local function out(s) print("[MSCore.fleets] " .. s .. "\n") end
 
@@ -70,8 +71,10 @@ local function refresh(force)
     if offReason then return nil, "off:" .. offReason end
     local fn = rawget(_G, "MSCoreNative_fleets_read")
     if type(fn) ~= "function" then return nil, "off:native too old (needs MSCore 0.8.x with fleets)" end
-    if not force and cache and os.clock() - cacheAt < TTL then return cache end
-    local ok, text, good = pcall(fn, force and 0 or 3000)
+    local fresh = force or forceNext
+    if not fresh and cache and os.clock() - cacheAt < TTL then return cache end
+    forceNext = false
+    local ok, text, good = pcall(fn, fresh and 0 or 3000)
     if not ok then
         M.disable("error: " .. tostring(text))
         return nil, "off:" .. offReason
@@ -98,9 +101,10 @@ end
 local function cmd(op, a, b, name)
     local fn = rawget(_G, "MSCoreNative_fleet_cmd")
     if type(fn) ~= "function" then return false, "off:native too old" end
+    cache, forceNext = nil, true   -- a write may have changed the tree: next read rescans
     local ok, r, err = pcall(fn, op, a or 0, b or 0, name or "")
     if not ok then return false, tostring(r) end
-    if r == true then cache = nil return true end
+    if r == true then return true end
     return false, tostring(err or "failed")
 end
 

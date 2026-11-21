@@ -173,7 +173,7 @@ Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_
 
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
-| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
+| `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Each call does a full scan (the count call and the fill call are two scans). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
 
 ## API 13: fleets
 
@@ -183,6 +183,8 @@ Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_
 | `MSCore_fleet_ships` | `MsFleetShip* out, int max, int max_age_ms` | `int` (`n` ships, `-2` fleets module off, `-1` fault) | `MsFleetShip { int32 ship; int32 count; int32 total; int32 pad; int32 tags[8]; }` (48 B). `count` = ids stored (at most 8), `total` = real number of fleet ids, so a ship in 9+ fleets shows 8 ids. Same `max_age_ms` rule, kill switch and source. |
 
 ## API 14: ship hull (0.8.15)
+
+Call from the game thread (`MSCore_ship_hull` walks game objects).
 
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
@@ -195,7 +197,7 @@ Call from the game thread (`MSCore_ship_mining_caps` reads game objects). `MSCor
 | Export | Signature | Returns | Notes |
 |---|---|---|---|
 | `MSCore_ship_mining_caps` | `void* ship` | `int` bitmask: `1` MiningLaser present, `2` ItemScooper present, `0` readable with no mining weapon, `-1` unknown, `-2` ships module off, `-1` also on exception | Reads `DMSPlayerShipObject.Weapons` and matches each weapon's class name (`MiningLaser`, `ItemScooper`). `-1` unknown: ship null or dead, array unreadable, count outside 0..100000, or a native fault (logged once). An empty readable array is `0`, not `-1`. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_weapons.hpp`. Native API 15. |
-| `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, `-1` unknown. `read 1`: bad = 0, listed. `read -1`: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
+| `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, any other value (`-1` unknown) = unknown. `read 1`: bad = 0, listed. Unknown: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
 
 ## Error convention
 
