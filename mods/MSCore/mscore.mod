@@ -1,3 +1,3 @@
 name=MSCore
 repo=xxalex3xx97/MSCore
-version=0.8.14
+version=0.8.15

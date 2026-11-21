@@ -16,6 +16,9 @@ nav_order: 6
 - **New:** mscore_wbp item_list() ({key,name} sorted, cached from the item map, no extra FindAllOf), selfcheck items.list. Lua API stays 3.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
 
+## 0.8.15 - Ship hull export
+- **New:** C export `MSCore_ship_hull(ship, cur, max)` (GetCurrentHull / GetTotalHull, whole units, bitmask 1 cur ok / 2 max ok, -2 module off, -1 exception). Kill switch `module_disable("ships")`. Native API 13 -> 14 (`MSCore_api()` returns `14`). Lua API stays 3.
+
 ## 0.8.14 - Game update 2026-11-20 + pause query
 - **New:** C export `MSCore_world_paused()` (1 paused, 0 running, -1 unknown, -2 module off; UGameplayStatics::IsGamePaused by reflection, no patterns), caps `world`, selfcheck `world.paused`. API stays 10.
 - **Fixed:** selfcheck no longer expects `MSCore.native.rename_ship` (it is a Lua wrapper over `rename_dock`); new check `factory_native.rename_ship` instead. Game build 149329408 is now the verified build (Lua `verified_build` and comments).
