@@ -52,6 +52,7 @@ using namespace RC::Unreal;
 #include "msc_refund.hpp"
 #include "msc_designer.hpp"
 #include "msc_loader.hpp"
+#include "msc_dockkind.hpp"
 
 namespace
 {
@@ -91,6 +92,16 @@ namespace
 
     // WHAT: one read-only world check by name (Lua: MSCoreNative_check). detail says what was seen. ok = false with "SKIP ..." when the world it needs is not loaded.
     // WHY: runs from selfcheck only; it never sends a command.
+    // dock kind (API 19): 1 industrial dock, 0 normal dock, -1 unknown (null, dead, class unreadable, not a dock, native fault). Rule: msc_dockkind.hpp. Game thread.
+    // The read stays here because msc_dockkind.hpp is pure (no UObject).
+    int dock_kind_read(UObject* o)
+    {
+        if (!alive(o)) return -1;
+        int r = -1;
+        if (!seh_run([&] { UClass* c = o->GetClassPrivate(); if (c) r = dock_kind_from_class(std::wstring(c->GetName())); })) return -1;
+        return r;
+    }
+
     bool check_one(const std::string& name, std::string& detail)
     {
         std::wstring why;
@@ -161,6 +172,18 @@ namespace
             if (!alive(ship)) { detail = "SKIP no ships"; return false; }
             const int r = ship_caps_read(ship);
             detail = "ship_caps=" + std::to_string(r);
+            return r >= 0;
+        }
+        if (name == "dock_kind")
+        {
+            if (!module_ok(STR("stations"))) { detail = "stations off"; return false; }
+            UObject* dock = nullptr;
+            std::vector<UObject*> v;
+            if (!seh_run([&] { UObjectGlobals::FindAllOf(STR("Dock"), v); })) { detail = "SKIP no docks (FindAllOf faulted)"; return false; }
+            for (UObject* o : v) if (alive(o)) { dock = o; break; }
+            if (!dock) { detail = "SKIP no docks"; return false; }
+            const int r = dock_kind_read(dock);
+            detail = "dock_kind=" + std::to_string(r);
             return r >= 0;
         }
         if (name == "stations")
@@ -1401,7 +1424,7 @@ extern "C"
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
     // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists
+    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1672,6 +1695,13 @@ extern "C"
     {
         try { return ship_weapon_range(sid); }
         catch (...) { module_disable(STR("combat"), STR("ship_weapon_range exception")); return -1; }
+    }
+
+    // dock kind (API 19): 1 industrial, 0 normal, -1 unknown, -2 stations module off.
+    MSCORE_API int MSCore_dock_kind(void* dock)
+    {
+        try { if (!module_ok(STR("stations"))) return -2; return dock_kind_read(static_cast<UObject*>(dock)); }
+        catch (...) { module_disable(STR("stations"), STR("dock_kind exception")); return -1; }
     }
 
     // presence debounce (API 15): pure, no game access. read 1 present, 0 absent, -1 unknown. Returns the listed flag (1 / 0); bad_out (may be null) gets the absent count (0..3).
