@@ -458,10 +458,102 @@ int main(int argc, char** argv) {
         fs::remove_all(P.core / L"installed" / L"MiningBenchMod.txt");
     }
 
+    // ---- toggle / remove edge cases (disabled mods, partial failure, move_file)
+    {
+        auto lock = [](const fs::path& f) {  // exclusive handle: rename/delete of f fails until it is closed
+            return CreateFileW(f.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        };
+        std::error_code e5;
+        fs::remove_all(P.mods / L"D", e5);
+        fs::remove_all(P.core / L"disabled", e5);
+        fs::remove_all(P.core / L"installed" / L"D.txt", e5);
+        write_text(P.mods / L"D" / L"mscore.mod", "name=D\nrepo=o/d\nversion=1.0.0\nsave_scrub=/Game/A.A_C>/Game/B.B_C\n");
+        write_text(P.mods / L"D" / L"dlls" / L"main.dll", "dll");
+        write_text(P.mods / L"D" / L"zz.dat", "zz");
+        write_text(P.paks / L"d1.pak", "pak");
+        write_text(P.core / L"installed" / L"D.txt", "1.0.0\nMods/D/mscore.mod\nMods/D/dlls/main.dll\nMods/D/zz.dat\nPaks/d1.pak\n");
+        write_text(P.mods / L"mods.txt", "D : 1\nOther : 1\nF : 1\n");
+
+        // move_file never deletes dst first: a locked src leaves dst and src untouched
+        write_text(P.mods / L"mv_src.bin", "SRC");
+        write_text(P.mods / L"mv_dst.bin", "DST");
+        HANDLE h = lock(P.mods / L"mv_src.bin");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        CHECK(!move_file(P.mods / L"mv_src.bin", P.mods / L"mv_dst.bin"));
+        CloseHandle(h);
+        CHECK(read_text(P.mods / L"mv_dst.bin") == "DST" && read_text(P.mods / L"mv_src.bin") == "SRC");
+        CHECK(move_file(P.mods / L"mv_src.bin", P.mods / L"mv_dst.bin") && read_text(P.mods / L"mv_dst.bin") == "SRC" && !fs::exists(P.mods / L"mv_src.bin"));
+        fs::remove(P.mods / L"mv_dst.bin");
+
+        // Disable with a locked file in the middle: failure names it, files already moved are put back, state stays Enabled
+        h = lock(P.mods / L"D" / L"zz.dat");
+        CHECK(h != INVALID_HANDLE_VALUE);
+        CHECK(!set_mod_enabled(P, "D", false, err) && err.find("zz.dat") != std::string::npos);
+        CHECK(read_text(P.mods / L"D" / L"dlls" / L"main.dll") == "dll" && read_text(P.paks / L"d1.pak") == "pak");
+        CHECK(!is_disabled(P, "D"));
+        CloseHandle(h);
+        CHECK(read_text(P.mods / L"D" / L"zz.dat") == "zz");
+        CHECK(set_mod_enabled(P, "D", false, err));
+        CHECK(mod_state(P, "D") == ModState::Disabled && !mod_enabled(P, "D") && !fs::exists(P.mods / L"D") && !fs::exists(P.paks / L"d1.pak"));
+        // scan_mods lists it as disabled, a disabled mod does not satisfy a dependency, Update would refuse it
+        bool seenD = false;
+        for (const auto& m : scan_mods(P))
+            if (m.name == "D") seenD = m.disabled;
+        CHECK(seenD);
+        Dep dd{"o/d", "1.0.0"};
+        std::string why2;
+        CHECK(!dep_ok(P, dd, why2) && why2.find("is disabled") != std::string::npos);
+        // no install list: remove_plan finds the disabled copy, Remove deletes it, scrub declarations come from it, mods.txt is cleaned
+        std::vector<RemoveItem> its;
+        CHECK(remove_plan(P, "D", its, err) && its.size() >= 3);
+        auto decl = parse_save_scrub(read_text(P.core / L"disabled" / L"D" / L"Mods" / L"D" / L"mscore.mod"));
+        CHECK(decl.size() == 1);
+        // partial: one file back live by hand = partly enabled, Enable completes it
+        fs::copy_file(P.core / L"disabled" / L"D" / L"Paks" / L"d1.pak", P.paks / L"d1.pak");
+        CHECK(mod_state(P, "D") == ModState::Partial && !mod_enabled(P, "D"));
+        // Enable with a locked destination: fails, names the file, nothing half-done is claimed as enabled
+        h = lock(P.paks / L"d1.pak");
+        CHECK(!set_mod_enabled(P, "D", true, err) && err.find("d1.pak") != std::string::npos);
+        CloseHandle(h);
+        CHECK(mod_state(P, "D") != ModState::Enabled);
+        CHECK(set_mod_enabled(P, "D", true, err));
+        CHECK(mod_state(P, "D") == ModState::Enabled && read_text(P.mods / L"D" / L"zz.dat") == "zz" && read_text(P.paks / L"d1.pak") == "pak");
+        CHECK(!fs::exists(P.core / L"disabled" / L"D"));
+        // Remove of a disabled mod (no install list)
+        CHECK(set_mod_enabled(P, "D", false, err));
+        auto decl2 = scrub_declarations(P, "D");
+        CHECK(decl2.size() == 1 && decl2[0].modded == "/Game/A.A_C");
+        CHECK(remove_mod(P, "D", err));
+        CHECK(!fs::exists(P.core / L"disabled" / L"D") && !fs::exists(P.mods / L"D") && !fs::exists(P.paks / L"d1.pak"));
+        CHECK(read_text(P.mods / L"mods.txt") == "Other : 1\nF : 1\n");
+        // F: no install list. The mod folder is the list, also while disabled
+        write_text(P.mods / L"F" / L"mscore.mod", "name=F\nrepo=o/f\nversion=1.0.0\nsave_scrub=/Game/C.C_C>/Game/E.E_C\n");
+        write_text(P.mods / L"F" / L"x.dat", "x");
+        CHECK(set_mod_enabled(P, "F", false, err) && !fs::exists(P.mods / L"F") && mod_state(P, "F") == ModState::Disabled);
+        CHECK(remove_plan(P, "F", its, err) && its.size() == 2);  // found through the disabled copy
+        auto decl3 = scrub_declarations(P, "F");
+        CHECK(decl3.size() == 1 && decl3[0].modded == "/Game/C.C_C");
+        CHECK(remove_mod(P, "F", err));
+        CHECK(!fs::exists(P.core / L"disabled" / L"F") && !fs::exists(P.mods / L"F"));
+        CHECK(read_text(P.mods / L"mods.txt") == "Other : 1\n");
+        write_text(P.mods / L"mods.txt", "# hdr\nOther : 1\n");
+    }
+
     scrub_tests();
 
     // version constants the manager shows
-    CHECK(std::string(kVersion) == "0.8.15" && kNativeApi >= 16);
+    {   // kVersion is the one constant: the other copies of the version in the repo must equal it
+        fs::path repo = fs::path(__FILE__).parent_path().parent_path().parent_path();
+        auto grab = [&](const fs::path& f, const std::regex& re) {
+            std::string t = read_text(f);
+            std::smatch m;
+            return std::regex_search(t, m, re) ? m[1].str() : std::string("<none>");
+        };
+        CHECK(grab(repo / L"mods/MSCore/mscore.mod", std::regex("version=([0-9.]+)")) == kVersion);
+        CHECK(grab(repo / L"mods/MSCore/Scripts/mscore.lua", std::regex("version = \"([0-9.]+)\"")) == kVersion);
+        CHECK(grab(repo / L"cpp/MSCore/dllmain.cpp", std::regex("ModVersion = STR\\(\"([0-9.]+)\"\\)")) == kVersion);
+        CHECK(kNativeApi >= 16);
+    }
 
     g_allow_local = false;
     g_local_root.clear();
@@ -647,6 +739,15 @@ int main(int argc, char** argv) {
     CHECK(run_mgr("--update Upd") == 0);
     CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
+    {   // a disabled mod is not updated into Mods\: Update says enable it first
+        std::string e6;
+        CHECK(set_mod_enabled(EP, "Upd", false, e6));
+        publish("owner/upd", "Upd", "1.2.0", "owner/dep@1.0.0", "owner/dep@1.0.0");
+        CHECK(run_mgr("--update Upd") != 0);
+        CHECK(!fs::exists(EP.mods / L"Upd") && !fs::exists(EP.core / L"pending.txt"));
+        CHECK(set_mod_enabled(EP, "Upd", true, e6));
+        CHECK(run_mgr("--update Upd") == 0);
+    }
     // save scrub through the real manager: --scrub-saves --dry-run changes nothing, --remove backs up and scrubs
     {
         fs::path saves = e2e / L"saves";

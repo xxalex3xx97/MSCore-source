@@ -373,6 +373,10 @@ bool install_deps(const mscl::Paths& p, const std::vector<mscl::Dep>& deps, std:
     for (const auto& d : deps) {
         std::string why;
         if (mscl::dep_ok(p, d, why)) continue;
+        if (why.size() > 11 && why.compare(why.size() - 11, 11, "is disabled") == 0) {
+            err = "needs " + d.repo + ": " + why + " (enable it first)";
+            return false;
+        }
         std::string dmsg;
         if (!add_mod_core(p, d.repo, dmsg, err, depth + 1)) {
             err = "needs " + d.repo + ": " + err;
@@ -600,11 +604,19 @@ void run_work(std::function<std::string()> job) {
 
 // ---------- UI ----------
 
+const wchar_t* label_suffix(const std::string& name) {
+    switch (mscl::mod_state(g_paths, name)) {
+        case mscl::ModState::Disabled: return L" (disabled)";
+        case mscl::ModState::Partial: return L" (partly enabled)";
+        default: return L"";
+    }
+}
+
 void refresh_list() {
     ListView_DeleteAllItems(g_list);
     for (int i = 0; i < static_cast<int>(g_rows.size()); ++i) {
         const mscl::Check& c = g_rows[i];
-        std::wstring cells[4] = {mscl::to_wide(c.mod.name) + (mscl::mod_enabled(g_paths, c.mod.name) ? L"" : L" (disabled)"),
+        std::wstring cells[4] = {mscl::to_wide(c.mod.name) + (label_suffix(c.mod.name)),
                                  mscl::to_wide(c.mod.version),
                                  mscl::to_wide(c.m.version.empty() ? std::string("-") : c.m.version),
                                  mscl::to_wide(c.state)};
@@ -645,6 +657,11 @@ bool update_picks(const mscl::Paths& p, const std::vector<mscl::Check>& picks, s
     bool all_ok = true;
     const bool running = game_running_under(p.win64);
     for (const auto& c : picks) {
+        if (c.mod.disabled) {
+            msg += c.mod.name + " is disabled: enable it first. ";
+            all_ok = false;
+            continue;
+        }
         std::vector<mscl::Dep> want = c.mod.requires_;
         want.insert(want.end(), c.m.requires_.begin(), c.m.requires_.end());
         std::string err, dmsg;
@@ -698,6 +715,10 @@ int update_cli(const fs::path& win64, const std::string& mod) {
         if (mscl::lower(m.name) == mscl::lower(mod)) target = &m;
     if (!target || mscl::lower(mod) == "mscore") {
         log_line("update: FAILED " + mod + " is not an installed mod (MSCore: use --install)");
+        return 1;
+    }
+    if (target->disabled) {
+        log_line("update: FAILED " + mod + " is disabled: enable it first");
         return 1;
     }
     mscl::Check c = mscl::check_mod(*target, core, &p);
@@ -886,7 +907,7 @@ void do_toggle() {
         set_status("MSCore itself cannot be disabled here");
         return;
     }
-    bool on = !mscl::mod_enabled(g_paths, name);
+    bool on = mscl::mod_state(g_paths, name) != mscl::ModState::Enabled;  // partly enabled: Enable completes the move
     std::string err;
     if (mscl::set_mod_enabled(g_paths, name, on, err))
         set_status(on ? "Enabled " + name + " (files moved back). Restart game to apply."

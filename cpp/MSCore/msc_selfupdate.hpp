@@ -1,7 +1,9 @@
 // msc_selfupdate.hpp - MSCoreManager.exe updates itself from the latest MSCore release (manager only, never the DLL).
 // Manifest keys (written by scripts\release.ps1): manager_version (version baked into the MSCoreManager.exe asset),
 // manager_sha256, manager_size. The asset is MSCoreManager.exe of the release that holds the manifest. A manifest without
-// those keys = no self-update ("manager update info missing"): reused-exe releases keep the old keys of the previous manifest,
+// those keys = no self-update. TRUST: the sha256 only detects a corrupted or truncated download; it comes from the same
+// release as the exe, so it does not protect against a malicious release (same trust as downloading the manager by hand).
+// "Auto-update manager" can be turned off (manager.ini auto_update=0). ("manager update info missing"): reused-exe releases keep the old keys of the previous manifest,
 // which is why the exe version is its own key and not the release version.
 #pragma once
 #include "msc_loader.hpp"
@@ -61,8 +63,12 @@ inline bool self_update_apply(const fs::path& exe, const std::string& repo, cons
         err = "manager size mismatch";
         return false;
     }
-    std::string head = read_text(staged).substr(0, 2);
-    if (head != "MZ") {
+    char head[2] = {0, 0};
+    {
+        std::ifstream f(staged, std::ios::binary);
+        f.read(head, 2);
+    }
+    if (head[0] != 'M' || head[1] != 'Z') {
         err = "manager download is not an exe";
         return false;
     }
