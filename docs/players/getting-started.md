@@ -70,7 +70,7 @@ The manager never downloads anything when the game starts. It only checks. Downl
 
 ### The manager updates itself
 
-At start the manager looks, in the background, for a newer `MSCoreManager.exe` in the latest release. It downloads it, checks the SHA-256 against the release manifest, swaps itself in (the old file is kept as `MSCoreManager.exe.old` and deleted at the next start) and restarts. Offline or on any error it stays silent and keeps running. It never swaps while an install, update, remove or scrub is running. The checkbox **Auto-update manager** (on by default, saved in `%APPDATA%\MSCoreManager\manager.ini`) turns it off. `MSCoreManager.exe --self-update` does the same once from the command line.
+At start the manager looks, in the background, for a newer `MSCoreManager.exe` in the latest release. It downloads it, checks the SHA-256 against the release manifest, swaps itself in (the old file is kept as `MSCoreManager.exe.old` and deleted at the next start) and restarts. Offline or on any error it stays silent and keeps running. It never swaps while an install, update, remove or scrub is running. The check of the SHA-256 against the release manifest only detects a corrupted or truncated download: the manifest comes from the same release as the exe, so it does not protect against a malicious release (the same trust as downloading the manager by hand). The checkbox **Auto-update manager** (on by default, saved in `%APPDATA%\MSCoreManager\manager.ini`) turns it off. `MSCoreManager.exe --self-update` does the same once from the command line.
 
 ## 7. Start the game
 

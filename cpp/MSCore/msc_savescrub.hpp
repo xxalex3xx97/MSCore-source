@@ -126,6 +126,8 @@ inline std::vector<FMap> find_flatmaps(const std::string& b, const std::string& 
         for (size_t p = lo; p + 3 < occ; ++p) {
             uint32_t N = U(b, p);
             if (N < 1 || N > 400) continue;
+            uint32_t l0 = U(b, p + 4);  // cheap reject: the run must start with a valid '/..' entry (same result as run() below)
+            if (!(l0 > 5 && l0 < 300) || p + 8 >= b.size() || b[p + 8] != 0x2f) continue;
             std::vector<Ent> ents = run(b, p + 4);
             if (ents.size() != N) continue;
             bool hit = false;
@@ -561,7 +563,7 @@ enum : int { kScrubSaves = 1, kScrubDesigns = 2, kRestoreDesigns = 4 };
 //       kRestoreDesigns = designs a former Remove moved to DesignsBackup\ (no same-named file in Designs\, not a byte copy of
 //       one) go back into Designs\ scrubbed. dry = report only. Never throws; a failing file is Refused and left untouched.
 inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_root, const std::vector<SaveScrub>& pairs, bool dry,
-                                int what = kScrubSaves | kScrubDesigns) {
+                                int what = kScrubSaves | kScrubDesigns, const std::function<void(const std::string&)>& progress = {}) {
     ScrubSummary S;
     S.dry = dry;
     std::error_code ec;
@@ -598,9 +600,11 @@ inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_
             if (n.size() > 6 && n.compare(n.size() - 6, 6, L"_S.sav") == 0) saves.push_back(e.path());
         }
         std::sort(saves.begin(), saves.end());
+        size_t done = 0;
         for (const auto& f : saves) {
             ScrubFile r;
             r.name = to_utf8(f.filename().wstring());
+            if (progress) progress("Scrubbing saves " + std::to_string(++done) + "/" + std::to_string(saves.size()) + ": " + r.name);
             try {
                 std::string b = read_bin(f);
                 ScrubOut o = scrub_bytes(b, pairs);
@@ -636,6 +640,7 @@ inline ScrubSummary scrub_saves(const fs::path& savedir, const fs::path& backup_
     auto do_design = [&](const fs::path& src, const fs::path& dest, bool restored) {
         ScrubFile r;
         r.name = to_utf8(src.filename().wstring());
+        if (progress) progress("Checking design: " + r.name);
         r.restored = restored;
         try {
             std::string b = read_bin(src);

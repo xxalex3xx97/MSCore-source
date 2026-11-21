@@ -31,6 +31,7 @@ const wchar_t* kClass = L"MSCoreManagerWnd";
 const char* kRepo = "xxalex3xx97/MSCore";
 const UINT WM_APP_CHECKED = WM_APP + 1;
 const UINT WM_APP_WORK = WM_APP + 2;
+const UINT WM_APP_PROGRESS = WM_APP + 5;  // lp = new std::string (progress line while a job runs)
 const UINT WM_APP_SELFUPD = WM_APP + 3;   // lp = new SelfUpdateInfo (a newer manager exists)
 const UINT WM_APP_SELFDONE = WM_APP + 4;  // lp = new std::string (empty = swapped, else the error)
 
@@ -881,7 +882,10 @@ void do_remove() {
         if (!mscl::remove_mod(p, name, e)) return "Remove " + name + " failed: " + e;
         std::string r = "Removed " + name + ".";
         if (decl.empty()) return r;
-        mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false);
+        auto progress = [](const std::string& t) {  // worker thread: the UI only shows the line, it never blocks
+            if (g_hwnd) PostMessageW(g_hwnd, WM_APP_PROGRESS, 0, reinterpret_cast<LPARAM>(new std::string(t)));
+        };
+        mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false, mscl::kScrubSaves | mscl::kScrubDesigns, progress);
         log_line(sum.text());
         r += " Saves scrubbed: " + std::to_string(sum.scrubbed()) + ", refused: " + std::to_string(sum.refused()) +
              "; designs scrubbed: " + std::to_string(sum.designs_scrubbed()) + ", refused: " + std::to_string(sum.designs_refused()) +
@@ -990,6 +994,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                        std::to_string(g_rows.size()) + " mod(s).");
             g_last.clear();
             update_ui();
+            return 0;
+        }
+        case WM_APP_PROGRESS: {
+            auto* t = reinterpret_cast<std::string*>(lp);
+            if (g_busy) {  // only while a job runs: a late line must not overwrite the result
+                size_t nl = t->find('\n');
+                if (g_status) SetWindowTextW(g_status, mscl::to_wide(nl == std::string::npos ? *t : t->substr(0, nl)).c_str());
+            }
+            delete t;
             return 0;
         }
         case WM_APP_SELFUPD: {

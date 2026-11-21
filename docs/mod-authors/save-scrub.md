@@ -40,7 +40,9 @@ Rules for the stock class:
 - It must be a class the game ships, and the save must already use it somewhere (it is in the save's class table). Otherwise that save is refused and left as it is.
 - Use the same path length for both paths (rename the clone with the same number of characters). A path that is stored in a per-ship or per-station table with another length is refused.
 
-Managers older than 0.8.15 and mods without these lines: the manager has a built-in table for MiningBenchMod and BlueprintUnit. Other mods need the lines.
+The manager still carries a built-in table for MiningBenchMod and BlueprintUnit, only as a fallback for releases that were published before they had these lines. **It is deprecated and will be removed.** Every new release of a mod that adds block or machine classes must declare its `save_scrub=` lines in its own `mscore.mod`; other mods get no fallback.
+
+Files a mod does not own: Remove deletes every file in the mod's install list and restores nothing from `backup\`. A mod must therefore never overwrite a file it does not own (another mod's file, a vanilla file): that file would be deleted with the mod.
 
 ## What Remove does to the saves
 

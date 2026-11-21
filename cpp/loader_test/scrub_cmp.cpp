@@ -2,6 +2,7 @@
 // Usage: scrub_cmp <in_S.sav> <expected.sav> [skip-first-pair]   (build: see scripts\test-loader.ps1 notes)
 #include "msc_savescrub.hpp"
 
+#include <chrono>
 #include <cstdio>
 
 using namespace mscl;
@@ -18,7 +19,9 @@ int main(int argc, char** argv) {
     if (argc > 3 && std::string(argv[3]) == "builtin") pairs = builtin_save_scrub("MiningBenchMod");  // auto stand-ins, as the manager does
     else if (argc > 3) pairs.erase(pairs.begin());
     std::string in = read_bin(argv[1]), want = argv[2][0] == '-' ? std::string() : read_bin(argv[2]);
+    auto t0 = std::chrono::steady_clock::now();
     ScrubOut o = scrub_bytes(in, pairs);
+    std::printf("scrub_ms %lld\n", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count()));
     std::printf("status %d why '%s' nodes %d table %d paths %d merged %d renamed %d removed %d out %zu want %zu\n", static_cast<int>(o.st),
                 o.why.c_str(), o.rep.nodes, o.rep.table, o.rep.paths, o.rep.merged, o.rep.renamed, o.rep.removed, o.data.size(), want.size());
     if (argv[2][0] == '-') {  // no expected file: report only; optional 4th arg = write the result there
