@@ -1159,7 +1159,8 @@ namespace
         if (n == 0 || n >= buf.size()) return;
         const mscl::fs::path dir = mscl::fs::path(std::wstring(buf.data(), n)).parent_path().parent_path();
         std::error_code ec;
-        if (!mscl::fs::exists(dir / L"designer_guard_off.txt", ec)) dg_install();
+        static bool dgOnce = false;   // designer guard: decided once per process (the kill-switch file is read once)
+        if (!dgOnce) { dgOnce = true; if (!mscl::fs::exists(dir / L"designer_guard_off.txt", ec)) dg_install(); }
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
         if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
     }
@@ -1351,7 +1352,7 @@ public:
     {
         g_loader_stop = true;   // detached worker checks this between network steps
         try { ref_uninstall(); } catch (...) {}
-        try { dg_uninstall("unload"); } catch (...) {}
+        try { dg_restore_bytes(); } catch (...) {}
         try { rr_listener_release(); } catch (...) {}
         try { chunk_hold_release_all(); }
         catch (...) { msc_log(STR("chunk_hold_release_all failed at unload")); }
