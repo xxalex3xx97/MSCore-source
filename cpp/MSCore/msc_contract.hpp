@@ -31,10 +31,12 @@ namespace
     constexpr const char* kClsItemCrate = "BP_ItemCrateObject_C";
     constexpr const char* kClsShip = "DMSPlayerShipObject";
     constexpr const char* kClsFleetTag = "FleetTag";
+    constexpr const char* kClsPlayerObj = "DMSPlayerObject";   // player object class (FindFirstOf fallback when the controller's PlayerObject is unreadable)
     struct ClassName { const char* logical; const char* name; };
     constexpr ClassName kClasses[] = {
         { "asteroid", kClsAsteroid }, { "asteroid_actor", kClsAsteroidActor }, { "floating_ore", kClsFloatingOre },
         { "station", kClsStation }, { "player_station", kClsPlayerStation }, { "container", kClsContainer },
-        { "container_actor", kClsContainerActor }, { "item_crate", kClsItemCrate }, { "ship", kClsShip }, { "fleet_tag", kClsFleetTag } };
+        { "container_actor", kClsContainerActor }, { "item_crate", kClsItemCrate }, { "ship", kClsShip }, { "fleet_tag", kClsFleetTag },
+        { "player_obj", kClsPlayerObj } };
     inline const char* cls_name(const char* logical) { for (const ClassName& c : kClasses) if (std::strcmp(c.logical, logical) == 0) return c.name; return nullptr; }
 }
