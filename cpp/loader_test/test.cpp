@@ -666,6 +666,51 @@ int main(int argc, char** argv) {
         for (auto& e : fs::directory_iterator(EP.core / L"save-backup")) bkok = bkok || read_text(e.path() / L"S1_S.sav") == sv;
         CHECK(bkok);
     }
+    // manager self-update through a copy of the built manager (--self-update --source <dir>, offline)
+    {
+        fs::path box = e2e / L"selfupd";
+        fs::path cp = box / L"mgr_copy.exe";
+        fs::create_directories(box);
+        fs::copy_file(mgr, cp, fs::copy_options::overwrite_existing);
+        std::string orig = read_text(cp);
+        std::string fake = "MZ-new-manager-bytes";
+        auto manifest = [&](const std::string& extra) {
+            fs::path d = box / L"src";
+            std::error_code e3;
+            fs::remove_all(d, e3);
+            write_text(d / L"MSCoreManager.exe", fake);
+            std::string sha;
+            CHECK(sha256_file(d / L"MSCoreManager.exe", sha));
+            std::replace(sha.begin(), sha.end(), 'X', 'x');
+            std::string m = "name=MSCore\nversion=9.9.9\nzip=x.zip\nsha256=00\n";
+            std::string t = extra;
+            for (size_t k = t.find("@SHA@"); k != std::string::npos; k = t.find("@SHA@")) t.replace(k, 5, sha);
+            for (size_t k = t.find("@SIZE@"); k != std::string::npos; k = t.find("@SIZE@")) t.replace(k, 6, std::to_string(fake.size()));
+            write_text(d / L"manifest.txt", m + t);
+            return d;
+        };
+        auto run_su = [&](const fs::path& d) {
+            std::string cmd = "\"\"" + cp.string() + "\" --self-update --source \"" + d.string() + "\"\"";
+            return std::system(cmd.c_str());
+        };
+        // missing keys: nothing
+        CHECK(run_su(manifest("")) == 0 && read_text(cp) == orig && !fs::exists(box / L"mgr_copy.exe.old"));
+        // equal / older manager_version: nothing
+        CHECK(run_su(manifest("manager_version=" + std::string(kVersion) + "\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0 && read_text(cp) == orig);
+        CHECK(run_su(manifest("manager_version=0.0.1\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0 && read_text(cp) == orig);
+        // bad sha / bad size: refused, exe untouched, no staged file left
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=" + std::string(64, '0') + "\nmanager_size=@SIZE@\n")) != 0);
+        CHECK(read_text(cp) == orig && !fs::exists(box / L"mgr_copy.exe.new") && !fs::exists(box / L"mgr_copy.exe.old"));
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=@SHA@\nmanager_size=3\n")) != 0 && read_text(cp) == orig);
+        // newer + good: exe replaced, old one kept as .old
+        CHECK(run_su(manifest("manager_version=9.9.9\nmanager_sha256=@SHA@\nmanager_size=@SIZE@\n")) == 0);
+        CHECK(read_text(cp) == fake && read_text(box / L"mgr_copy.exe.old") == orig && !fs::exists(box / L"mgr_copy.exe.new"));
+        // the next start of a real manager deletes the .old
+        fs::copy_file(mgr, cp, fs::copy_options::overwrite_existing);
+        write_text(box / L"mgr_copy.exe.old", "stale");
+        CHECK(run_su(manifest("")) == 0 && !fs::exists(box / L"mgr_copy.exe.old"));
+    }
+
     fs::remove_all(e2e, dec);
 
     std::printf("ALL OK\n");

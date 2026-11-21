@@ -68,6 +68,10 @@ The manager never downloads anything when the game starts. It only checks. Downl
 | **Remove mod** | Deletes only the files the manager installed for that mod. MSCore cannot be removed this way. | Yes |
 | **Browse game folder** | Lets you pick the `Main Sequence Demo` folder when the manager does not find it. | No (not stated) |
 
+### The manager updates itself
+
+At start the manager looks, in the background, for a newer `MSCoreManager.exe` in the latest release. It downloads it, checks the SHA-256 against the release manifest, swaps itself in (the old file is kept as `MSCoreManager.exe.old` and deleted at the next start) and restarts. Offline or on any error it stays silent and keeps running. It never swaps while an install, update, remove or scrub is running. The checkbox **Auto-update manager** (on by default, saved in `%APPDATA%\MSCoreManager\manager.ini`) turns it off. `MSCoreManager.exe --self-update` does the same once from the command line.
+
 ## 7. Start the game
 
 Load a world and wait about 8 seconds. MSCore writes `ue4ss\Mods\MSCore\selfcheck.log`. Open it to see whether the check passed. See [Troubleshooting]({{ site.baseurl }}{% link players/troubleshooting.md %}) if it did not.
