@@ -5,7 +5,7 @@ nav_order: 6
 
 # Changelog
 
-## Unreleased
+## 0.8.15 - Holograms, item icons, fleets, repair, ship hull
 - **Fixed:** MSCore.fleets.capture(true): hook now reads AddInputCommand(receiver, cmd) correctly and dumps every FleetTagInput property (dev probe, sends nothing).
 - **Fixed:** stations names: DisplayName read failed on StationObject, now tries DisplayName, Blueprint.DisplayName, StationName, CustomName (first non-empty); selfcheck world.stations logs a one-shot probe and the winning source. C API unchanged.
 - **New:** MSCore.wbp.open_fleets_window() (the game's own fleet window, ShowWidget(WBP_Fleet, PlayerObject)), open_fleet_assign(shipId) (add-to-fleet popup, enabled: WidgetSubsystem:ShowPopup(WBP_TagSelectPopup_C, shipObject, nil, false); logs "[MSCore.wbp] open_fleet_assign ship=.. class=.. ok=.."), fleet_assign_caps() ("ok" or "off:<why>"), probe_fleet_popup() (dev capture, logs the ShowPopup widget class name, sends nothing). Contract widgets fleet_window / fleet_tag_popup, selfcheck wbp.fleet_open. Lua API stays 3.
@@ -15,9 +15,17 @@ nav_order: 6
 - **New:** mscore_wbp alone (`require "mscore_wbp"`, no mscore.lua): ship_hologram (primary, returns the texture; hologram_texture alias) + set_ship_hologram wrapper, item_icon + set_item_icon wrapper, texture lifetime rule, pictures need opts.host (widgets parented to the consumer's hidden panel so the GC keeps them), hologram_release(host) on close and at open; created once per ship per window (refresh OFF, C.holo_refresh=false: re-rendering an existing widget crashed the game; 2 renders per 0.25 s with FIFO queue, hologram_stats; items: missing key retried every 30 s), caps hologram, kill switch module_disable("hologram"), selfcheck wbp.hologram.
 - **New:** mscore_wbp item_list() ({key,name} sorted, cached from the item map, no extra FindAllOf), selfcheck items.list. Lua API stays 3.
 - **New:** mscore_wbp item_icon / set_item_icon (MSCore.items.* = aliases), caps items_icon, kill switch module_disable("items"), selfcheck items.icon. Lua API stays 3.
-
-## 0.8.15 - Ship hull export
 - **New:** C export `MSCore_ship_hull(ship, cur, max)` (GetCurrentHull / GetTotalHull, whole units, bitmask 1 cur ok / 2 max ok, -2 module off, -1 exception). Kill switch `module_disable("ships")`. Native API 13 -> 14 (`MSCore_api()` returns `14`). Lua API stays 3.
+- **Fixed:** scan `piloted` flag: a ship counts as piloted when its PilotID matches the controller id or the PlayerObject id. Logs the pilot tuple once on change (`SCAN pilot`).
+- **Fixed:** `items` never caches an empty item map; the next call reads it again.
+- **Fixed:** wbp fleets window counts as open only when it is in the viewport and visible (a cached hidden `WBP_Fleet_C` no longer counts).
+- **Fixed:** wbp hologram queue: queue purge, items stall guard, pruning of dead entities, nil guards. No in-place re-render without refresh_ok (refresh stays OFF).
+- **Changed:** native fleet unassign sends `bRemove=true` (`false` is ADD, per the 2026-11-20 log). The fleet write path is still unverified in game (`fleets_write` caps off).
+- **Changed:** `MSCore.fleets.list(true)` bypasses the cache. `open_fleet_assign` scans ships on its first click.
+- **New:** `MSCore.fleets.on_fleet_cmd` (a function you set; nil clears it): called with `(FleetTagID, bRemove)` whenever the game sends a FleetTagInput, even with the log muted. ID 0 = create fleet.
+- **New:** mscore_wbp `close_fleets_window()` closes the game's fleet window again after the add-to-fleet popup; `fleets_window_open()` reports whether it is open.
+- **Docs:** hologram ownership contract and test checklist (`docs/mod-authors/lua-api/ui.md`). Native API 11 to 14 sections and the quick reference updated to API 14.
+- **Dev:** aimed tests in `mods/MSCore/tests/` for fleets, fleet open, hologram and item icon. The class contract test passes: `C.classes.player_obj` (`DMSPlayerObject`) has its mirror `kClsPlayerObj` in `cpp/MSCore/msc_contract.hpp` (`cls_name("player_obj")`).
 
 ## 0.8.14 - Game update 2026-11-20 + pause query
 - **New:** C export `MSCore_world_paused()` (1 paused, 0 running, -1 unknown, -2 module off; UGameplayStatics::IsGamePaused by reflection, no patterns), caps `world`, selfcheck `world.paused`. API stays 10.
