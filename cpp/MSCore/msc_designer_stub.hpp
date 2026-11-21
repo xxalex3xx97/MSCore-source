@@ -29,7 +29,7 @@ namespace
 
     // WHAT: writes the stub into mem (>= DG_STUB_SIZE bytes). stolen = the first DG_STOLEN bytes of the guarded function, back = address of the
     //       function + DG_STOLEN. Counter is zeroed.
-    void dg_build_stub(uint8_t* mem, const uint8_t* stolen, uint64_t back)
+    [[maybe_unused]] void dg_build_stub(uint8_t* mem, const uint8_t* stolen, uint64_t back)
     {
         memset(mem, 0xCC, DG_STUB_SIZE);
         const uint8_t head[DG_ORIG_OFF] = {
@@ -51,7 +51,7 @@ namespace
     }
 
     // WHAT: bytes written over the target's first DG_PATCH bytes: `E9 rel32` + orig[5..7]. rel = stub - (target + 5).
-    void dg_patch_bytes(const uint8_t* orig, int32_t rel, uint8_t out[DG_PATCH])
+    [[maybe_unused]] void dg_patch_bytes(const uint8_t* orig, int32_t rel, uint8_t out[DG_PATCH])
     {
         memcpy(out, orig, DG_PATCH);
         out[0] = 0xE9;
@@ -60,7 +60,7 @@ namespace
 
     // WHAT: atomically replaces the 8 bytes at p (any alignment; a locked op is atomic even across a cache line) when they equal expect.
     //       true = replaced. Needs p writable.
-    bool dg_cas8(uint8_t* p, const uint8_t* expect, const uint8_t* want)
+    [[maybe_unused]] bool dg_cas8(uint8_t* p, const uint8_t* expect, const uint8_t* want)
     {
         uint64_t e, w;
         memcpy(&e, expect, 8);
