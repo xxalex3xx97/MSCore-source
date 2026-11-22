@@ -119,6 +119,24 @@ namespace
     }
     // WHAT: which vector shape to use: 1 = PNum axes (struct with Value), 2 = plain double axes, 0 = none. PNum wins when both read.
     inline int cmb_vel_shape(bool pnum_ok, bool double_ok) { return pnum_ok ? 1 : (double_ok ? 2 : 0); }
+    // enemy motion (API 24): out[14] layout (12..13 = avoidance_distance_m, avoidance_speed_mps), see msc_combat.hpp enemy_motion. kCmbNoLoc = "target location unreadable" marker (all 3 axes).
+    constexpr double kCmbNoLoc = 1e30;
+    constexpr int kCmbMotionSlots = 14;
+    // WHAT: every slot -1, target location slots 7..9 = kCmbNoLoc.
+    inline void cmb_motion_init(double out[14])
+    {
+        for (int i = 0; i < kCmbMotionSlots; ++i) out[i] = -1;
+        for (int i = 7; i < 10; ++i) out[i] = kCmbNoLoc;
+    }
+    // WHAT: per-frame value -> per-second (value * fps); -1 when not found or fps <= 0.
+    inline double cmb_rate_per_s(bool found, double per_frame, double fps) { return (found && fps > 0) ? per_frame * fps : -1; }
+    // WHAT: writes slots 7..9 from rel (ok) or the kCmbNoLoc marker.
+    inline void cmb_motion_set_target(double out[14], bool ok, const double rel[3])
+    {
+        for (int i = 0; i < 3; ++i) out[7 + i] = ok ? rel[i] : kCmbNoLoc;
+    }
+    // WHAT: true when slots 7..9 hold the kCmbNoLoc marker.
+    inline bool cmb_motion_noloc(const double out[14]) { return out[7] >= kCmbNoLoc && out[8] >= kCmbNoLoc && out[9] >= kCmbNoLoc; }
     // WHAT: smallest value > 0, else -1.
     inline double cmb_min_range(const std::vector<double>& v)
     {

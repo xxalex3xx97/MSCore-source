@@ -490,6 +490,91 @@ namespace
         return true;
     }
 
+    // WHAT: enemy motion (API 24), read-only. out[14] = CurrentTask, attack_speed_mps, fatigue, fatigue_frames, flyaway_frames, avoid_frames,
+    //       target_id, target rel metres x3 (same axes as MsEnemy.rel_m, kCmbNoLoc x3 if unreadable), pathfinding_rot_speed (per s, UNVERIFIED unit), attack_distance_m, avoidance_distance_m, avoidance_speed_mps (callers MUST pass 14).
+    //       Missing prop -> -1. UNVERIFIED: TargetLocation (+0x1d4) is chunk-relative to TargetChunkLocation (+0x1e0), raw 65536/m like Location.
+    bool enemy_motion(int sid, int id, double* out, std::wstring& err)
+    {
+        if (!combat_enabled()) { err = STR("combat off"); return false; }
+        if (!out) { err = STR("null out"); return false; }
+        double r[kCmbMotionSlots];
+        cmb_motion_init(r);
+        MsFlight f{};
+        const bool pose = ship_flight_read(sid, FL_POSE, f) == 1 && (f.flags & FF_OBJ_POSE);
+        bool found = false, dead = false, tloc = false;
+        std::wstring shapes, cls;
+        int tshape = 0;
+        if (!seh_run([&] {
+                UObject* o = cmb_enemy(id, &dead);
+                if (!o) return;
+                found = true;
+                cls = o->GetClassPrivate()->GetName();
+                auto shp =[&](const TCHAR* n) {
+                    FProperty* p = o->GetPropertyByNameInChain(n);
+                    shapes += STR(" ") + std::wstring(n) + STR(":") + (p ? p->GetClass().GetName() : std::wstring(STR("missing")));
+                };
+                static const TCHAR* const kShapeProps[] = {STR("CurrentTask"), STR("AttackSpeed"), STR("Fatigue"), STR("FatigueFrames"), STR("FlyAwayFrames"), STR("AvoidFrames"),
+                                                           STR("TargetID"), STR("TargetLocation"), STR("TargetChunkLocation"), STR("PathfindingRotSpeed"), STR("AttackDistance"), STR("AvoidanceDistance"), STR("AvoidanceSpeed")};
+                for (const TCHAR* n : kShapeProps) shp(n);
+                double d = 0;
+                FProperty* tp = o->GetPropertyByNameInChain(STR("CurrentTask"));
+                if (tp && (CastField<FByteProperty>(tp) || CastField<FEnumProperty>(tp)) && tp->GetSize() == 1)
+                    r[0] = *(reinterpret_cast<const uint8_t*>(o) + tp->GetOffset_Internal());
+                else if (cmb_num(o, STR("CurrentTask"), d)) r[0] = d;
+                if (cmb_scaled(o, STR("AttackSpeed"), d)) r[1] = cmb_rate_per_s(true, d, kSimFps);
+                static const TCHAR* const ints[5] = {STR("Fatigue"), STR("FatigueFrames"), STR("FlyAwayFrames"), STR("AvoidFrames"), STR("TargetID")};
+                for (int i = 0; i < 5; ++i) if (cmb_num(o, ints[i], d)) r[2 + i] = d;   // int, or PNum raw (frames/ids are plain ints)
+                if (cmb_scaled(o, STR("PathfindingRotSpeed"), d)) r[10] = cmb_rate_per_s(true, d, kSimFps);
+                if (cmb_scaled(o, STR("AttackDistance"), d)) r[11] = d;
+                if (cmb_scaled(o, STR("AvoidanceDistance"), d)) r[12] = d;
+                if (cmb_scaled(o, STR("AvoidanceSpeed"), d)) r[13] = cmb_rate_per_s(true, d, kSimFps);
+                double tl[3];
+                int64_t tc[3] = {0, 0, 0};
+                FProperty* cp = o->GetPropertyByNameInChain(STR("TargetChunkLocation"));
+                auto* csp = cp ? CastField<FStructProperty>(cp) : nullptr;
+                if (pose && cmb_vec_read(o, STR("TargetLocation"), tl, tshape) && csp && csp->GetStruct())
+                {
+                    const uint8_t* cb = reinterpret_cast<const uint8_t*>(o) + cp->GetOffset_Internal();
+                    if (read_axis(cb, csp->GetStruct(), STR("X"), tc[0]) && read_axis(cb, csp->GetStruct(), STR("Y"), tc[1]) && read_axis(cb, csp->GetStruct(), STR("Z"), tc[2]))
+                    {
+                        double rel[3];
+                        cmb_delta_m(f.ch, f.loc_raw, tc, tl, rel);
+                        cmb_motion_set_target(r, true, rel);
+                        tloc = true;
+                    }
+                }
+            }))
+        {
+            err = STR("enemy_motion faulted");
+            module_disable(STR("combat"), STR("enemy_motion fault"));
+            return false;
+        }
+        if (!found) { err = dead ? STR("enemy dead") : STR("enemy not found"); return false; }
+        for (int i = 0; i < kCmbMotionSlots; ++i) out[i] = r[i];
+        static std::mutex mx;
+        static std::set<int> seen;
+        static ULONGLONG win = 0;
+        static int cnt = 0;
+        static bool shapes_logged = false, noloc_logged = false;
+        std::lock_guard<std::mutex> lk(mx);
+        if (!shapes_logged) { shapes_logged = true; msc_log(STR("combat enemy motion shapes") + shapes + STR(" tloc_shape=") + widen(std::to_string(tshape))); }
+        if (!tloc && !noloc_logged) { noloc_logged = true; msc_log(std::wstring(STR("combat enemy motion target location unreadable (pose=")) + (pose ? STR("ok") : STR("no")) + STR(") -> 1e30")); }
+        if (seen.insert(id).second)
+        {
+            const ULONGLONG now = GetTickCount64();
+            if (now - win >= 10000) { win = now; cnt = 0; }
+            if (cnt < 20)
+            {
+                ++cnt;
+                char b[400];
+                std::snprintf(b, sizeof b, " task=%.0f atk_mps=%.3f fat=%.0f/%.0f fly=%.0f avoid=%.0f tgt=%.0f tloc_rel=%.2f,%.2f,%.2f rot=%.4f atk_dist=%.2f avoid_dist=%.2f avoid_speed=%.3f",
+                              r[0], r[1], r[2], r[3], r[4], r[5], r[6], cmb_motion_noloc(r) ? -1.0 : r[7], cmb_motion_noloc(r) ? -1.0 : r[8], cmb_motion_noloc(r) ? -1.0 : r[9], r[10], r[11], r[12], r[13]);
+                msc_log(STR("PROBE enemy_motion id=") + widen(std::to_string(id)) + STR(" class=") + cls + widen(std::string(b)));
+            }
+        }
+        return true;
+    }
+
     // WHAT: read-only selftest, sends nothing: both classes resolve, factory presence (probe P-B), enemy count, weapon props of the first ship (probe P-D).
     bool combat_selftest(std::string& detail)
     {

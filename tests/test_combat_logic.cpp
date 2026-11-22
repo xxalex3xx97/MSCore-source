@@ -47,6 +47,18 @@ int main()
         CHECK(cmb_vel_mps(raw, kCmbRawPerM, 0, vf, vm) == -1);
         CHECK(cmb_vel_shape(true, true) == 1 && cmb_vel_shape(false, true) == 2 && cmb_vel_shape(true, false) == 1 && cmb_vel_shape(false, false) == 0);
     }
+    // enemy motion slots
+    {
+        double m[14];
+        cmb_motion_init(m);
+        CHECK(m[0] == -1 && m[6] == -1 && m[10] == -1 && m[11] == -1 && m[12] == -1 && m[13] == -1 && m[7] == kCmbNoLoc && m[9] == kCmbNoLoc && cmb_motion_noloc(m));
+        const double rel[3] = {1, -2, 3};
+        cmb_motion_set_target(m, true, rel);
+        CHECK(m[7] == 1 && m[8] == -2 && m[9] == 3 && !cmb_motion_noloc(m));
+        cmb_motion_set_target(m, false, rel);
+        CHECK(cmb_motion_noloc(m));
+        CHECK(std::fabs(cmb_rate_per_s(true, 2.982, kSimFps) - 178.92) < 1e-9 && cmb_rate_per_s(false, 2.982, kSimFps) == -1 && cmb_rate_per_s(true, 1, 0) == -1);
+    }
     // delta: ca/la = origin, cb/lb = target
     {
         const int64_t c0[3] = {0, 0, 0};
