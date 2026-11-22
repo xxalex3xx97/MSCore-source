@@ -35,7 +35,7 @@ namespace
     std::mutex g_fire_mx;
 
     struct EnemyRaw { int id; int sys; int hull; int flags; int64_t ch[3]; double loc[3]; };
-    struct EnemyPose { int64_t ch[3]; double loc[3]; };
+    struct EnemyPose { int64_t ch[3]; double loc[3]; bool big_known = false; bool big = false; };
     std::map<int, EnemyPose> g_enemy_pose;   // last scan pose per enemy id, pruned to ids seen
     std::mutex g_pose_mx;
     struct EnemySnap { ULONGLONG at = 0; bool valid = false; std::vector<EnemyRaw> rows; };
@@ -69,7 +69,18 @@ namespace
                 // UNVERIFIED: CurrentTask read as one raw byte at the property offset (enum/byte prop, +0x178)
                 int task = 0xFF;
                 if (FProperty* tp = o->GetPropertyByNameInChain(STR("CurrentTask"))) task = *(reinterpret_cast<const uint8_t*>(o) + tp->GetOffset_Internal());
-                bool moved = false;
+                bool moved = false, big = false, big_known = false;
+                {
+                    std::lock_guard<std::mutex> lk(g_pose_mx);
+                    auto it = g_enemy_pose.find(r.id);
+                    if (it != g_enemy_pose.end()) { big_known = it->second.big_known; big = it->second.big; }
+                }
+                if (!big_known)   // class + MaxHealth read once per enemy id, cached in the pose map
+                {
+                    big = cmb_class_big(o->GetClassPrivate()->GetName());
+                    int32_t mh = 0;   // UNVERIFIED: property name MaxHealth (EnemyBase +0x11c i32)
+                    if (!big && get_int_prop(o, STR("MaxHealth"), mh) && mh >= kCmbBigMaxHealth) big = true;
+                }
                 {
                     std::lock_guard<std::mutex> lk(g_pose_mx);
                     auto it = g_enemy_pose.find(r.id);
@@ -80,8 +91,9 @@ namespace
                     }
                     EnemyPose& ps = g_enemy_pose[r.id];
                     for (int i = 0; i < 3; ++i) { ps.ch[i] = r.ch[i]; ps.loc[i] = r.loc[i]; }
+                    ps.big_known = true; ps.big = big;
                 }
-                r.flags = cmb_enemy_flags(hp > 0, moved, task);
+                r.flags = cmb_enemy_flags(hp > 0, moved, task, big);
                 keep = true;
             });
             if (!ok) return false;

@@ -116,6 +116,11 @@ int main()
     CHECK(!cmb_flag_alive(cmb_enemy_flags(false, true, 3)) && cmb_flag_moved(cmb_enemy_flags(false, true, 3)));
     CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0xFF)) == 0xFF);
     CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0x1AB)) == 0xAB);
+    CHECK(cmb_class_big(L"BP_RelicDestroyerObject_C") && cmb_class_big(L"bpo_DESTROYER") && cmb_class_big(L"Destroyer"));
+    CHECK(!cmb_class_big(L"BP_RelicDirk_C") && !cmb_class_big(L"Crescent") && !cmb_class_big(L"") && !cmb_class_big(L"Destroye"));
+    CHECK(cmb_enemy_flags(false, false, 0, true) == 4 && cmb_flag_big(4) && !cmb_flag_big(1 | 2 | (0xFF << 8)));
+    CHECK(cmb_enemy_flags(true, true, 0xFF, true) == (1 | 2 | 4 | (0xFF << 8)));
+    CHECK(cmb_flag_alive(cmb_enemy_flags(true, false, 9, true)) && !cmb_flag_moved(cmb_enemy_flags(true, false, 9, true)) && cmb_flag_task(cmb_enemy_flags(true, false, 9, true)) == 9);
 
     std::printf("test_combat_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);
     return g_fail ? 1 : 0;

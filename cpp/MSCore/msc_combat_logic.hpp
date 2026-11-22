@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 namespace
 {
@@ -12,10 +13,26 @@ namespace
     constexpr double kCmbRawPerM = 65536.0;  // raw per metre (verified in Fleet g_raw_per_m)
     // C API row of MSCore_enemies_near, 48 bytes. rel_m = enemy minus reference ship, metres, world axes (chunk axes). Fleet mirrors this struct.
     // flags (was pad): bit0 = hull>0 (alive), bit1 = moved >= 1 m since previous scan of this enemy (0 until 2 samples),
+    //                  bit2 = BIG (class name contains "Destroyer", or MaxHealth >= 1500; e.g. RelicDestroyer: 3000 hp, attack 840 m, detect 1260 m),
     //                  bits 8-15 = CurrentTask enum byte (0xFF unreadable). Helpers cmb_enemy_flags / cmb_flag_*.
     struct MsEnemy { int32_t id; int32_t sys; int32_t hull; int32_t pad; double d_m; double rel_m[3]; };
     static_assert(sizeof(MsEnemy) == 48, "MsEnemy layout is part of the C API");
-    inline int32_t cmb_enemy_flags(bool alive, bool moved, int task) { return (alive ? 1 : 0) | (moved ? 2 : 0) | ((task & 0xFF) << 8); }
+    inline int32_t cmb_enemy_flags(bool alive, bool moved, int task, bool big = false) { return (alive ? 1 : 0) | (moved ? 2 : 0) | (big ? 4 : 0) | ((task & 0xFF) << 8); }
+    inline bool cmb_flag_big(int32_t f) { return (f & 4) != 0; }
+    // WHAT: true when class name contains "destroyer" (case-insensitive).
+    inline bool cmb_class_big(const std::wstring& n)
+    {
+        static const wchar_t k[] = L"destroyer";
+        const size_t kl = sizeof(k) / sizeof(k[0]) - 1;
+        for (size_t i = 0; i + kl <= n.size(); ++i)
+        {
+            size_t j = 0;
+            while (j < kl && (n[i + j] | 0x20) == k[j]) ++j;
+            if (j == kl) return true;
+        }
+        return false;
+    }
+    constexpr int32_t kCmbBigMaxHealth = 1500;
     inline bool cmb_flag_alive(int32_t f) { return (f & 1) != 0; }
     inline bool cmb_flag_moved(int32_t f) { return (f & 2) != 0; }
     inline int cmb_flag_task(int32_t f) { return (f >> 8) & 0xFF; }
