@@ -38,6 +38,8 @@ namespace
     struct EnemyPose { int64_t ch[3]; double loc[3]; bool big_known = false; bool big = false; };
     std::map<int, EnemyPose> g_enemy_pose;   // last scan pose per enemy id, pruned to ids seen
     std::mutex g_pose_mx;
+    CmbLogRate g_probe_rate;                 // global cap on PROBE enemy_class lines (20 per 10 s)
+    std::mutex g_probe_mx;
     struct EnemySnap { ULONGLONG at = 0; bool valid = false; std::vector<EnemyRaw> rows; };
     EnemySnap g_enemy_snap;
     std::mutex g_enemy_mx;
@@ -77,9 +79,16 @@ namespace
                 }
                 if (!big_known)   // class + MaxHealth read once per enemy id, cached in the pose map
                 {
-                    big = cmb_class_big(o->GetClassPrivate()->GetName());
+                    const std::wstring cn = o->GetClassPrivate()->GetName();
+                    big = cmb_class_big(cn);
                     int32_t mh = 0;   // UNVERIFIED: property name MaxHealth (EnemyBase +0x11c i32)
                     if (!big && get_int_prop(o, STR("MaxHealth"), mh) && mh >= kCmbBigMaxHealth) big = true;
+                    bool log_it = false;
+                    {
+                        std::lock_guard<std::mutex> lk(g_probe_mx);
+                        log_it = cmb_log_allow(g_probe_rate, GetTickCount64());
+                    }
+                    if (log_it) msc_log(cmb_probe_class_line(r.id, cn, big, hp));
                 }
                 {
                     std::lock_guard<std::mutex> lk(g_pose_mx);

@@ -33,6 +33,20 @@ namespace
         return false;
     }
     constexpr int32_t kCmbBigMaxHealth = 1500;
+    // WHAT: PROBE line for the first class read of an enemy id: `PROBE enemy_class id=<id> class=<name> big=<0/1> hull=<h>`.
+    inline std::wstring cmb_probe_class_line(int id, const std::wstring& cls, bool big, int hull)
+    {
+        return L"PROBE enemy_class id=" + std::to_wstring(id) + L" class=" + cls + L" big=" + (big ? L"1" : L"0") + L" hull=" + std::to_wstring(hull);
+    }
+    // WHAT: global limiter for PROBE lines: at most max lines per window ms (fixed window). Caller locks.
+    struct CmbLogRate { uint64_t start = 0; int n = 0; };
+    inline bool cmb_log_allow(CmbLogRate& r, uint64_t now, int max = 20, uint64_t window = 10000)
+    {
+        if (r.start == 0 || now - r.start >= window) { r.start = now ? now : 1; r.n = 0; }
+        if (r.n >= max) return false;
+        ++r.n;
+        return true;
+    }
     inline bool cmb_flag_alive(int32_t f) { return (f & 1) != 0; }
     inline bool cmb_flag_moved(int32_t f) { return (f & 2) != 0; }
     inline int cmb_flag_task(int32_t f) { return (f >> 8) & 0xFF; }

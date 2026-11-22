@@ -134,6 +134,17 @@ int main()
     CHECK(cmb_enemy_flags(true, true, 0xFF, true) == (1 | 2 | 4 | (0xFF << 8)));
     CHECK(cmb_flag_alive(cmb_enemy_flags(true, false, 9, true)) && !cmb_flag_moved(cmb_enemy_flags(true, false, 9, true)) && cmb_flag_task(cmb_enemy_flags(true, false, 9, true)) == 9);
 
+    CHECK(cmb_probe_class_line(7, L"BP_RelicDestroyerObject_C", true, 3000) == L"PROBE enemy_class id=7 class=BP_RelicDestroyerObject_C big=1 hull=3000");
+    CHECK(cmb_probe_class_line(-1, L"", false, 0) == L"PROBE enemy_class id=-1 class= big=0 hull=0");
+    {
+        CmbLogRate lr;
+        int ok = 0;
+        for (int i = 0; i < 25; ++i) ok += cmb_log_allow(lr, 1000) ? 1 : 0;
+        CHECK(ok == 20);                                   // burst capped at 20
+        CHECK(!cmb_log_allow(lr, 10999));                  // still inside the 10 s window
+        CHECK(cmb_log_allow(lr, 11000));                   // new window opens
+    }
+
     std::printf("test_combat_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);
     return g_fail ? 1 : 0;
 }
