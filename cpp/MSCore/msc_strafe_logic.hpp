@@ -2,6 +2,8 @@
 // WHAT: pure helpers of the strafe module: value -> sign, per-ship held state, watchdog expiry. No game headers.
 // USED BY: msc_cmd.hpp, msc_strafe.hpp, tests/test_strafe_logic.cpp.
 #pragma once
+#include <cstdio>
+#include <string>
 
 inline constexpr double kStrafeThreshold = 0.3;                  // |value| above this counts as a push (the game ignores magnitude)
 inline constexpr unsigned long long kStrafeHoldMs = 10000;       // held longer than this without a refresh -> auto zero
@@ -14,6 +16,7 @@ struct StrafeSt
     int s[2] = {0, 0};                 // [0] right(+)/left(-) = game Y slot, [1] up(+)/down(-) = game X slot
     unsigned long long at = 0;         // ms of the last refresh while non-zero (watchdog)
     unsigned long long sent = 0;       // ms of the last command sent for this state (keep-alive)
+    unsigned long long rb = 0;         // ms of the last readback probe line
     bool nz() const { return s[0] != 0 || s[1] != 0; }
 };
 
@@ -45,7 +48,8 @@ inline bool str_expired(const StrafeSt& st, unsigned long long now, unsigned lon
 inline constexpr int kStrafeSlotRight = 1;
 inline constexpr int kStrafeSlotUp = 0;
 inline constexpr long long kStrafeRaw = 65536;                   // fixed-point 1.0
-inline constexpr unsigned long long kStrafeKeepMs = 500;         // resend a held strafe at least this often (MSCore_strafe_tick)
+inline constexpr unsigned long long kStrafeKeepMs = 100;         // resend a held strafe at least this often (MSCore_strafe_tick; the game re-sends every tick)
+inline constexpr unsigned long long kStrafeReadbackMs = 1000;    // readback probe line per ship at most this often
 
 inline int str_slot(int axis) { return axis == 0 ? kStrafeSlotRight : kStrafeSlotUp; }
 
@@ -64,4 +68,22 @@ inline void str_slots(int sright, int sup, long long out[3])
 inline bool str_needs_resend(const StrafeSt& st, unsigned long long now, unsigned long long keep_ms = kStrafeKeepMs)
 {
     return st.nz() && now - st.sent >= keep_ms;
+}
+
+// fixed-point 16.16 raw -> float
+inline double str_fixed(long long raw) { return static_cast<double>(raw) / 65536.0; }
+
+// "x,y,z" of three raw fixed-point values as floats (3 decimals); "?" when not readable
+inline std::string str_fmt3(bool ok, const long long r[3])
+{
+    if (!ok) return "?";
+    char b[96];
+    std::snprintf(b, sizeof b, "%.3f,%.3f,%.3f", str_fixed(r[0]), str_fixed(r[1]), str_fixed(r[2]));
+    return b;
+}
+
+// "x,y,z" of three raw values as written (no scaling)
+inline std::string str_fmt_slots(const long long r[3])
+{
+    return std::to_string(r[0]) + "," + std::to_string(r[1]) + "," + std::to_string(r[2]);
 }

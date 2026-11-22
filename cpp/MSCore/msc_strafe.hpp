@@ -10,6 +10,7 @@
 // LIVE-VERIFIED (user test): StrafeImpulse Y (+0x54) = right(+)/left(-), X (+0x50) = up(+)/down(-). Logical axis 0 = right, 1 = up (str_slot maps them). Observed: speed after 1 s only ~1.1-2.6 m/s, so the impulse acts like an acceleration with sign-only input.
 // UNVERIFIED: magnitude ignored (only sign used).
 #pragma once
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,6 +56,51 @@ namespace
         return ok;
     }
 
+    unsigned long g_strafe_resends = 0;   // keep-alive resends (counter only, not logged per resend)
+
+    // 3 fixed-point axes of vec property `name` of struct st inside base, raw (int32 or int64); false when not found or a read faults
+    bool strafe_vec_raw(uint8_t* base, UStruct* st, const TCHAR* name, long long out[3])
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            bool is64 = false;
+            uint8_t* p = raw_vec_axis_ptr(base, st, name, a, is64);
+            if (!p) return false;
+            if (is64) { int64_t v = 0; if (!ms_rd_seh(p, &v)) return false; out[a] = v; }
+            else { int32_t v = 0; if (!ms_rd_seh(p, &v)) return false; out[a] = v; }
+        }
+        return true;
+    }
+
+    // reads vec prop `name` (3 axes) of obj, searching the class chain; false when not found or a read faults
+    bool strafe_read_vec(UObject* o, const TCHAR* name, long long out[3])
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(o);
+        for (UStruct* s = o->GetClassPrivate(); s; s = s->GetSuperStruct())
+        {
+            if (!s->FindProperty(FName(name, FNAME_Add))) continue;
+            return strafe_vec_raw(base, s, name, out);
+        }
+        return false;
+    }
+
+    // WHAT: PROBE line with the ship's ImpulseInput / ImpulseMomentum / WorldImpulse (PNum raw / 65536, "?" when absent). Read-only, SEH.
+    void strafe_readback(int sid, const char* ev)
+    {
+        UObject* ship = flight_ship(sid);
+        if (!ship) return;
+        std::string a = "?", b = "?", w = "?";
+        seh_run([&] {
+            long long r[3];
+            a = str_fmt3(strafe_read_vec(ship, STR("ImpulseInput"), r), r);
+            b = str_fmt3(strafe_read_vec(ship, STR("ImpulseMomentum"), r), r);
+            w = str_fmt3(strafe_read_vec(ship, STR("WorldImpulse"), r), r);
+        });
+        msc_log(STR("PROBE strafe_readback ship=") + std::to_wstring(sid) + STR(" ImpulseInput=") + std::wstring(a.begin(), a.end()) +
+                STR(" ImpulseMomentum=") + std::wstring(b.begin(), b.end()) + STR(" WorldImpulse=") + std::wstring(w.begin(), w.end()) +
+                STR(" ev=") + std::wstring(ev, ev + std::strlen(ev)) + STR(" resends=") + std::to_wstring(g_strafe_resends));
+    }
+
     // WHAT: zeroes (and sends zero for) every ship whose strafe is older than kStrafeHoldMs; drops entries of ships that no longer exist.
     // RETURNS: how many ships were zeroed.
     int strafe_watchdog()
@@ -72,17 +118,23 @@ namespace
                 ++it;
             }
         }
-        for (int sid : ids) { std::wstring e; strafe_send(sid, 0, 0, e); }
-        // keep-alive: the game re-sends its input every tick, so resend a held strafe every kStrafeKeepMs (watchdog above still zeroes after 10 s)
+        for (int sid : ids) { std::wstring e; strafe_send(sid, 0, 0, e); strafe_readback(sid, "stop"); }
+        // keep-alive: the game re-sends its input every tick, so resend a held strafe every kStrafeKeepMs (watchdog above still zeroes after 10 s;
+        // a resend does not refresh it). Readback probe once per second per held ship.
         std::vector<std::pair<int, StrafeSt>> keep;
+        std::vector<int> rb;
         {
             std::lock_guard<std::mutex> lk(g_strafe_mx);
             for (auto& kv : g_strafe)
+            {
                 if (str_needs_resend(kv.second, now)) { kv.second.sent = now; keep.push_back(kv); }
+                if (now - kv.second.rb >= kStrafeReadbackMs) { kv.second.rb = now; rb.push_back(kv.first); }
+            }
         }
         static bool kept_logged = false;
-        if (!keep.empty() && !kept_logged) { kept_logged = true; msc_log(STR("strafe keep-alive active (resend every 500 ms while held)")); }
-        for (auto& kv : keep) { std::wstring e; strafe_send(kv.first, kv.second.s[0], kv.second.s[1], e, false); }
+        if (!keep.empty() && !kept_logged) { kept_logged = true; msc_log(STR("strafe keep-alive active (resend every ") + std::to_wstring(kStrafeKeepMs) + STR(" ms while held)")); }
+        for (auto& kv : keep) { std::wstring e; strafe_send(kv.first, kv.second.s[0], kv.second.s[1], e, false); ++g_strafe_resends; }
+        for (int sid : rb) strafe_readback(sid, "tick");
         return static_cast<int>(ids.size());
     }
 
@@ -110,8 +162,17 @@ namespace
             if (!cur.nz()) g_strafe.erase(sid);
         }
         if (!send) return true;
-        { std::lock_guard<std::mutex> lk(g_strafe_mx); auto it = g_strafe.find(sid); if (it != g_strafe.end()) it->second.sent = GetTickCount64(); }
-        return strafe_send(sid, cur.s[0], cur.s[1], err, cur.s[0] != prev.s[0] || cur.s[1] != prev.s[1]);   // log on change only
+        { std::lock_guard<std::mutex> lk(g_strafe_mx); auto it = g_strafe.find(sid); if (it != g_strafe.end()) { it->second.sent = GetTickCount64(); if (!prev.nz()) it->second.rb = it->second.sent; } }
+        const bool ok = strafe_send(sid, cur.s[0], cur.s[1], err, cur.s[0] != prev.s[0] || cur.s[1] != prev.s[1]);   // log on change only
+        if (!prev.nz() && cur.nz())   // start: show the raw slots of the command and the ship's readback
+        {
+            long long raw[3];
+            str_slots(cur.s[0], cur.s[1], raw);
+            msc_log(STR("PROBE strafe_cmd ship=") + std::to_wstring(sid) + STR(" slots=") + [&] { const std::string t = str_fmt_slots(raw); return std::wstring(t.begin(), t.end()); }());
+            strafe_readback(sid, "start");
+        }
+        else if (prev.nz() && !cur.nz()) strafe_readback(sid, "stop");
+        return ok;
     }
 
     // WHAT: both axes 0 for ship sid; one zero command only if either was non-zero.
@@ -126,6 +187,6 @@ namespace
             if (it != g_strafe.end()) g_strafe.erase(it);
         }
         std::wstring e;
-        if (send) strafe_send(sid, 0, 0, e);
+        if (send) { strafe_send(sid, 0, 0, e); strafe_readback(sid, "stop"); }
     }
 }

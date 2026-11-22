@@ -59,7 +59,14 @@ int main()
     StrafeSt k;
     CHECK(!str_needs_resend(k, 9999));                       // zero: never
     str_update(k, 0, 1, 1000); k.sent = 1000;
-    CHECK(!str_needs_resend(k, 1499) && str_needs_resend(k, 1500));
+    CHECK(!str_needs_resend(k, 1000 + kStrafeKeepMs - 1) && str_needs_resend(k, 1000 + kStrafeKeepMs));
+
+    CHECK(kStrafeKeepMs == 100);
+    long long q[3] = {65536, -65536, 32768};
+    CHECK(str_fmt3(true, q) == "1.000,-1.000,0.500");
+    CHECK(str_fmt3(false, q) == "?");
+    CHECK(str_fmt_slots(q) == "65536,-65536,32768");
+    CHECK(str_fixed(0) == 0.0 && str_fixed(-65536) == -1.0);
 
     std::printf("test_strafe_logic: %d checks, %d failed\n", g_run, g_fail);
     return g_fail ? 1 : 0;
