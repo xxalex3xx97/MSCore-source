@@ -162,6 +162,16 @@ namespace
         return "n/a";
     }
 
+    // WHAT: object name of an object property, "n/a" when missing/null.
+    std::string cmb_obj_name(UObject* w, const TCHAR* name)
+    {
+        FProperty* p = w->GetPropertyByNameInChain(name);
+        auto* op = p ? CastField<FObjectProperty>(p) : nullptr;
+        if (!op) return "n/a";
+        UObject* o = op->GetPropertyValue(reinterpret_cast<uint8_t*>(w) + p->GetOffset_Internal());
+        return alive(o) ? cmb_ascii(o->GetName()) : "null";
+    }
+
     // WHAT: read-only selftest, sends nothing: both classes resolve, factory presence (probe P-B), enemy count, weapon props of the first ship (probe P-D).
     bool combat_selftest(std::string& detail)
     {
@@ -182,19 +192,36 @@ namespace
         std::vector<EnemyRaw> rows;
         const bool scan = enemies_scan(rows);
         detail = fac + " enemies=" + (scan ? std::to_string(rows.size()) : std::string("scan failed"));
-        UObject* ship = first_of(STR("DMSPlayerShipObject"));
-        TArray<UObject*>* a = alive(ship) ? weapon_array(ship) : nullptr;
-        if (a && a->Num() > 0 && a->Num() <= kWeaponsMaxCount)
+        static const TCHAR* props[6] = { STR("BulletSpeed"), STR("BulletLifetime"), STR("TimeBetweenShots"), STR("MissileRange"), STR("Range"), STR("LaserReachMeters") };
+        std::vector<UObject*> ships;
+        UObjectGlobals::FindAllOf(STR("DMSPlayerShipObject"), ships);
+        for (UObject* ship : ships)
         {
-            static const TCHAR* props[6] = { STR("BulletSpeed"), STR("BulletLifetime"), STR("TimeBetweenShots"), STR("MissileRange"), STR("Range"), STR("LaserReachMeters") };
+            if (!alive(ship) || ship->GetName().rfind(STR("Default__"), 0) == 0) continue;
+            if (!(ship_caps_read(ship) & kCapAttack)) continue;
+            TArray<UObject*>* a = weapon_array(ship);
+            if (!a || a->Num() <= 0 || a->Num() > kWeaponsMaxCount) continue;
             for (int32_t i = 0; i < a->Num(); ++i)
             {
                 UObject* w = (*a)[i];
                 if (!alive(w)) continue;
-                std::wstring line = STR("combat probe weapon ") + w->GetClassPrivate()->GetName();
+                const std::wstring cn = w->GetClassPrivate()->GetName();
+                std::wstring line = STR("combat probe weapon ship=") + widen(std::to_string(obj_id(ship))) + STR(" ") + cn;
                 for (const TCHAR* pn : props) line += std::wstring(STR(" ")) + pn + STR("=") + widen(cmb_prop_text(w, pn));
+                if (cn.find(STR("Cannon")) != std::wstring::npos) line += STR(" BulletData=") + widen(cmb_obj_name(w, STR("BulletData")));
                 msc_log(line);
             }
+        }
+        std::vector<UObject*> es;
+        UObjectGlobals::FindAllOf(STR("EnemyShipObject"), es);
+        for (UObject* e : es)
+        {
+            if (!alive(e) || e->GetName().rfind(STR("Default__"), 0) == 0) continue;
+            static const TCHAR* eprops[6] = { STR("BulletSpeed"), STR("BulletLifetime"), STR("AttackDistance"), STR("DetectionDistance"), STR("MaxHealth"), STR("TimeBetweenShots") };
+            std::wstring line = STR("combat probe enemy id=") + widen(std::to_string(obj_id(e)));
+            for (const TCHAR* pn : eprops) { std::string t = cmb_prop_text(e, pn); line += std::wstring(STR(" ")) + pn + STR("=") + widen(t == "n/a" ? std::string("?") : t); }
+            msc_log(line);
+            break;
         }
         return true;
     }
