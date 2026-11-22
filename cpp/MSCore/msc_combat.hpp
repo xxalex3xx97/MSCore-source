@@ -146,6 +146,54 @@ namespace
         return ok;
     }
 
+    // WHAT: practice enemy near ship sid: EnemyStationObject::GetClosestEnemyBase(ship) -> CreativeEnemyInput(ship id) -> AddInputCommand(baseId).
+    // WHY: same chain as the game's own WBP_StationInventory. Guesses: static call on the class default object; first int param named *ID*/*Target* = ship id.
+    bool combat_spawn_enemy(int sid, std::wstring& err)
+    {
+        if (!combat_enabled()) { err = STR("combat off"); return false; }
+        UObject* ship = flight_ship(sid);
+        if (!ship) { err = STR("ship not found"); return false; }
+        bool ok = false;
+        if (!seh_run([&] {
+                UClass* ecls = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.EnemyStationObject"));
+                UObject* cdo = ecls ? ecls->GetClassDefaultObject() : nullptr;
+                UFunction* fn = alive(cdo) ? cdo->GetFunctionByNameInChain(STR("GetClosestEnemyBase")) : nullptr;
+                if (!fn) { err = STR("GetClosestEnemyBase not found"); return; }
+                std::vector<uint8_t> buf(fn->GetParmsSize() + 16, 0);
+                FProperty* rp = fn->GetReturnProperty();
+                FProperty* ap = nullptr;
+                for (FProperty* q : fn->ForEachProperty()) if (CastField<FObjectProperty>(q) && q != rp) { ap = q; break; }
+                if (!rp || !ap) { err = STR("GetClosestEnemyBase params unexpected"); return; }
+                *reinterpret_cast<UObject**>(buf.data() + ap->GetOffset_Internal()) = ship;
+                cdo->ProcessEvent(fn, buf.data());
+                UObject* base = *reinterpret_cast<UObject**>(buf.data() + rp->GetOffset_Internal());
+                if (!alive(base)) { err = STR("no enemy base"); return; }
+                const int bid = obj_id(base);
+                if (bid <= 0) { err = STR("enemy base id unreadable"); return; }
+                static bool logged = false;
+                UObject* cmd = make_cmd(STR("CreativeEnemyInput"), [sid](UFunction* f, std::vector<uint8_t>& b) {
+                    bool set = false;
+                    std::wstring pl = STR("combat spawn factory:");
+                    for (FProperty* q : f->ForEachProperty())
+                    {
+                        const std::wstring n = q->GetName();
+                        pl += STR(" ") + n + (CastField<FIntProperty>(q) ? STR(":int") : STR(":other"));
+                        if (!set && CastField<FIntProperty>(q) && (n.find(STR("ID")) != std::wstring::npos || n.find(STR("Target")) != std::wstring::npos))
+                        { *reinterpret_cast<int32_t*>(b.data() + q->GetOffset_Internal()) = sid; set = true; }
+                    }
+                    if (!logged) { logged = true; msc_log(pl); }
+                    return set;
+                }, err);
+                ok = cmd && add_input(bid, cmd, err);
+            }))
+        {
+            err = STR("spawn faulted");
+            module_disable(STR("combat"), STR("spawn_enemy fault"));
+            return false;
+        }
+        return ok;
+    }
+
     // STUB: range formula needs probe P-D (BulletSpeed * BulletLifetime units unknown)
     int ship_weapon_range(int sid) { (void)sid; return combat_enabled() ? -1 : -2; }
 
