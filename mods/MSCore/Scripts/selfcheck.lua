@@ -247,6 +247,12 @@ function M.run(MSCore)
     check("stations.dock_kind", nativeCheck("dock_kind"))   -- API 19
     check("ships.threat", nativeCheck("threat"))   -- API 21
     check("ships.strafe", nativeCheck("strafe"))   -- API 22
+    check("deveval", function()
+        local D = MSCore.deveval
+        if not D then return "SKIP", "module not loaded" end
+        if not D.enabled then return "SKIP", "disabled (no Mods/MSCore/deveval_on.txt or deveval_off.txt present)" end
+        return "OK", "loaded, enabled, polls=" .. D.polls .. " runs=" .. D.runs
+    end)
     check("ships.capture", nativeCheck("capture"))   -- probe, SKIP unless strafe_probe_on.txt
     check("fleets.list", function()
         if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end

@@ -2,6 +2,16 @@
 local MSCore = require("mscore")
 local selfcheck = require("selfcheck")
 local ticks, id = 0, nil
+-- DevEval (dev only, gated by Mods/MSCore/deveval_on.txt): a failure here never breaks MSCore
+local okDE, DevEval = pcall(require, "deveval")
+if okDE and type(DevEval) == "table" then
+    local okI, eI = pcall(DevEval.init, MSCore)
+    if not okI then print("[MSCore] DevEval init failed: " .. tostring(eI)) DevEval = nil end
+else
+    print("[MSCore] DevEval not loaded: " .. tostring(DevEval)) DevEval = nil
+end
+MSCore.deveval = DevEval
+if DevEval then MSCore.events.on("tick", DevEval.tick) end   -- own tick subscription: the main one is removed after the selfcheck
 local pinHooked = false
 id = MSCore.events.on("tick", function()
     local R, S = MSCore.resolve, MSCore.safe
