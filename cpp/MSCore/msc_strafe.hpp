@@ -7,7 +7,8 @@
 //       + lazily on each ship_strafe call): there is no DLL tick, so the caller must call MSCore_strafe_tick about once a second while strafing.
 // SAFETY: off when Mods\MSCore\strafe_off.txt exists (g_strafe_off); module 'strafe' (kill switch module_disable("strafe")). Fail closed.
 // USED BY: dllmain.cpp (strafe_resolve, check_one "strafe", MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick). Test: tests/test_strafe_logic.cpp.
-// UNVERIFIED: axis order (0 = X = right/left, 1 = Y = up/down), sign = direction, magnitude ignored, StrafeImpulse X/Y at +0x50/+0x54.
+// LIVE-VERIFIED (user test): StrafeImpulse Y (+0x54) = right(+)/left(-), X (+0x50) = up(+)/down(-). Logical axis 0 = right, 1 = up (str_slot maps them). Observed: speed after 1 s only ~1.1-2.6 m/s, so the impulse acts like an acceleration with sign-only input.
+// UNVERIFIED: magnitude ignored (only sign used).
 #pragma once
 #include <string>
 #include <vector>
@@ -31,18 +32,18 @@ namespace
         uint8_t* py = raw_vec_axis_ptr(dummy, c, STR("StrafeImpulse"), 1, y64);
         const int xo = px ? static_cast<int>(px - dummy) : -1, yo = py ? static_cast<int>(py - dummy) : -1;
         detail = "DeltaThrottle=" + std::to_string(d) + " RotationImpulse=" + std::to_string(r) + " StrafeImpulse=" + std::to_string(s) +
-                 " X@" + std::to_string(xo) + (x64 ? "(i64)" : "(i32)") + " Y@" + std::to_string(yo) + (y64 ? "(i64)" : "(i32)");
+                 " X(up)@" + std::to_string(xo) + (x64 ? "(i64)" : "(i32)") + " Y(right)@" + std::to_string(yo) + (y64 ? "(i64)" : "(i32)");
         static bool logged = false;
         if (!logged) { logged = true; msc_log(STR("strafe layout ") + std::wstring(detail.begin(), detail.end())); }
         return d >= 0 && s >= 0 && xo >= 0 && yo >= 0;
     }
 
     // sends the state to the game; a fault in the send turns the module off
-    bool strafe_send(int sid, int sx, int sy, std::wstring& err, bool log = true)
+    bool strafe_send(int sid, int sright, int sup, std::wstring& err, bool log = true)
     {
-        if (log) msc_log(STR("strafe ship=") + std::to_wstring(sid) + STR(" sx=") + std::to_wstring(sx) + STR(" sy=") + std::to_wstring(sy));
+        if (log) msc_log(STR("strafe ship=") + std::to_wstring(sid) + STR(" right=") + std::to_wstring(sright) + STR(" up=") + std::to_wstring(sup));
         bool ok = false;
-        if (!seh_run([&] { ok = send_ship_move(sid, 0, sx, sy, err); }))
+        if (!seh_run([&] { ok = send_ship_move(sid, 0, sright, sup, err); }))
         {
             module_disable(STR("strafe"), STR("send fault"));
             err = STR("strafe send fault");

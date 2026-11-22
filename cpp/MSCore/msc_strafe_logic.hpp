@@ -11,7 +11,7 @@ inline int str_sign(double v) { return v > kStrafeThreshold ? 1 : (v < -kStrafeT
 
 struct StrafeSt
 {
-    int s[2] = {0, 0};                 // [0] right(+)/left(-), [1] up(+)/down(-)
+    int s[2] = {0, 0};                 // [0] right(+)/left(-) = game Y slot, [1] up(+)/down(-) = game X slot
     unsigned long long at = 0;         // ms of the last refresh while non-zero
     bool nz() const { return s[0] != 0 || s[1] != 0; }
 };
@@ -38,3 +38,9 @@ inline bool str_expired(const StrafeSt& st, unsigned long long now, unsigned lon
 {
     return st.nz() && now - st.at > hold_ms;
 }
+
+// logical axis (0 right, 1 up) -> StrafeImpulse component (0 = X, 1 = Y). Live-verified: right is Y, up is X.
+inline int str_slot(int axis) { return axis == 0 ? 1 : 0; }
+
+// fills the game components {X, Y} from the held state: X = up, Y = right
+inline void str_components(const StrafeSt& st, int out[2]) { out[str_slot(0)] = st.s[0]; out[str_slot(1)] = st.s[1]; }

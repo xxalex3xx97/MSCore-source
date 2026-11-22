@@ -36,6 +36,16 @@ int main()
     CHECK(str_zero(st) && !st.nz() && !str_zero(st));
     CHECK(!str_expired(st, 999999));                        // zero never expires
 
+    // logical right -> game Y slot, logical up -> game X slot; a throttle send carries both (same state, both components)
+    StrafeSt m; int comp[2];
+    str_update(m, 0, 1, 1);
+    str_components(m, comp);
+    CHECK(comp[1] == 1 && comp[0] == 0);
+    str_update(m, 1, -1, 2);
+    str_components(m, comp);
+    CHECK(comp[1] == 1 && comp[0] == -1);
+    CHECK(str_slot(0) == 1 && str_slot(1) == 0);
+
     std::printf("test_strafe_logic: %d checks, %d failed\n", g_run, g_fail);
     return g_fail ? 1 : 0;
 }

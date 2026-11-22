@@ -208,11 +208,11 @@ namespace
     std::map<int, StrafeSt> g_strafe;
     std::mutex g_strafe_mx;
 
-    // WHAT: sends a ShipMovementInputCommand{DeltaThrottle = dthr, StrafeImpulse = (sx, sy, 0) * 65536} to ship sid with AddInputCommand (no pilot, no seat).
+    // WHAT: sends a ShipMovementInputCommand{DeltaThrottle = dthr, StrafeImpulse} to ship sid with AddInputCommand (no pilot, no seat). sright (+right/-left) goes into StrafeImpulse Y (+0x54), sup (+up/-down) into X (+0x50): live-verified swapped vs the first guess. sign * 65536.
     // WHY: the jump charge starts when the ship handles DeltaThrottle=+1 while bJumpTargetSet and bAlignedWithJumpTarget hold.
     //      The class has no CreateInput factory, so it is built with NewObject. Strafe is written (and its layout looked up by name) only when non-zero,
     //      so a throttle send never fails because of strafe. Fail closed: strafe property not found / fault -> false, nothing sent.
-    bool send_ship_move(int sid, int dthr, int sx, int sy, std::wstring& err)
+    bool send_ship_move(int sid, int dthr, int sright, int sup, std::wstring& err)
     {
         UClass* c = UObjectGlobals::StaticFindObject<UClass*>(nullptr, nullptr, STR("/Script/MainSequence.ShipMovementInputCommand"));
         UObject* ctrl = first_of(STR("DMSPlayerController"));
@@ -220,14 +220,14 @@ namespace
         UObject* cmd = UObjectGlobals::NewObject<UObject>(ctrl, c);
         if (!alive(cmd)) { err = STR("NewObject ShipMovementInputCommand failed"); return false; }
         if (!set_int_prop(cmd, STR("DeltaThrottle"), dthr)) { err = STR("DeltaThrottle property missing"); return false; }
-        if (sx != 0 || sy != 0)
+        if (sright != 0 || sup != 0)
         {
             bool x64 = false, y64 = false;
             uint8_t* base = reinterpret_cast<uint8_t*>(cmd);
             uint8_t* px = raw_vec_axis_ptr(base, c, STR("StrafeImpulse"), 0, x64);
             uint8_t* py = raw_vec_axis_ptr(base, c, STR("StrafeImpulse"), 1, y64);
             if (!px || !py) { err = STR("StrafeImpulse X/Y not found"); return false; }
-            if (!seh_run([&] { raw_put(px, x64, static_cast<int64_t>(sx) * 65536); raw_put(py, y64, static_cast<int64_t>(sy) * 65536); }))
+            if (!seh_run([&] { raw_put(px, x64, static_cast<int64_t>(sup) * 65536); raw_put(py, y64, static_cast<int64_t>(sright) * 65536); }))   // X = up, Y = right
             { err = STR("StrafeImpulse write fault"); return false; }
         }
         if (!fix_type_id(cmd, err)) return false;
@@ -237,14 +237,14 @@ namespace
     // WHAT: throttle step to ship sid, carrying that ship's held strafe (0,0 when none or the strafe module is off).
     bool send_ship_throttle(int sid, int delta, std::wstring& err)
     {
-        int sx = 0, sy = 0;
+        int sr = 0, su = 0;
         if (!g_strafe_off.load() && module_ok(STR("strafe")))
         {
             std::lock_guard<std::mutex> lk(g_strafe_mx);
             auto it = g_strafe.find(sid);
-            if (it != g_strafe.end()) { sx = it->second.s[0]; sy = it->second.s[1]; }
+            if (it != g_strafe.end()) { sr = it->second.s[0]; su = it->second.s[1]; }
         }
-        return send_ship_move(sid, delta, sx, sy, err);
+        return send_ship_move(sid, delta, sr, su, err);
     }
 
     // WHAT: send one InputView command to console cid, carrying the aim offset (yaw_raw, pitch_raw in raw units).

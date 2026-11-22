@@ -1731,7 +1731,7 @@ extern "C"
         catch (...) { module_disable(STR("threat"), STR("ship_threat exception")); return 0; }
     }
 
-    // strafe (API 22, on unless Mods\MSCore\strafe_off.txt exists): axis 0 = right(+)/left(-), 1 = up(+)/down(-); value -1..1 (|v| > 0.3 = push, magnitude ignored).
+    // strafe (API 22, on unless Mods\MSCore\strafe_off.txt exists): axis 0 = right(+)/left(-), 1 = up(+)/down(-); value -1..1 (|v| > 0.3 = push, magnitude ignored, unverified). Game slots: right = StrafeImpulse Y, up = X (live-verified). Fleet must call MSCore_strafe_tick about once a second while strafing.
     // Held by the game until changed: call MSCore_strafe_tick about once a second while strafing (a strafe not refreshed for 10 s is auto-zeroed). 1 ok, 0 fail (err says why).
     MSCORE_API int MSCore_ship_strafe(int sid, int axis, double value, wchar_t* err, int errlen)
     {
