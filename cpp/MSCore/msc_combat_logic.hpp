@@ -37,6 +37,8 @@ namespace
         if (bullet_speed_raw <= 0 || lifetime_ticks <= 0 || ticks_per_s <= 0 || raw_per_m <= 0) return -1;
         return bullet_speed_raw * lifetime_ticks / raw_per_m;
     }
+    // WHAT: raw range * safety factor; -1 if either <= 0.
+    inline double cmb_engage_range(double raw_m, double safety) { return (raw_m <= 0 || safety <= 0) ? -1 : raw_m * safety; }
     // WHAT: smallest value > 0, else -1.
     inline double cmb_min_range(const std::vector<double>& v)
     {

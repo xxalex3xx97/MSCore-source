@@ -194,8 +194,49 @@ namespace
         return ok;
     }
 
-    // STUB: range formula needs probe P-D (BulletSpeed * BulletLifetime units unknown)
-    int ship_weapon_range(int sid) { (void)sid; return combat_enabled() ? -1 : -2; }
+    // WHAT: engage range (whole metres) of ship sid = shortest cannon range * kRangeSafety. -2 combat off, -1 none/unreadable/fault.
+    // ponytail: BulletLifetime assumed ticks (UNCONFIRMED), kRangeSafety tune after in-game pass 2.
+    int ship_weapon_range(int sid)
+    {
+        if (!combat_enabled()) return -2;
+        constexpr double kRangeSafety = 0.7;   // ponytail: tune after in-game pass 2
+        UObject* ship = flight_ship(sid);
+        if (!ship) return -1;
+        std::vector<double> rs;
+        if (!seh_run([&] {
+                TArray<UObject*>* a = weapon_array(ship);
+                if (!a || a->Num() <= 0 || a->Num() > kWeaponsMaxCount) return;
+                for (int32_t i = 0; i < a->Num(); ++i)
+                {
+                    UObject* w = (*a)[i];
+                    if (!alive(w)) continue;
+                    const std::wstring cn = w->GetClassPrivate()->GetName();
+                    if (cn.find(STR("Cannon")) == std::wstring::npos || cn.find(STR("Turret")) != std::wstring::npos) continue;
+                    double sp = 0, lt = 0;
+                    if (!get_num_prop(w, STR("BulletSpeed"), sp) || !get_num_prop(w, STR("BulletLifetime"), lt)) continue;
+                    rs.push_back(cmb_range_m(sp, lt, 1.0, kCmbRawPerM));
+                }
+            }))
+        {
+            module_disable(STR("combat"), STR("ship_weapon_range fault"));
+            return -1;
+        }
+        const double raw = cmb_min_range(rs);
+        if (raw <= 0) return -1;
+        const double eng = cmb_engage_range(raw, kRangeSafety);
+        const int out = eng > 0 ? static_cast<int>(eng) : -1;
+        static std::mutex mx;
+        static std::map<int, int> logged;
+        std::lock_guard<std::mutex> lk(mx);
+        auto it = logged.find(sid);
+        if (it == logged.end() || it->second != out)
+        {
+            logged[sid] = out;
+            msc_log(STR("combat range ship=") + widen(std::to_string(sid)) + STR(" n=") + widen(std::to_string(rs.size())) + STR(" raw_m=") +
+                    widen(std::to_string(static_cast<int>(raw))) + STR(" engage_m=") + widen(std::to_string(out)) + STR(" (lifetime assumed ticks)"));
+        }
+        return out;
+    }
 
     // WHAT: raw value of weapon property name as text: int / float / double, or a struct's Value (PNum). "n/a" when missing.
     std::string cmb_prop_text(UObject* w, const TCHAR* name)

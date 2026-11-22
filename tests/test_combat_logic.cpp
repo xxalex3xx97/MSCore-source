@@ -98,6 +98,10 @@ int main()
     CHECK(cmb_range_m(0, 10, 60, 65536.0) == -1);
     CHECK(cmb_range_m(100, -1, 60, 65536.0) == -1);
     CHECK(cmb_range_m(100, 10, 60, 0) == -1);
+    CHECK(std::fabs(cmb_engage_range(600, 0.7) - 420.0) < 1e-9);
+    CHECK(cmb_engage_range(-1, 0.7) == -1);
+    CHECK(cmb_engage_range(600, 0) == -1);
+    CHECK(cmb_engage_range(0, 0.7) == -1);
     CHECK(cmb_min_range({}) == -1);
     CHECK(cmb_min_range({-1, 0}) == -1);
     CHECK(cmb_min_range({500, -1, 200, 900}) == 200);
