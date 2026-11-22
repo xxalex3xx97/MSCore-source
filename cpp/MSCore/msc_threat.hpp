@@ -76,6 +76,7 @@ namespace
                 for (int32_t i = 0; i < n; ++i)
                 {
                     UObject* e = (objs && stride > 0) ? *reinterpret_cast<UObject**>(&(*arr)[0] + static_cast<size_t>(i) * static_cast<size_t>(stride)) : nullptr;
+                    if (e && alive(e)) { int64_t ehp = 0; if (cmb_hp(e, STR("Health"), ehp) && ehp <= 0) continue; }   // corpse the game still lists: not a threat
                     const bool live = e && alive(e);
                     UObject* eo = live ? get_obj_prop(e, STR("Owner")) : nullptr;
                     UObject* ef = live ? get_obj_prop(e, STR("Faction")) : nullptr;

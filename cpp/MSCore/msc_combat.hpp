@@ -21,6 +21,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 #include "msc_combat_logic.hpp"
@@ -40,6 +41,8 @@ namespace
     std::mutex g_pose_mx;
     CmbLogRate g_probe_rate;                 // global cap on PROBE enemy_class lines (20 per 10 s)
     std::mutex g_probe_mx;
+    CmbLogRate g_dead_rate;                  // cap on PROBE enemy_dead / enemy_task lines (20 per 10 s)
+    std::set<std::pair<std::wstring, int>> g_task_seen, g_dead_seen, g_unk_seen;   // (class,task) pairs / dead ids / unknown-health classes already logged (under g_probe_mx)
     struct EnemySnap { ULONGLONG at = 0; bool valid = false; std::vector<EnemyRaw> rows; };
     EnemySnap g_enemy_snap;
     std::mutex g_enemy_mx;
@@ -49,13 +52,32 @@ namespace
 
     std::string cmb_ascii(const std::wstring& s) { return std::string(s.begin(), s.end()); }
 
-    // WHAT: fresh scan of enemy ships. false on SEH fault, or when objects exist but none was readable.
+    // WHAT: CURRENT Health of an enemy object as read by the DevEval dump (get(o,"Health")): Int / Int64 / Float / Double, or a struct's Value (PNum, raw). false when unreadable. Call under seh_run.
+    //       A raw struct Value is not rescaled: the sign (alive test) is what matters.
+    bool cmb_hp(UObject* o, const TCHAR* name, int64_t& out)
+    {
+        int32_t i = 0;
+        if (get_int_prop(o, name, i)) { out = i; return true; }
+        FProperty* p = o ? o->GetPropertyByNameInChain(name) : nullptr;
+        if (!p) return false;
+        double d = 0;
+        if (get_num_prop(o, name, d)) { out = static_cast<int64_t>(d); return true; }
+        auto* sp = CastField<FStructProperty>(p);
+        int64_t v = 0;
+        if (!sp || !sp->GetStruct() || !read_axis(reinterpret_cast<const uint8_t*>(o) + p->GetOffset_Internal(), sp->GetStruct(), STR("Value"), v)) return false;
+        out = v;
+        return true;
+    }
+
+    // WHAT: fresh scan of enemy ships. Enemies with CURRENT Health <= 0 (corpses the game still lists) are dropped here, so every consumer
+    //       (enemies_near, hostile counts) never sees them; unreadable Health keeps a row with hull -1, alive clear, flag bit3 (fail closed).
+    //       false on SEH fault, or when objects exist but none had a readable pose + Health.
     bool enemies_scan(std::vector<EnemyRaw>& rows)
     {
         rows.clear();
         std::vector<UObject*> all;
         if (!seh_run([&] { UObjectGlobals::FindAllOf(widen(kClsEnemyShip).c_str(), all); })) return false;
-        int seen = 0, skipped = 0;
+        int seen = 0, skipped = 0, known = 0;
         for (UObject* o : all)
         {
             EnemyRaw r{};
@@ -64,10 +86,28 @@ namespace
                 if (!alive(o) || o->GetName().rfind(STR("Default__"), 0) == 0) return;
                 ++seen;
                 r.id = obj_id(o);
-                int32_t hp = 0;
-                if (r.id <= 0 || !get_chunk(o, r.ch) || !flight_loc(o, r.loc) || !get_int_prop(o, STR("Health"), hp)) { ++skipped; return; }
+                int64_t hp = 0;
+                if (r.id <= 0 || !get_chunk(o, r.ch) || !flight_loc(o, r.loc)) { ++skipped; return; }
+                const bool hok = cmb_hp(o, STR("Health"), hp);
+                const CmbHp hs = cmb_hp_state(hok, hp);
+                int64_t mx = -1;
+                cmb_hp(o, STR("MaxHealth"), mx);
+                const std::wstring cn0 = o->GetClassPrivate()->GetName();
+                if (hs == CMB_HP_DEAD)
+                {   // corpse: log once per id, drop the row (the pose entry is pruned below), counts as readable
+                    ++known;
+                    std::lock_guard<std::mutex> lk(g_probe_mx);
+                    if (g_dead_seen.insert({std::wstring(), r.id}).second && cmb_log_allow(g_dead_rate, GetTickCount64())) msc_log(cmb_dead_line(r.id, cn0, hp, mx));
+                    return;
+                }
+                if (hs == CMB_HP_UNKNOWN)
+                {
+                    std::lock_guard<std::mutex> lk(g_probe_mx);
+                    if (cmb_first_seen(g_unk_seen, cn0, 0)) msc_log(STR("combat enemy Health unreadable class=") + cn0 + STR(" id=") + widen(std::to_string(r.id)));
+                }
+                else ++known;
                 r.sys = sys_id(o);
-                r.hull = hp;
+                r.hull = cmb_hull_value(hok, hp);
                 // UNVERIFIED: CurrentTask read as one raw byte at the property offset (enum/byte prop, +0x178)
                 int task = 0xFF;
                 if (FProperty* tp = o->GetPropertyByNameInChain(STR("CurrentTask"))) task = *(reinterpret_cast<const uint8_t*>(o) + tp->GetOffset_Internal());
@@ -79,16 +119,15 @@ namespace
                 }
                 if (!big_known)   // class + MaxHealth read once per enemy id, cached in the pose map
                 {
-                    const std::wstring cn = o->GetClassPrivate()->GetName();
+                    const std::wstring& cn = cn0;
                     big = cmb_class_big(cn);
-                    int32_t mh = 0;   // UNVERIFIED: property name MaxHealth (EnemyBase +0x11c i32)
-                    if (!big && get_int_prop(o, STR("MaxHealth"), mh) && mh >= kCmbBigMaxHealth) big = true;
+                    if (!big && mx >= kCmbBigMaxHealth) big = true;   // MaxHealth: strength / BIG only, never the alive test
                     bool log_it = false;
                     {
                         std::lock_guard<std::mutex> lk(g_probe_mx);
                         log_it = cmb_log_allow(g_probe_rate, GetTickCount64());
                     }
-                    if (log_it) msc_log(cmb_probe_class_line(r.id, cn, big, hp));
+                    if (log_it) msc_log(cmb_probe_class_line(r.id, cn, big, hok ? hp : -1, mx));
                 }
                 {
                     std::lock_guard<std::mutex> lk(g_pose_mx);
@@ -102,7 +141,11 @@ namespace
                     for (int i = 0; i < 3; ++i) { ps.ch[i] = r.ch[i]; ps.loc[i] = r.loc[i]; }
                     ps.big_known = true; ps.big = big;
                 }
-                r.flags = cmb_enemy_flags(hp > 0, moved, task, big);
+                {   // CurrentTask table: once per (class, task)
+                    std::lock_guard<std::mutex> lk(g_probe_mx);
+                    if (cmb_first_seen(g_task_seen, cn0, task) && cmb_log_allow(g_dead_rate, GetTickCount64())) msc_log(cmb_task_line(r.id, cn0, task, hok ? hp : -1));
+                }
+                r.flags = cmb_enemy_flags(hs == CMB_HP_ALIVE, moved, task, big, hs == CMB_HP_UNKNOWN);
                 keep = true;
             });
             if (!ok) return false;
@@ -117,7 +160,7 @@ namespace
                 it = found ? std::next(it) : g_enemy_pose.erase(it);
             }
         }
-        return !(seen > 0 && rows.empty());   // ponytail: skipped is only counted; add a log line when live data shows skips
+        return !(seen > 0 && known == 0);   // nothing readable (pose + Health) = layout problem; ponytail: skipped is only counted
     }
 
     // WHAT: enemies of ship sid's system within radius_m, nearest first, copied to out (max rows). Returns the total count.
@@ -370,11 +413,15 @@ namespace
     }
 
     // WHAT: enemy ship object of id, nullptr when missing/dead. Call under seh_run.
-    UObject* cmb_enemy(int id)
+    //       dead (Health <= 0, corpse still listed by the game) -> nullptr with *dead = true.
+    UObject* cmb_enemy(int id, bool* dead = nullptr)
     {
         const std::wstring cls = widen(kClsEnemyShip);
         UObject* o = id > 0 ? find_by_id(cls.c_str(), id) : nullptr;
-        return alive(o) ? o : nullptr;
+        if (!alive(o)) return nullptr;
+        int64_t hp = 0;
+        if (cmb_hp(o, STR("Health"), hp) && hp <= 0) { if (dead) *dead = true; return nullptr; }
+        return o;
     }
 
     // WHAT: enemy velocity (API 23). v_mps = per-frame metres * kSimFps (UNVERIFIED fps); v_frame (optional) = per-frame metres. Read-only.
@@ -388,8 +435,9 @@ namespace
         int shape = 0;
         bool ok = false;
         if (!seh_run([&] {
-                UObject* o = cmb_enemy(id);
-                if (!o) { err = STR("enemy not found"); return; }
+                bool dead = false;
+                UObject* o = cmb_enemy(id, &dead);
+                if (!o) { err = dead ? STR("enemy dead") : STR("enemy not found"); return; }
                 if (!cmb_vec_read(o, STR("CachedVelocity"), raw, shape)) { err = STR("CachedVelocity unreadable"); return; }
                 sp = cmb_vel_mps(raw, kCmbRawPerM, kSimFps, vf, vm);   // UNVERIFIED: double shape also treated as raw units
                 ok = sp >= 0;
@@ -425,9 +473,9 @@ namespace
     {
         if (!combat_enabled()) { err = STR("combat off"); return false; }
         if (!out) { err = STR("null out"); return false; }
-        bool found = false;
+        bool found = false, dead = false;
         if (!seh_run([&] {
-                UObject* o = cmb_enemy(id);
+                UObject* o = cmb_enemy(id, &dead);
                 if (!o) return;
                 found = true;
                 static const TCHAR* const names[4] = {STR("AlignmentToTarget"), STR("RequiredAlignmentToFire"), STR("AttackDistance"), STR("ReleaseTargetDistance")};
@@ -438,7 +486,7 @@ namespace
             module_disable(STR("combat"), STR("enemy_aim fault"));
             return false;
         }
-        if (!found) { err = STR("enemy not found"); return false; }
+        if (!found) { err = dead ? STR("enemy dead") : STR("enemy not found"); return false; }
         return true;
     }
 
@@ -496,8 +544,8 @@ namespace
             if (logged >= 40 || (logged >= 12 && !newCls)) continue;
             ++logged;
             auto num = [&](const TCHAR* pn) { std::string t = cmb_prop_text(e, pn); return widen(t == "n/a" ? std::string("?") : t); };
-            int32_t hp = 0;
-            const bool hok = get_int_prop(e, STR("Health"), hp);
+            int64_t hp = 0;
+            const bool hok = cmb_hp(e, STR("Health"), hp);
             std::wstring task = STR("?");
             if (FProperty* tp = e->GetPropertyByNameInChain(STR("CurrentTask"))) task = widen(std::to_string(*(reinterpret_cast<const uint8_t*>(e) + tp->GetOffset_Internal())));
             // UNVERIFIED spawner prop name: try int SpawnerID/SpawnerId, then object Spawner

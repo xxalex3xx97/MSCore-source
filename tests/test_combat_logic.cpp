@@ -134,8 +134,29 @@ int main()
     CHECK(cmb_enemy_flags(true, true, 0xFF, true) == (1 | 2 | 4 | (0xFF << 8)));
     CHECK(cmb_flag_alive(cmb_enemy_flags(true, false, 9, true)) && !cmb_flag_moved(cmb_enemy_flags(true, false, 9, true)) && cmb_flag_task(cmb_enemy_flags(true, false, 9, true)) == 9);
 
-    CHECK(cmb_probe_class_line(7, L"BP_RelicDestroyerObject_C", true, 3000) == L"PROBE enemy_class id=7 class=BP_RelicDestroyerObject_C big=1 hull=3000");
-    CHECK(cmb_probe_class_line(-1, L"", false, 0) == L"PROBE enemy_class id=-1 class= big=0 hull=0");
+    // probe line now prints health=<cur>/<max> (was hull=<h>): the live ghost finding needs cur and max side by side
+    CHECK(cmb_probe_class_line(7, L"BP_RelicDestroyerObject_C", true, 3000, 3000) == L"PROBE enemy_class id=7 class=BP_RelicDestroyerObject_C big=1 health=3000/3000");
+    CHECK(cmb_probe_class_line(-1, L"", false, 0) == L"PROBE enemy_class id=-1 class= big=0 health=0/?");
+    CHECK(cmb_probe_class_line(5, L"C", false, -1, 50) == L"PROBE enemy_class id=5 class=C big=0 health=?/50");
+    // alive = CURRENT Health > 0; MaxHealth never decides; unreadable = not alive + unknown bit
+    CHECK(cmb_hp_state(true, 0) == CMB_HP_DEAD && cmb_hp_state(true, -5) == CMB_HP_DEAD);
+    CHECK(cmb_hp_state(true, 1) == CMB_HP_ALIVE && cmb_hp_state(true, 50) == CMB_HP_ALIVE);
+    CHECK(cmb_hp_state(false, 50) == CMB_HP_UNKNOWN && cmb_hp_state(false, 0) == CMB_HP_UNKNOWN);
+    CHECK(cmb_hull_value(true, 0) == 0 && cmb_hull_value(true, 50) == 50 && cmb_hull_value(false, 50) == -1 && cmb_hull_value(true, -3) == 0 && cmb_hull_value(true, 1LL << 40) == 2147483647);
+    {
+        const int32_t unk = cmb_enemy_flags(cmb_hp_state(false, 0) == CMB_HP_ALIVE, false, 2, false, cmb_hp_state(false, 0) == CMB_HP_UNKNOWN);
+        CHECK(!cmb_flag_alive(unk) && cmb_flag_hull_unknown(unk) && unk == (8 | (2 << 8)));
+        const int32_t ok = cmb_enemy_flags(true, true, 4, true, false);
+        CHECK(cmb_flag_alive(ok) && !cmb_flag_hull_unknown(ok) && cmb_flag_big(ok) && ok == (1 | 2 | 4 | (4 << 8)));
+        CHECK(cmb_flag_big(cmb_enemy_flags(true, false, 0, true, true)) && cmb_flag_hull_unknown(cmb_enemy_flags(true, false, 0, true, true)));   // big independent of unknown
+        CHECK(!cmb_flag_hull_unknown(cmb_enemy_flags(true, true, 0xFF, true)));
+    }
+    CHECK(cmb_dead_line(41312, L"BP_RelicCrescentObject_C", 0, 50) == L"PROBE enemy_dead id=41312 class=BP_RelicCrescentObject_C health=0 max=50");
+    CHECK(cmb_task_line(41312, L"C", 2, 0) == L"PROBE enemy_task id=41312 class=C task=2 health=0");
+    {
+        std::set<std::pair<std::wstring, int>> s;
+        CHECK(cmb_first_seen(s, L"A", 2) && !cmb_first_seen(s, L"A", 2) && cmb_first_seen(s, L"A", 4) && cmb_first_seen(s, L"B", 2));
+    }
     {
         CmbLogRate lr;
         int ok = 0;

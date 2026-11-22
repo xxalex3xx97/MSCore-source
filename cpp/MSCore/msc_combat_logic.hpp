@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 namespace
 {
@@ -17,7 +19,14 @@ namespace
     //                  bits 8-15 = CurrentTask enum byte (0xFF unreadable). Helpers cmb_enemy_flags / cmb_flag_*.
     struct MsEnemy { int32_t id; int32_t sys; int32_t hull; int32_t pad; double d_m; double rel_m[3]; };
     static_assert(sizeof(MsEnemy) == 48, "MsEnemy layout is part of the C API");
-    inline int32_t cmb_enemy_flags(bool alive, bool moved, int task, bool big = false) { return (alive ? 1 : 0) | (moved ? 2 : 0) | (big ? 4 : 0) | ((task & 0xFF) << 8); }
+    // bit3 = Health unreadable (hull = -1, alive clear): fail closed for targeting, flagged so the cause is visible.
+    inline int32_t cmb_enemy_flags(bool alive, bool moved, int task, bool big = false, bool hull_unknown = false) { return (alive ? 1 : 0) | (moved ? 2 : 0) | (big ? 4 : 0) | (hull_unknown ? 8 : 0) | ((task & 0xFF) << 8); }
+    inline bool cmb_flag_hull_unknown(int32_t f) { return (f & 8) != 0; }
+    // WHAT: enemy health state from the CURRENT Health read. Unreadable -> UNKNOWN (not targetable), <= 0 -> DEAD (corpse the game has not removed), > 0 -> ALIVE. MaxHealth never decides this.
+    enum CmbHp { CMB_HP_DEAD = 0, CMB_HP_ALIVE = 1, CMB_HP_UNKNOWN = 2 };
+    inline CmbHp cmb_hp_state(bool read_ok, long long hp) { return !read_ok ? CMB_HP_UNKNOWN : hp > 0 ? CMB_HP_ALIVE : CMB_HP_DEAD; }
+    // hull as sent in MsEnemy: current Health clamped to int32, -1 when unknown.
+    inline int32_t cmb_hull_value(bool read_ok, long long hp) { return !read_ok ? -1 : hp > 2147483647LL ? 2147483647 : hp < 0 ? 0 : static_cast<int32_t>(hp); }
     inline bool cmb_flag_big(int32_t f) { return (f & 4) != 0; }
     // WHAT: true when class name contains "destroyer" (case-insensitive).
     inline bool cmb_class_big(const std::wstring& n)
@@ -33,10 +42,28 @@ namespace
         return false;
     }
     constexpr int32_t kCmbBigMaxHealth = 1500;
-    // WHAT: PROBE line for the first class read of an enemy id: `PROBE enemy_class id=<id> class=<name> big=<0/1> hull=<h>`.
-    inline std::wstring cmb_probe_class_line(int id, const std::wstring& cls, bool big, int hull)
+    // WHAT: `<cur>/<max>` text, "?" for a negative (unknown) value.
+    inline std::wstring cmb_hp_text(long long cur, long long mx) { return (cur < 0 ? std::wstring(L"?") : std::to_wstring(cur)) + L"/" + (mx < 0 ? std::wstring(L"?") : std::to_wstring(mx)); }
+    // WHAT: PROBE line for the first class read of an enemy id: `PROBE enemy_class id=<id> class=<name> big=<0/1> health=<cur>/<max>`.
+    inline std::wstring cmb_probe_class_line(int id, const std::wstring& cls, bool big, long long hp, long long mx = -1)
     {
-        return L"PROBE enemy_class id=" + std::to_wstring(id) + L" class=" + cls + L" big=" + (big ? L"1" : L"0") + L" hull=" + std::to_wstring(hull);
+        return L"PROBE enemy_class id=" + std::to_wstring(id) + L" class=" + cls + L" big=" + (big ? L"1" : L"0") + L" health=" + cmb_hp_text(hp, mx);
+    }
+    // WHAT: `PROBE enemy_dead id= class= health= max=` (once per id, Health reached <= 0 while the game still lists the enemy).
+    inline std::wstring cmb_dead_line(int id, const std::wstring& cls, long long hp, long long mx)
+    {
+        return L"PROBE enemy_dead id=" + std::to_wstring(id) + L" class=" + cls + L" health=" + std::to_wstring(hp) + L" max=" + (mx < 0 ? std::wstring(L"?") : std::to_wstring(mx));
+    }
+    // WHAT: `PROBE enemy_task id= class= task= health=` (once per (class, task) pair: builds the CurrentTask table).
+    inline std::wstring cmb_task_line(int id, const std::wstring& cls, int task, long long hp)
+    {
+        return L"PROBE enemy_task id=" + std::to_wstring(id) + L" class=" + cls + L" task=" + std::to_wstring(task) + L" health=" + (hp < 0 ? std::wstring(L"?") : std::to_wstring(hp));
+    }
+    // WHAT: true the first time (cls, key) is seen; the set is cleared past cap entries. Caller locks.
+    inline bool cmb_first_seen(std::set<std::pair<std::wstring, int>>& seen, const std::wstring& cls, int key, size_t cap = 4096)
+    {
+        if (seen.size() > cap) seen.clear();
+        return seen.insert({cls, key}).second;
     }
     // WHAT: global limiter for PROBE lines: at most max lines per window ms (fixed window). Caller locks.
     struct CmbLogRate { uint64_t start = 0; int n = 0; };
