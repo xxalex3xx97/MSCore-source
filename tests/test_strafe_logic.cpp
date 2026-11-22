@@ -37,14 +37,29 @@ int main()
     CHECK(!str_expired(st, 999999));                        // zero never expires
 
     // logical right -> game Y slot, logical up -> game X slot; a throttle send carries both (same state, both components)
-    StrafeSt m; int comp[2];
+    StrafeSt m; long long comp[3];
     str_update(m, 0, 1, 1);
-    str_components(m, comp);
-    CHECK(comp[1] == 1 && comp[0] == 0);
+    str_slots(m.s[0], m.s[1], comp);
+    CHECK(comp[1] == 65536 && comp[0] == 0);
     str_update(m, 1, -1, 2);
-    str_components(m, comp);
-    CHECK(comp[1] == 1 && comp[0] == -1);
+    str_slots(m.s[0], m.s[1], comp);
+    CHECK(comp[1] == 65536 && comp[0] == -65536);
     CHECK(str_slot(0) == 1 && str_slot(1) == 0);
+
+    // raw value written for +-1 is exactly +-65536, 0 for 0; right goes to the right slot, up to the up slot
+    CHECK(str_raw(1) == 65536 && str_raw(-1) == -65536 && str_raw(0) == 0);
+    long long rw[3];
+    str_slots(1, -1, rw);
+    CHECK(rw[kStrafeSlotRight] == 65536 && rw[kStrafeSlotUp] == -65536 && rw[2] == 0);
+    str_slots(0, 0, rw);
+    CHECK(rw[0] == 0 && rw[1] == 0 && rw[2] == 0);
+    CHECK(kStrafeSlotRight != kStrafeSlotUp && str_slot(0) == kStrafeSlotRight && str_slot(1) == kStrafeSlotUp);
+
+    // keep-alive: resend a non-zero state after 500 ms without a send
+    StrafeSt k;
+    CHECK(!str_needs_resend(k, 9999));                       // zero: never
+    str_update(k, 0, 1, 1000); k.sent = 1000;
+    CHECK(!str_needs_resend(k, 1499) && str_needs_resend(k, 1500));
 
     std::printf("test_strafe_logic: %d checks, %d failed\n", g_run, g_fail);
     return g_fail ? 1 : 0;

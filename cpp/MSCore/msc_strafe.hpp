@@ -11,6 +11,7 @@
 // UNVERIFIED: magnitude ignored (only sign used).
 #pragma once
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -31,7 +32,9 @@ namespace
         uint8_t* px = raw_vec_axis_ptr(dummy, c, STR("StrafeImpulse"), 0, x64);
         uint8_t* py = raw_vec_axis_ptr(dummy, c, STR("StrafeImpulse"), 1, y64);
         const int xo = px ? static_cast<int>(px - dummy) : -1, yo = py ? static_cast<int>(py - dummy) : -1;
-        detail = "DeltaThrottle=" + std::to_string(d) + " RotationImpulse=" + std::to_string(r) + " StrafeImpulse=" + std::to_string(s) +
+        long long raw[3];
+        str_slots(1, 1, raw);
+        detail = "writes +-" + std::to_string(kStrafeRaw) + " (right slot " + std::to_string(kStrafeSlotRight) + ", up slot " + std::to_string(kStrafeSlotUp) + ") DeltaThrottle=" + std::to_string(d) + " RotationImpulse=" + std::to_string(r) + " StrafeImpulse=" + std::to_string(s) +
                  " X(up)@" + std::to_string(xo) + (x64 ? "(i64)" : "(i32)") + " Y(right)@" + std::to_string(yo) + (y64 ? "(i64)" : "(i32)");
         static bool logged = false;
         if (!logged) { logged = true; msc_log(STR("strafe layout ") + std::wstring(detail.begin(), detail.end())); }
@@ -70,6 +73,16 @@ namespace
             }
         }
         for (int sid : ids) { std::wstring e; strafe_send(sid, 0, 0, e); }
+        // keep-alive: the game re-sends its input every tick, so resend a held strafe every kStrafeKeepMs (watchdog above still zeroes after 10 s)
+        std::vector<std::pair<int, StrafeSt>> keep;
+        {
+            std::lock_guard<std::mutex> lk(g_strafe_mx);
+            for (auto& kv : g_strafe)
+                if (str_needs_resend(kv.second, now)) { kv.second.sent = now; keep.push_back(kv); }
+        }
+        static bool kept_logged = false;
+        if (!keep.empty() && !kept_logged) { kept_logged = true; msc_log(STR("strafe keep-alive active (resend every 500 ms while held)")); }
+        for (auto& kv : keep) { std::wstring e; strafe_send(kv.first, kv.second.s[0], kv.second.s[1], e, false); }
         return static_cast<int>(ids.size());
     }
 
@@ -97,6 +110,7 @@ namespace
             if (!cur.nz()) g_strafe.erase(sid);
         }
         if (!send) return true;
+        { std::lock_guard<std::mutex> lk(g_strafe_mx); auto it = g_strafe.find(sid); if (it != g_strafe.end()) it->second.sent = GetTickCount64(); }
         return strafe_send(sid, cur.s[0], cur.s[1], err, cur.s[0] != prev.s[0] || cur.s[1] != prev.s[1]);   // log on change only
     }
 

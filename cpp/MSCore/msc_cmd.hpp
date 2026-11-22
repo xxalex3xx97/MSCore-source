@@ -227,7 +227,9 @@ namespace
             uint8_t* px = raw_vec_axis_ptr(base, c, STR("StrafeImpulse"), 0, x64);
             uint8_t* py = raw_vec_axis_ptr(base, c, STR("StrafeImpulse"), 1, y64);
             if (!px || !py) { err = STR("StrafeImpulse X/Y not found"); return false; }
-            if (!seh_run([&] { raw_put(px, x64, static_cast<int64_t>(sup) * 65536); raw_put(py, y64, static_cast<int64_t>(sright) * 65536); }))   // X = up, Y = right
+            long long raw[3];
+            str_slots(sright, sup, raw);   // mapping table in msc_strafe_logic.hpp; +-65536 per component (fixed-point 1.0)
+            if (!seh_run([&] { raw_put(px, x64, raw[0]); raw_put(py, y64, raw[1]); }))
             { err = STR("StrafeImpulse write fault"); return false; }
         }
         if (!fix_type_id(cmd, err)) return false;
