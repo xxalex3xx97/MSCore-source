@@ -1659,7 +1659,7 @@ extern "C"
         catch (...) { module_disable(STR("ships"), STR("ship_shields exception")); return -1; }
     }
 
-    // ship hull (API 14): cur = GetCurrentHull, max = MaxHealth (game percent basis; fallback GetTotalHull, never below cur) in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive). Call from the game thread.
+    // ship hull (API 14): cur / max (GetCurrentHull / GetTotalHull) in whole units (-1 = unreadable). Returns bitmask 1 = cur ok, 2 = max ok, 0 = none readable (or ship not alive). Call from the game thread.
     // -2 when the ships module is off, -1 on exception. cur / max may be NULL.
     MSCORE_API int MSCore_ship_hull(void* ship, int* cur, int* max)
     {
