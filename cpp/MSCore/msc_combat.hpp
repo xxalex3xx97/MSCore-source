@@ -325,6 +325,114 @@ namespace
         return alive(o) ? cmb_ascii(o->GetName()) : "null";
     }
 
+    // WHAT: reads 3 axes of vec property name of o: shape 1 = PNum axes (raw fixed point), 2 = plain Double/Float axes (value as is). false when neither reads.
+    // Call under seh_run. UNVERIFIED which shape CachedVelocity has; the shape is reported in the PROBE enemy_vel line.
+    bool cmb_vec_read(UObject* o, const TCHAR* name, double out[3], int& shape)
+    {
+        FProperty* p = o->GetPropertyByNameInChain(name);
+        auto* sp = p ? CastField<FStructProperty>(p) : nullptr;
+        if (!sp || !sp->GetStruct()) return false;
+        const uint8_t* base = reinterpret_cast<const uint8_t*>(o) + p->GetOffset_Internal();
+        double pv[3] = {0, 0, 0}, dv[3] = {0, 0, 0};
+        const bool pnum = flight_vec3(base, sp->GetStruct(), pv);
+        static const TCHAR* const names[3] = {STR("X"), STR("Y"), STR("Z")};
+        bool dbl = true;
+        for (int a = 0; a < 3 && dbl; ++a)
+        {
+            FProperty* f = sp->GetStruct()->FindProperty(FName(names[a], FNAME_Add));
+            if (f && CastField<FDoubleProperty>(f)) dv[a] = *reinterpret_cast<const double*>(base + f->GetOffset_Internal());
+            else if (f && CastField<FFloatProperty>(f)) dv[a] = *reinterpret_cast<const float*>(base + f->GetOffset_Internal());
+            else dbl = false;
+        }
+        shape = cmb_vel_shape(pnum, dbl);
+        if (!shape) return false;
+        for (int i = 0; i < 3; ++i) out[i] = shape == 1 ? pv[i] : dv[i];
+        return true;
+    }
+
+    // WHAT: PNum struct prop as value/65536, plain numeric prop as is. false when missing.
+    bool cmb_scaled(UObject* o, const TCHAR* name, double& out)
+    {
+        FProperty* p = o->GetPropertyByNameInChain(name);
+        double d = 0;
+        if (!p || !cmb_num(o, name, d)) return false;
+        out = CastField<FStructProperty>(p) ? d / kCmbRawPerM : d;
+        return true;
+    }
+
+    // WHAT: enemy ship object of id, nullptr when missing/dead. Call under seh_run.
+    UObject* cmb_enemy(int id)
+    {
+        const std::wstring cls = widen(kClsEnemyShip);
+        UObject* o = id > 0 ? find_by_id(cls.c_str(), id) : nullptr;
+        return alive(o) ? o : nullptr;
+    }
+
+    // WHAT: enemy velocity (API 23). v_mps = per-frame metres * kSimFps (UNVERIFIED fps); v_frame (optional) = per-frame metres. Read-only.
+    // Probe line once per enemy id per 5 s.
+    bool enemy_velocity(int id, double* v_mps, double* v_frame, std::wstring& err)
+    {
+        if (!combat_enabled()) { err = STR("combat off"); return false; }
+        if (!v_mps) { err = STR("null out"); return false; }
+        double raw[3], vf[3], vm[3];
+        double sp = -1;
+        int shape = 0;
+        bool ok = false;
+        if (!seh_run([&] {
+                UObject* o = cmb_enemy(id);
+                if (!o) { err = STR("enemy not found"); return; }
+                if (!cmb_vec_read(o, STR("CachedVelocity"), raw, shape)) { err = STR("CachedVelocity unreadable"); return; }
+                sp = cmb_vel_mps(raw, kCmbRawPerM, kSimFps, vf, vm);   // UNVERIFIED: double shape also treated as raw units
+                ok = sp >= 0;
+            }))
+        {
+            err = STR("enemy_velocity faulted");
+            module_disable(STR("combat"), STR("enemy_velocity fault"));
+            return false;
+        }
+        if (!ok) return false;
+        for (int i = 0; i < 3; ++i) { v_mps[i] = vm[i]; if (v_frame) v_frame[i] = vf[i]; }
+        static std::map<int, ULONGLONG> last;
+        static bool shape_logged = false;
+        static std::mutex mx;
+        std::lock_guard<std::mutex> lk(mx);
+        const ULONGLONG now = GetTickCount64();
+        auto it = last.find(id);
+        if (it == last.end() || now - it->second >= 5000)
+        {
+            last[id] = now;
+            auto f3 = [](const double* v) { char b[96]; std::snprintf(b, sizeof b, "%.4f,%.4f,%.4f", v[0], v[1], v[2]); return widen(std::string(b)); };
+            char sb[32];
+            std::snprintf(sb, sizeof sb, "%.3f", sp);
+            msc_log(STR("PROBE enemy_vel id=") + widen(std::to_string(id)) + STR(" v_frame=") + f3(vf) + STR(" v_mps=") + f3(vm) + STR(" |v|=") + widen(std::string(sb)) +
+                    STR(" shape=") + (shape == 1 ? STR("pnum") : STR("double")));
+        }
+        if (!shape_logged) { shape_logged = true; msc_log(std::wstring(STR("combat enemy velocity shape=")) + (shape == 1 ? STR("pnum (raw/65536 per frame)") : STR("double (treated as raw per frame)"))); }
+        return true;
+    }
+
+    // WHAT: enemy aim calibration (API 23): out = {AlignmentToTarget, RequiredAlignmentToFire, AttackDistance m, ReleaseTargetDistance m}; missing prop -> -1. Read-only.
+    bool enemy_aim(int id, double* out, std::wstring& err)
+    {
+        if (!combat_enabled()) { err = STR("combat off"); return false; }
+        if (!out) { err = STR("null out"); return false; }
+        bool found = false;
+        if (!seh_run([&] {
+                UObject* o = cmb_enemy(id);
+                if (!o) return;
+                found = true;
+                static const TCHAR* const names[4] = {STR("AlignmentToTarget"), STR("RequiredAlignmentToFire"), STR("AttackDistance"), STR("ReleaseTargetDistance")};
+                for (int i = 0; i < 4; ++i) if (!cmb_scaled(o, names[i], out[i])) out[i] = -1;
+            }))
+        {
+            err = STR("enemy_aim faulted");
+            module_disable(STR("combat"), STR("enemy_aim fault"));
+            return false;
+        }
+        if (!found) { err = STR("enemy not found"); return false; }
+        return true;
+    }
+
     // WHAT: read-only selftest, sends nothing: both classes resolve, factory presence (probe P-B), enemy count, weapon props of the first ship (probe P-D).
     bool combat_selftest(std::string& detail)
     {

@@ -35,6 +35,18 @@ static bool ids_are(const std::vector<MsEnemy>& v, std::initializer_list<int32_t
 
 int main()
 {
+    // enemy velocity: raw per frame -> m/s, shape fallback
+    {
+        const double raw[3] = {R, 0, -2 * R};   // 1 m/frame, 0, -2 m/frame
+        double vf[3], vm[3];
+        const double sp = cmb_vel_mps(raw, kCmbRawPerM, kSimFps, vf, vm);
+        CHECK(std::fabs(vf[0] - 1.0) < 1e-9 && std::fabs(vf[2] + 2.0) < 1e-9);
+        CHECK(std::fabs(vm[0] - 60.0) < 1e-9 && std::fabs(vm[2] + 120.0) < 1e-9);
+        CHECK(std::fabs(sp - std::sqrt(60.0 * 60.0 + 120.0 * 120.0)) < 1e-9);
+        CHECK(cmb_vel_mps(raw, 0, kSimFps, vf, vm) == -1);
+        CHECK(cmb_vel_mps(raw, kCmbRawPerM, 0, vf, vm) == -1);
+        CHECK(cmb_vel_shape(true, true) == 1 && cmb_vel_shape(false, true) == 2 && cmb_vel_shape(true, false) == 1 && cmb_vel_shape(false, false) == 0);
+    }
     // delta: ca/la = origin, cb/lb = target
     {
         const int64_t c0[3] = {0, 0, 0};
