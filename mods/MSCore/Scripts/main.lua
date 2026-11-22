@@ -14,4 +14,6 @@ id = MSCore.events.on("tick", function()
         selfcheck.run(MSCore)
     end
 end)
+-- input capture probe (no-op unless Mods/MSCore/strafe_probe_on.txt exists): arms its hook / polls, prints the rate line
+MSCore.events.on("tick", function() if MSCore.native and MSCore.native.capture_tick then MSCore.native.capture_tick() end end)
 print("[MSCore] loaded v" .. MSCore.version .. " api " .. MSCore.api .. ", selfcheck runs ~8 s after a world is loaded\n")

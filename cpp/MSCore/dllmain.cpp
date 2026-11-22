@@ -43,6 +43,7 @@ using namespace RC::Unreal;
 #include "msc_combat.hpp"
 #include "msc_threat.hpp"
 #include "msc_strafe.hpp"
+#include "msc_capture.hpp"
 #include "msc_stnames.hpp"
 #include "msc_fleets.hpp"
 #include "msc_rockreg.hpp"
@@ -273,6 +274,12 @@ namespace
             bool ok = false;
             if (!seh_run([&] { ok = strafe_selftest(detail); })) { detail = "strafe selftest faulted"; module_disable(STR("strafe"), STR("selfcheck fault")); return false; }
             return ok;
+        }
+        if (name == "capture")
+        {
+            if (!g_cap_on.load()) { detail = "SKIP strafe_probe_on.txt missing (probe off)"; return false; }
+            detail = std::string(g_cap_dead ? "probe dead (fault)" : (g_cap_hooked ? "hook armed" : "polling (hook not armed)"));
+            return !g_cap_dead;
         }
         if (name == "chunks")
         {
@@ -664,6 +671,14 @@ namespace
         catch (...) { ok = false; }
         lua.set_bool(ok);
         return 1;
+    }
+
+    // Lua: capture_tick() -> nothing. Input capture probe (msc_capture.hpp), does nothing unless strafe_probe_on.txt exists.
+    int lua_capture_tick(const LuaMadeSimple::Lua&)
+    {
+        try { capture_tick(); }
+        catch (...) { g_cap_dead = true; }
+        return 0;
     }
 
     // Lua: check(name) -> ok, detail (see check_one)
@@ -1223,6 +1238,7 @@ namespace
         if (mscl::fs::exists(dir / L"combat_on.txt", ec)) g_combat_on.store(true);
         if (mscl::fs::exists(dir / L"threat_off.txt", ec)) g_threat_off.store(true);
         if (mscl::fs::exists(dir / L"strafe_off.txt", ec)) g_strafe_off.store(true);
+        if (mscl::fs::exists(dir / L"strafe_probe_on.txt", ec)) g_cap_on.store(true);
         if (mscl::fs::exists(dir / L"combat_fire_console.txt", ec)) g_fire_console.store(true);
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
         if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
@@ -1360,6 +1376,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_warp_send", lua_warp_send);
     lua.register_function("MSCoreNative_pinned", lua_pinned);
     lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
+    lua.register_function("MSCoreNative_capture_tick", lua_capture_tick);
     lua.register_function("MSCoreNative_check", lua_check);
     lua.register_function("MSCoreNative_loader_status", lua_loader_status);
     lua.register_function("MSCoreNative_scan", lua_scan);

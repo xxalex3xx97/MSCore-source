@@ -11,7 +11,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     offsets = _G.MSCoreNative_offsets, check_offsets = _G.MSCoreNative_check_offsets,
     new_order = _G.MSCoreNative_new_order, update_order = _G.MSCoreNative_update_order, delete_order = _G.MSCoreNative_delete_order,
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
-    warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
+    warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure, capture_tick = _G.MSCoreNative_capture_tick,
     check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
     scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
     refund_enable = nat("MSCoreNative_refund_enable"), redirect_enable = nat("MSCoreNative_redirect_enable"),

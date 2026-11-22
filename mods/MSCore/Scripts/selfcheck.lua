@@ -247,6 +247,7 @@ function M.run(MSCore)
     check("stations.dock_kind", nativeCheck("dock_kind"))   -- API 19
     check("ships.threat", nativeCheck("threat"))   -- API 21
     check("ships.strafe", nativeCheck("strafe"))   -- API 22
+    check("ships.capture", nativeCheck("capture"))   -- probe, SKIP unless strafe_probe_on.txt
     check("fleets.list", function()
         if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end
         local l, why = MSCore.fleets.list()
