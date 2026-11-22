@@ -194,18 +194,49 @@ namespace
         return ok;
     }
 
+    // WHAT: numeric weapon prop as double: plain Float/Double/Int, or a PNum struct's Value (BulletSpeed etc. are PNum). false when missing/unreadable.
+    bool cmb_num(UObject* w, const TCHAR* name, double& out)
+    {
+        FProperty* p = w->GetPropertyByNameInChain(name);
+        if (!p) return false;
+        if (get_num_prop(w, name, out)) return true;
+        int64_t v = 0;
+        auto* sp = CastField<FStructProperty>(p);
+        if (!sp || !sp->GetStruct() || !read_axis(reinterpret_cast<const uint8_t*>(w) + p->GetOffset_Internal(), sp->GetStruct(), STR("Value"), v)) return false;
+        out = static_cast<double>(v);
+        return true;
+    }
+
+    // WHAT: raw value of weapon property name as text: int / float / double, or a struct's Value (PNum). "n/a" when missing.
+    std::string cmb_prop_text(UObject* w, const TCHAR* name)
+    {
+        double d = 0;
+        return cmb_num(w, name, d) ? std::to_string(static_cast<long long>(d)) : "n/a";
+    }
+
     // WHAT: engage range (whole metres) of ship sid = shortest cannon range * kRangeSafety. -2 combat off, -1 none/unreadable/fault.
+    // Every -1 logs its reason once per ship (again only when the reason changes).
     // ponytail: BulletLifetime assumed ticks (UNCONFIRMED), kRangeSafety tune after in-game pass 2.
     int ship_weapon_range(int sid)
     {
         if (!combat_enabled()) return -2;
         constexpr double kRangeSafety = 0.7;   // ponytail: tune after in-game pass 2
+        static std::mutex mx;
+        static std::map<int, std::wstring> logged;
+        auto note = [&](const std::wstring& msg) {
+            std::lock_guard<std::mutex> lk(mx);
+            auto it = logged.find(sid);
+            if (it != logged.end() && it->second == msg) return;
+            logged[sid] = msg;
+            msc_log(STR("combat range ship=") + widen(std::to_string(sid)) + STR(" ") + msg);
+        };
         UObject* ship = flight_ship(sid);
-        if (!ship) return -1;
+        if (!ship) { note(STR("none why=ship not found")); return -1; }
         std::vector<double> rs;
+        std::wstring why;
         if (!seh_run([&] {
                 TArray<UObject*>* a = weapon_array(ship);
-                if (!a || a->Num() <= 0 || a->Num() > kWeaponsMaxCount) return;
+                if (!a || a->Num() <= 0 || a->Num() > kWeaponsMaxCount) { why = STR("no weapons array"); return; }
                 for (int32_t i = 0; i < a->Num(); ++i)
                 {
                     UObject* w = (*a)[i];
@@ -213,8 +244,20 @@ namespace
                     const std::wstring cn = w->GetClassPrivate()->GetName();
                     if (cn.find(STR("Cannon")) == std::wstring::npos || cn.find(STR("Turret")) != std::wstring::npos) continue;
                     double sp = 0, lt = 0;
-                    if (!get_num_prop(w, STR("BulletSpeed"), sp) || !get_num_prop(w, STR("BulletLifetime"), lt)) continue;
-                    rs.push_back(cmb_range_m(sp, lt, 1.0, kCmbRawPerM));
+                    bool bad = false;
+                    static const TCHAR* const kBp[2] = { STR("BulletSpeed"), STR("BulletLifetime") };
+                    for (const TCHAR* pn : kBp)
+                    {
+                        if (cmb_num(w, pn, pn[6] == 'S' ? sp : lt)) continue;
+                        FProperty* p = w->GetPropertyByNameInChain(pn);
+                        why = std::wstring(STR("read failed ")) + pn + STR(" type=") + (p ? p->GetClass().GetName() : std::wstring(STR("missing")));
+                        bad = true;
+                        break;
+                    }
+                    if (bad) continue;
+                    const double r = cmb_range_m(sp, lt, 1.0, kCmbRawPerM);
+                    if (r <= 0) { why = STR("range<=0"); continue; }
+                    rs.push_back(r);
                 }
             }))
         {
@@ -222,33 +265,13 @@ namespace
             return -1;
         }
         const double raw = cmb_min_range(rs);
-        if (raw <= 0) return -1;
+        if (raw <= 0) { note(STR("none why=") + (why.empty() ? std::wstring(STR("no cannon")) : why)); return -1; }
         const double eng = cmb_engage_range(raw, kRangeSafety);
         const int out = eng > 0 ? static_cast<int>(eng) : -1;
-        static std::mutex mx;
-        static std::map<int, int> logged;
-        std::lock_guard<std::mutex> lk(mx);
-        auto it = logged.find(sid);
-        if (it == logged.end() || it->second != out)
-        {
-            logged[sid] = out;
-            msc_log(STR("combat range ship=") + widen(std::to_string(sid)) + STR(" n=") + widen(std::to_string(rs.size())) + STR(" raw_m=") +
-                    widen(std::to_string(static_cast<int>(raw))) + STR(" engage_m=") + widen(std::to_string(out)) + STR(" (lifetime assumed ticks)"));
-        }
+        if (out <= 0) { note(STR("none why=range<=0")); return -1; }
+        note(STR("n=") + widen(std::to_string(rs.size())) + STR(" raw_m=") + widen(std::to_string(static_cast<int>(raw))) + STR(" engage_m=") +
+             widen(std::to_string(out)) + STR(" (lifetime assumed ticks)"));
         return out;
-    }
-
-    // WHAT: raw value of weapon property name as text: int / float / double, or a struct's Value (PNum). "n/a" when missing.
-    std::string cmb_prop_text(UObject* w, const TCHAR* name)
-    {
-        FProperty* p = w->GetPropertyByNameInChain(name);
-        if (!p) return "n/a";
-        double d = 0;
-        if (get_num_prop(w, name, d)) return std::to_string(static_cast<long long>(d));
-        int64_t v = 0;
-        auto* sp = CastField<FStructProperty>(p);
-        if (sp && sp->GetStruct() && read_axis(reinterpret_cast<const uint8_t*>(w) + p->GetOffset_Internal(), sp->GetStruct(), STR("Value"), v)) return std::to_string(v);
-        return "n/a";
     }
 
     // WHAT: object name of an object property, "n/a" when missing/null.
