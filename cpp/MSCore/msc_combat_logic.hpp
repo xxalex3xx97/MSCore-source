@@ -31,4 +31,17 @@ namespace
     }
     // WHAT: edge trigger for fire commands. last: -1 never sent, 0 off sent, 1 on sent. true = a command must be sent.
     inline bool cmb_fire_send(int last, bool on) { return last != (on ? 1 : 0); }
+    // WHAT: weapon range = speed * lifetime / raw_per_m. Units unprobed, caller passes constants. Any arg <= 0 -> -1. ticks_per_s kept, unused.
+    inline double cmb_range_m(double bullet_speed_raw, double lifetime_ticks, double ticks_per_s, double raw_per_m)
+    {
+        if (bullet_speed_raw <= 0 || lifetime_ticks <= 0 || ticks_per_s <= 0 || raw_per_m <= 0) return -1;
+        return bullet_speed_raw * lifetime_ticks / raw_per_m;
+    }
+    // WHAT: smallest value > 0, else -1.
+    inline double cmb_min_range(const std::vector<double>& v)
+    {
+        double m = -1;
+        for (double x : v) if (x > 0 && (m < 0 || x < m)) m = x;
+        return m;
+    }
 }

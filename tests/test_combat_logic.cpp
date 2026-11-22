@@ -94,6 +94,13 @@ int main()
     CHECK(cmb_fire_send(0, false) == false);
     CHECK(cmb_fire_send(0, true) == true);
 
+    CHECK(std::fabs(cmb_range_m(65536.0, 10, 60, 65536.0) - 10.0) < 1e-9);
+    CHECK(cmb_range_m(0, 10, 60, 65536.0) == -1);
+    CHECK(cmb_range_m(100, -1, 60, 65536.0) == -1);
+    CHECK(cmb_range_m(100, 10, 60, 0) == -1);
+    CHECK(cmb_min_range({}) == -1);
+    CHECK(cmb_min_range({-1, 0}) == -1);
+    CHECK(cmb_min_range({500, -1, 200, 900}) == 200);
     CHECK(sizeof(MsEnemy) == 48);
 
     std::printf("test_combat_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);

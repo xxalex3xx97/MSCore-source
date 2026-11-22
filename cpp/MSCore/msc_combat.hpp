@@ -125,7 +125,10 @@ namespace
                         if (!CastField<FBoolProperty>(q)) continue;
                         const std::wstring n = q->GetName();
                         uint8_t* d = b.data() + q->GetOffset_Internal();
-                        if (n.find(STR("Primary")) != std::wstring::npos) *d = on ? 1 : 0;
+                        if (n == STR("bSetPrimary")) *d = 1;
+                        else if (n == STR("bFiringPrimary")) *d = on ? 1 : 0;
+                        else if (n == STR("bSetSecondary") || n == STR("bFiringSecondary")) *d = 0;
+                        else if (n.find(STR("Primary")) != std::wstring::npos) *d = on ? 1 : 0;
                         else if (n.find(STR("Secondary")) != std::wstring::npos) *d = 0;
                     }
                     return true;
