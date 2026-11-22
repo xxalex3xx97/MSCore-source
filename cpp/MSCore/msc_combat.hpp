@@ -249,7 +249,6 @@ namespace
     int ship_weapon_range(int sid)
     {
         if (!combat_enabled()) return -2;
-        constexpr double kRangeSafety = 0.7;   // ponytail: tune after in-game pass 2
         static std::mutex mx;
         static std::map<int, std::wstring> logged;
         auto note = [&](const std::wstring& msg) {
@@ -262,7 +261,8 @@ namespace
         UObject* ship = flight_ship(sid);
         if (!ship) { note(STR("none why=ship not found")); return -1; }
         std::vector<double> rs;
-        std::wstring why;
+        std::wstring why, raws;
+        int ncannon = 0;
         if (!seh_run([&] {
                 TArray<UObject*>* a = weapon_array(ship);
                 if (!a || a->Num() <= 0 || a->Num() > kWeaponsMaxCount) { why = STR("no weapons array"); return; }
@@ -272,6 +272,7 @@ namespace
                     if (!alive(w)) continue;
                     const std::wstring cn = w->GetClassPrivate()->GetName();
                     if (cn.find(STR("Cannon")) == std::wstring::npos || cn.find(STR("Turret")) != std::wstring::npos) continue;
+                    ++ncannon;
                     double sp = 0, lt = 0;
                     bool bad = false;
                     static const TCHAR* const kBp[2] = { STR("BulletSpeed"), STR("BulletLifetime") };
@@ -287,19 +288,18 @@ namespace
                     const double r = cmb_range_m(sp, lt, 1.0, kCmbRawPerM);
                     if (r <= 0) { why = STR("range<=0"); continue; }
                     rs.push_back(r);
+                    raws += STR(" speed=") + widen(std::to_string(static_cast<long long>(sp))) + STR(" lifetime=") + widen(std::to_string(static_cast<long long>(lt)));
                 }
             }))
         {
             module_disable(STR("combat"), STR("ship_weapon_range fault"));
             return -1;
         }
+        const int out = cmb_cannon_reach(ncannon);
+        if (out <= 0) { note(STR("none why=") + (why.empty() ? std::wstring(STR("no cannon")) : why)); return -1; }
         const double raw = cmb_min_range(rs);
-        if (raw <= 0) { note(STR("none why=") + (why.empty() ? std::wstring(STR("no cannon")) : why)); return -1; }
-        const double eng = cmb_engage_range(raw, kRangeSafety);
-        const int out = eng > 0 ? static_cast<int>(eng) : -1;
-        if (out <= 0) { note(STR("none why=range<=0")); return -1; }
-        note(STR("n=") + widen(std::to_string(rs.size())) + STR(" raw_m=") + widen(std::to_string(static_cast<int>(raw))) + STR(" engage_m=") +
-             widen(std::to_string(out)) + STR(" (lifetime assumed ticks)"));
+        note(STR("n=") + widen(std::to_string(ncannon)) + STR(" raw_m=") + widen(std::to_string(static_cast<int>(raw))) + STR(" reach_m=") +
+             widen(std::to_string(out)) + STR(" (user-observed)") + raws);
         return out;
     }
 

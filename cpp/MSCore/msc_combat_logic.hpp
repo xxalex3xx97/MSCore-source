@@ -45,6 +45,10 @@ namespace
     }
     // WHAT: raw range * safety factor; -1 if either <= 0.
     inline double cmb_engage_range(double raw_m, double safety) { return (raw_m <= 0 || safety <= 0) ? -1 : raw_m * safety; }
+    // user-observed 2026-11-22, supersedes the unverified lifetime=ticks formula (cmb_range_m stays as informational raw_m)
+    constexpr int kObservedCannonReachM = 700;
+    // WHAT: cannon reach in metres for a ship with n_cannons Cannon-class weapons, else -1.
+    inline int cmb_cannon_reach(int n_cannons) { return n_cannons > 0 ? kObservedCannonReachM : -1; }
     // WHAT: smallest value > 0, else -1.
     inline double cmb_min_range(const std::vector<double>& v)
     {

@@ -106,6 +106,8 @@ int main()
     CHECK(cmb_min_range({-1, 0}) == -1);
     CHECK(cmb_min_range({500, -1, 200, 900}) == 200);
     CHECK(sizeof(MsEnemy) == 48);
+    CHECK(cmb_cannon_reach(2) == kObservedCannonReachM && kObservedCannonReachM == 700);
+    CHECK(cmb_cannon_reach(0) == -1);
     CHECK(cmb_enemy_flags(false, false, 0) == 0);
     CHECK(cmb_enemy_flags(true, false, 0) == 1);
     CHECK(cmb_enemy_flags(false, true, 0) == 2);
