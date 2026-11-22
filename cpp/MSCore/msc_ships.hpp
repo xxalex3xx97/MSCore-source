@@ -9,7 +9,10 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
+#include "msc_combat_logic.hpp"
 
 namespace
 {
@@ -80,18 +83,24 @@ namespace
         return ok;
     }
 
-    // WHAT: current and total hull of ship (GetCurrentHull / GetTotalHull, int). Unreadable value = -1. true when at least one value was read.
-    // WHY: the export derives its bitmask from cur >= 0 / tot >= 0. Same call style as ship_repair_need (msc_repair.hpp).
+    // WHAT: current and max hull of ship. cur = GetCurrentHull; max = MaxHealth prop (game percent basis), fallback GetTotalHull, clamped >= cur. Unreadable = -1. true when at least one value was read.
+    // WHY: GetTotalHull follows the damaged hull (cur == tot). Only caller: MSCore_ship_hull. msc_repair keeps its own GetCurrentHull == GetTotalHull read.
     bool ship_hull_read(UObject* ship, int32_t& cur, int32_t& tot)
     {
         cur = -1;
         tot = -1;
         if (!alive(ship)) return false;
-        int32_t c = -1, t = -1;
+        int32_t c = -1, t = -1, mh = 0;
         bool a = false, b = false;
-        if (!seh_run([&] { a = call_int(ship, STR("GetCurrentHull"), c); b = call_int(ship, STR("GetTotalHull"), t); })) return false;
+        if (!seh_run([&] { a = call_int(ship, STR("GetCurrentHull"), c); b = call_int(ship, STR("GetTotalHull"), t); if (!get_int_prop(ship, STR("MaxHealth"), mh)) mh = 0; })) return false;
         cur = a ? c : -1;
-        tot = b ? t : -1;
-        return a || b;
+        tot = hull_max_pick(cur, mh, b ? t : -1);
+        // log once per ship on change so the source of max is visible
+        static std::map<int64_t, std::string> last;
+        const int64_t sid = static_cast<int64_t>(obj_id(ship));
+        const std::string key = std::to_string(cur) + "/" + std::to_string(tot) + "/" + std::to_string(t);
+        std::string& l = last[sid];
+        if (l != key) { l = key; msc_log(STR("hull ship=") + widen(std::to_string(sid)) + STR(" cur=") + widen(std::to_string(cur)) + STR(" max=") + widen(std::to_string(tot)) + STR(" total=") + widen(std::to_string(b ? t : -1))); }
+        return a || b || tot >= 0;
     }
 }

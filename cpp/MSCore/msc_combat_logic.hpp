@@ -56,4 +56,11 @@ namespace
         for (double x : v) if (x > 0 && (m < 0 || x < m)) m = x;
         return m;
     }
+    // WHAT: hull max for the export. maxHealth (game percent basis) when > 0, else total (GetTotalHull, follows damage), else -1. Never below cur.
+    inline int32_t hull_max_pick(int32_t cur, int32_t maxHealth, int32_t total)
+    {
+        int32_t m = maxHealth > 0 ? maxHealth : total;
+        if (m >= 0 && cur > m) m = cur;
+        return m;
+    }
 }

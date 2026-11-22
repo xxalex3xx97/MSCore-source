@@ -117,6 +117,13 @@ int main()
     CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0xFF)) == 0xFF);
     CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0x1AB)) == 0xAB);
 
+    CHECK(hull_max_pick(235, 500, 235) == 500);  // damaged: MaxHealth wins
+    CHECK(hull_max_pick(235, 0, 235) == 235);    // MaxHealth unreadable: total
+    CHECK(hull_max_pick(235, -1, 300) == 300);
+    CHECK(hull_max_pick(600, 500, 600) == 600);  // clamp >= cur
+    CHECK(hull_max_pick(-1, 500, -1) == 500);
+    CHECK(hull_max_pick(-1, 0, -1) == -1);
+
     std::printf("test_combat_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);
     return g_fail ? 1 : 0;
 }

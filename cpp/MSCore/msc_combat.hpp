@@ -356,10 +356,16 @@ namespace
         std::vector<UObject*> es;
         UObjectGlobals::FindAllOf(STR("EnemyShipObject"), es);
         int logged = 0;
+        std::vector<std::wstring> seenCls;
         for (UObject* e : es)
         {
             if (!alive(e) || e->GetName().rfind(STR("Default__"), 0) == 0) continue;
-            if (logged++ >= 12) break;
+            const std::wstring ecn = e->GetClassPrivate()->GetName();
+            const bool newCls = std::find(seenCls.begin(), seenCls.end(), ecn) == seenCls.end();
+            if (newCls) seenCls.push_back(ecn);
+            // first 12 always, then the first of each new class, cap 40
+            if (logged >= 40 || (logged >= 12 && !newCls)) continue;
+            ++logged;
             auto num = [&](const TCHAR* pn) { std::string t = cmb_prop_text(e, pn); return widen(t == "n/a" ? std::string("?") : t); };
             int32_t hp = 0;
             const bool hok = get_int_prop(e, STR("Health"), hp);
