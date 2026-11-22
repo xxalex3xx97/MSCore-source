@@ -18,6 +18,7 @@
 #include <atomic>
 #include <climits>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <string>
@@ -33,7 +34,10 @@ namespace
     std::map<int, int> g_fire_last;             // ship id -> last fire command sent (0 off, 1 on)
     std::mutex g_fire_mx;
 
-    struct EnemyRaw { int id; int sys; int hull; int64_t ch[3]; double loc[3]; };
+    struct EnemyRaw { int id; int sys; int hull; int flags; int64_t ch[3]; double loc[3]; };
+    struct EnemyPose { int64_t ch[3]; double loc[3]; };
+    std::map<int, EnemyPose> g_enemy_pose;   // last scan pose per enemy id, pruned to ids seen
+    std::mutex g_pose_mx;
     struct EnemySnap { ULONGLONG at = 0; bool valid = false; std::vector<EnemyRaw> rows; };
     EnemySnap g_enemy_snap;
     std::mutex g_enemy_mx;
@@ -62,10 +66,35 @@ namespace
                 if (r.id <= 0 || !get_chunk(o, r.ch) || !flight_loc(o, r.loc) || !get_int_prop(o, STR("Health"), hp)) { ++skipped; return; }
                 r.sys = sys_id(o);
                 r.hull = hp;
+                // UNVERIFIED: CurrentTask read as one raw byte at the property offset (enum/byte prop, +0x178)
+                int task = 0xFF;
+                if (FProperty* tp = o->GetPropertyByNameInChain(STR("CurrentTask"))) task = *(reinterpret_cast<const uint8_t*>(o) + tp->GetOffset_Internal());
+                bool moved = false;
+                {
+                    std::lock_guard<std::mutex> lk(g_pose_mx);
+                    auto it = g_enemy_pose.find(r.id);
+                    if (it != g_enemy_pose.end())
+                    {
+                        double rel[3];
+                        moved = cmb_delta_m(it->second.ch, it->second.loc, r.ch, r.loc, rel) >= 1.0;
+                    }
+                    EnemyPose& ps = g_enemy_pose[r.id];
+                    for (int i = 0; i < 3; ++i) { ps.ch[i] = r.ch[i]; ps.loc[i] = r.loc[i]; }
+                }
+                r.flags = cmb_enemy_flags(hp > 0, moved, task);
                 keep = true;
             });
             if (!ok) return false;
             if (keep) rows.push_back(r);
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_pose_mx);
+            for (auto it = g_enemy_pose.begin(); it != g_enemy_pose.end();)
+            {
+                bool found = false;
+                for (const EnemyRaw& r : rows) if (r.id == it->first) { found = true; break; }
+                it = found ? std::next(it) : g_enemy_pose.erase(it);
+            }
         }
         return !(seen > 0 && rows.empty());   // ponytail: skipped is only counted; add a log line when live data shows skips
     }
@@ -100,7 +129,7 @@ namespace
         {
             if (e.sys != f.sys) continue;
             MsEnemy m{};
-            m.id = e.id; m.sys = e.sys; m.hull = e.hull;
+            m.id = e.id; m.sys = e.sys; m.hull = e.hull; m.pad = e.flags;
             m.d_m = cmb_delta_m(f.ch, f.loc_raw, e.ch, e.loc, m.rel_m);
             v.push_back(m);
         }
@@ -326,15 +355,36 @@ namespace
         }
         std::vector<UObject*> es;
         UObjectGlobals::FindAllOf(STR("EnemyShipObject"), es);
+        int logged = 0;
         for (UObject* e : es)
         {
             if (!alive(e) || e->GetName().rfind(STR("Default__"), 0) == 0) continue;
-            static const TCHAR* eprops[6] = { STR("BulletSpeed"), STR("BulletLifetime"), STR("AttackDistance"), STR("DetectionDistance"), STR("MaxHealth"), STR("TimeBetweenShots") };
-            std::wstring line = STR("combat probe enemy id=") + widen(std::to_string(obj_id(e)));
-            for (const TCHAR* pn : eprops) { std::string t = cmb_prop_text(e, pn); line += std::wstring(STR(" ")) + pn + STR("=") + widen(t == "n/a" ? std::string("?") : t); }
-            msc_log(line);
-            break;
+            if (logged++ >= 12) break;
+            auto num = [&](const TCHAR* pn) { std::string t = cmb_prop_text(e, pn); return widen(t == "n/a" ? std::string("?") : t); };
+            int32_t hp = 0;
+            const bool hok = get_int_prop(e, STR("Health"), hp);
+            std::wstring task = STR("?");
+            if (FProperty* tp = e->GetPropertyByNameInChain(STR("CurrentTask"))) task = widen(std::to_string(*(reinterpret_cast<const uint8_t*>(e) + tp->GetOffset_Internal())));
+            // UNVERIFIED spawner prop name: try int SpawnerID/SpawnerId, then object Spawner
+            std::wstring sp = STR("?");
+            int32_t sv = 0;
+            if (get_int_prop(e, STR("SpawnerID"), sv) || get_int_prop(e, STR("SpawnerId"), sv)) sp = widen(std::to_string(sv));
+            else if (FProperty* op = e->GetPropertyByNameInChain(STR("Spawner")))
+                if (auto* ofp = CastField<FObjectProperty>(op)) { UObject* so = ofp->GetPropertyValue(reinterpret_cast<uint8_t*>(e) + op->GetOffset_Internal()); if (alive(so)) sp = widen(std::to_string(obj_id(so))); }
+            msc_log(STR("combat probe enemy id=") + widen(std::to_string(obj_id(e))) + STR(" class=") + e->GetClassPrivate()->GetName() + STR(" task=") + task +
+                    STR(" hull=") + (hok ? widen(std::to_string(hp)) : std::wstring(STR("?"))) + STR("/") + num(STR("MaxHealth")) + STR(" spawner=") + sp +
+                    STR(" alive=") + (hok && hp > 0 ? STR("1") : STR("0")));
         }
+        std::vector<UObject*> sts;
+        UObjectGlobals::FindAllOf(STR("EnemyStationObject"), sts);
+        int sn = 0;
+        std::wstring sids;
+        for (UObject* s : sts)
+        {
+            if (!alive(s) || s->GetName().rfind(STR("Default__"), 0) == 0) continue;
+            if (sn++ < 8) sids += (sids.empty() ? STR("") : STR(",")) + widen(std::to_string(obj_id(s)));
+        }
+        msc_log(STR("combat probe stations n=") + widen(std::to_string(sn)) + STR(" ids=") + sids);
         return true;
     }
 }

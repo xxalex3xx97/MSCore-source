@@ -106,6 +106,14 @@ int main()
     CHECK(cmb_min_range({-1, 0}) == -1);
     CHECK(cmb_min_range({500, -1, 200, 900}) == 200);
     CHECK(sizeof(MsEnemy) == 48);
+    CHECK(cmb_enemy_flags(false, false, 0) == 0);
+    CHECK(cmb_enemy_flags(true, false, 0) == 1);
+    CHECK(cmb_enemy_flags(false, true, 0) == 2);
+    CHECK(cmb_enemy_flags(true, true, 7) == (1 | 2 | (7 << 8)));
+    CHECK(cmb_flag_alive(cmb_enemy_flags(true, false, 3)) && !cmb_flag_moved(cmb_enemy_flags(true, false, 3)));
+    CHECK(!cmb_flag_alive(cmb_enemy_flags(false, true, 3)) && cmb_flag_moved(cmb_enemy_flags(false, true, 3)));
+    CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0xFF)) == 0xFF);
+    CHECK(cmb_flag_task(cmb_enemy_flags(true, true, 0x1AB)) == 0xAB);
 
     std::printf("test_combat_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);
     return g_fail ? 1 : 0;
