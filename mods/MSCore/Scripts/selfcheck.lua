@@ -245,6 +245,7 @@ function M.run(MSCore)
     check("ships.mining_caps", nativeCheck("mining_caps"))   -- API 15, C++ check_one "mining_caps" (first live ship)
     check("ships.ship_caps", nativeCheck("ship_caps"))   -- API 17
     check("stations.dock_kind", nativeCheck("dock_kind"))   -- API 19
+    check("ships.threat", nativeCheck("threat"))   -- API 21
     check("fleets.list", function()
         if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end
         local l, why = MSCore.fleets.list()

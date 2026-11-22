@@ -41,6 +41,7 @@ using namespace RC::Unreal;
 #include "msc_flight.hpp"
 #include "msc_repair.hpp"
 #include "msc_combat.hpp"
+#include "msc_threat.hpp"
 #include "msc_stnames.hpp"
 #include "msc_fleets.hpp"
 #include "msc_rockreg.hpp"
@@ -254,6 +255,14 @@ namespace
             if (!module_ok(STR("combat"))) { detail = "combat off: " + caps_text(); return false; }
             bool ok = false;
             if (!seh_run([&] { ok = combat_selftest(detail); })) { detail = "combat selftest faulted"; module_disable(STR("combat"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "threat")
+        {
+            if (!module_ok(STR("threat"))) { detail = "threat off: " + caps_text(); return false; }
+            if (g_threat_off.load()) { detail = "SKIP threat_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = threat_selftest(detail); })) { detail = "threat selftest faulted"; module_disable(STR("threat"), STR("selfcheck fault")); return false; }
             return ok;
         }
         if (name == "chunks")
@@ -1203,6 +1212,7 @@ namespace
         if (!dgOnce) { dgOnce = true; if (!mscl::fs::exists(dir / L"designer_guard_off.txt", ec)) dg_install(); }
         if (mscl::fs::exists(dir / L"weapons_probe.txt", ec)) g_weapons_probe.store(true);
         if (mscl::fs::exists(dir / L"combat_on.txt", ec)) g_combat_on.store(true);
+        if (mscl::fs::exists(dir / L"threat_off.txt", ec)) g_threat_off.store(true);
         if (mscl::fs::exists(dir / L"combat_fire_console.txt", ec)) g_fire_console.store(true);
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
         if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
@@ -1406,7 +1416,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); combat_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); combat_resolve(); threat_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1424,7 +1434,7 @@ extern "C"
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
     // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy (combat module)
+    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy (combat module); 21 = MSCore_ship_threat (threat module, on unless Mods\MSCore\threat_off.txt exists)
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1701,6 +1711,14 @@ extern "C"
     {
         try { return ship_weapon_range(sid); }
         catch (...) { module_disable(STR("combat"), STR("ship_weapon_range exception")); return -1; }
+    }
+
+    // threat (API 21, on unless Mods\MSCore	hreat_off.txt exists): IsShipInCombat + TargettedBy of ship sid. hostile_n = entries within range_m, far_n = beyond range_m or unresolved,
+    // nearest_d_m = nearest hostile in metres (-1 none). Any out pointer may be null. 1 ok, 0 fail or off.
+    MSCORE_API int MSCore_ship_threat(int sid, double range_m, int* hostile_n, int* far_n, int* in_combat, double* nearest_d_m)
+    {
+        try { return ship_threat(sid, range_m, hostile_n, far_n, in_combat, nearest_d_m); }
+        catch (...) { module_disable(STR("threat"), STR("ship_threat exception")); return 0; }
     }
 
     // dock kind (API 19): 1 industrial, 0 normal, -1 unknown, -2 stations module off.
