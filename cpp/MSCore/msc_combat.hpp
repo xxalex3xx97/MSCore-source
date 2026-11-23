@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "msc_combat_logic.hpp"
+#include "msc_simrate.hpp"
 
 namespace
 {
@@ -424,7 +425,7 @@ namespace
         return o;
     }
 
-    // WHAT: enemy velocity (API 23). v_mps = per-frame metres * kSimFps (UNVERIFIED fps); v_frame (optional) = per-frame metres. Read-only.
+    // WHAT: enemy velocity (API 23). v_mps = per-frame metres * sim_tps_conv() (measured sim ticks/s, fallback 22.4); v_frame (optional) = per-frame metres. Read-only.
     // Probe line once per enemy id per 5 s.
     bool enemy_velocity(int id, double* v_mps, double* v_frame, std::wstring& err)
     {
@@ -439,7 +440,7 @@ namespace
                 UObject* o = cmb_enemy(id, &dead);
                 if (!o) { err = dead ? STR("enemy dead") : STR("enemy not found"); return; }
                 if (!cmb_vec_read(o, STR("CachedVelocity"), raw, shape)) { err = STR("CachedVelocity unreadable"); return; }
-                sp = cmb_vel_mps(raw, kCmbRawPerM, kSimFps, vf, vm);   // UNVERIFIED: double shape also treated as raw units
+                sp = cmb_vel_mps(raw, kCmbRawPerM, sim_tps_conv(), vf, vm);   // UNVERIFIED: double shape also treated as raw units
                 ok = sp >= 0;
             }))
         {
@@ -521,13 +522,13 @@ namespace
                 if (tp && (CastField<FByteProperty>(tp) || CastField<FEnumProperty>(tp)) && tp->GetSize() == 1)
                     r[0] = *(reinterpret_cast<const uint8_t*>(o) + tp->GetOffset_Internal());
                 else if (cmb_num(o, STR("CurrentTask"), d)) r[0] = d;
-                if (cmb_scaled(o, STR("AttackSpeed"), d)) r[1] = cmb_rate_per_s(true, d, kSimFps);
+                if (cmb_scaled(o, STR("AttackSpeed"), d)) r[1] = cmb_rate_per_s(true, d, sim_tps_conv());
                 static const TCHAR* const ints[5] = {STR("Fatigue"), STR("FatigueFrames"), STR("FlyAwayFrames"), STR("AvoidFrames"), STR("TargetID")};
                 for (int i = 0; i < 5; ++i) if (cmb_num(o, ints[i], d)) r[2 + i] = d;   // int, or PNum raw (frames/ids are plain ints)
-                if (cmb_scaled(o, STR("PathfindingRotSpeed"), d)) r[10] = cmb_rate_per_s(true, d, kSimFps);
+                if (cmb_scaled(o, STR("PathfindingRotSpeed"), d)) r[10] = cmb_rate_per_s(true, d, sim_tps_conv());
                 if (cmb_scaled(o, STR("AttackDistance"), d)) r[11] = d;
                 if (cmb_scaled(o, STR("AvoidanceDistance"), d)) r[12] = d;
-                if (cmb_scaled(o, STR("AvoidanceSpeed"), d)) r[13] = cmb_rate_per_s(true, d, kSimFps);
+                if (cmb_scaled(o, STR("AvoidanceSpeed"), d)) r[13] = cmb_rate_per_s(true, d, sim_tps_conv());
                 double tl[3];
                 int64_t tc[3] = {0, 0, 0};
                 FProperty* cp = o->GetPropertyByNameInChain(STR("TargetChunkLocation"));

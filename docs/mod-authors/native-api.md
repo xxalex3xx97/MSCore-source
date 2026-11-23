@@ -223,6 +223,15 @@ The combat module is OFF until the file `Mods\MSCore\combat_on.txt` exists (read
 |---|---|---|---|
 | `MSCore_dock_kind` | `void* dock` | `int` | `1` industrial, `0` normal, `-1` unknown, `-2` stations module off. Rule in `cpp\MSCore\msc_dockkind.hpp`. Selfcheck `stations.dock_kind`. |
 
+## API 25: ballistics (on unless Mods\MSCore\ballistics_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_guns` | `int sid, double* out, wchar_t* err, int errlen` | `1` ok, `0` fail (err says why) | `out[8]` (caller MUST pass 8): `0` bullet speed m/frame, `1` BulletLifetime frames, `2` range m (speed x lifetime, tick independent), `3` TimeBetweenShots frames (`0` unknown), `4` guns in the aim group, `5` distinct speeds, `6` min speed, `7` max speed. Aim group = primary, non-turret weapons with readable BulletSpeed and BulletLifetime; most guns wins, tie = slower speed. Samples the sim rate as a side effect: call every fight tick. Implausible values fail closed. |
+| `MSCore_sim_rate` | `double* tps, int* samples, double* age_s, wchar_t* err, int errlen` | `1` ok, `0` not measured yet (needs firing) or off | Sim ticks per wall second: median of the cannon `LastShotTime` stamp rate. `samples` = rates in the median, `age_s` = seconds since the last update. |
+
+Changed: `MSCore_enemy_velocity` and `MSCore_enemy_motion` convert per-frame values with the measured sim rate instead of 60 (the old 60 made speeds about 2.7x too high). Fallback 22.4 until measured. Selfcheck `ships.ballistics`. PROBE lines: `bullet_gun`, `bullet_speed mixed=1` (two speeds in one group), `sim_rate`.
+
 ## API 16: rock registry (0.8.15)
 
 One shared table of every resource asteroid, seeded from the save objects (class `SmallResourceAsteroidObject`), nearest to the ships first, cached on disk, kept current by a delete listener. Mods read it through these exports instead of walking the game. Source `cpp\MSCore\msc_rockreg.hpp` (game side) and `cpp\MSCore\msc_rockreg_logic.hpp` (pure logic, unit test `tests\test_rockreg.cpp`).

@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased - ballistics (API 25)
+- **New:** ballistics module, on unless `Mods\MSCore\ballistics_off.txt` exists: C exports `MSCore_ship_guns` (aim gun group: bullet speed per frame, lifetime, range, shot period, group size) and `MSCore_sim_rate` (measured sim ticks per second, median of the cannon `LastShotTime` rate). Native API 24 -> 25, kill switch module_disable("ballistics"), selfcheck ships.ballistics, PROBE bullet_gun / bullet_speed / sim_rate lines.
+- **Changed:** `MSCore_enemy_velocity` and `MSCore_enemy_motion` use the measured sim rate (fallback 22.4) instead of 60 (speeds were about 2.7x too high).
+
 ## Unreleased - dock kind (API 19)
 - **New:** C export MSCore_dock_kind(dock), Native API 18 -> 19, kill switch module_disable("stations"), selfcheck stations.dock_kind.
 

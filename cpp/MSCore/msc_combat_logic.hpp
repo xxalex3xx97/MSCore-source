@@ -108,6 +108,7 @@ namespace
     // WHAT: cannon reach in metres for a ship with n_cannons Cannon-class weapons, else -1.
     inline int cmb_cannon_reach(int n_cannons) { return n_cannons > 0 ? kObservedCannonReachM : -1; }
     // Simulation frames per second, used to turn per-frame enemy velocity into m/s. UNVERIFIED (assumed 60); calibrate from the PROBE enemy_vel lines.
+    // legacy, unused at runtime: conversions use sim_tps_conv()
     constexpr double kSimFps = 60.0;
     // WHAT: per-frame raw velocity -> per-frame metres (v_frame_m) and m/s (v_mps = per_frame_m * fps); returns |v_mps|. raw_per_m <= 0 or fps <= 0 -> -1.
     inline double cmb_vel_mps(const double raw_per_frame[3], double raw_per_m, double fps, double v_frame_m[3], double v_mps[3])
