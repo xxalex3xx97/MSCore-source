@@ -5,7 +5,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $bt   = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools'
 $inc  = Join-Path $root 'cpp\MSCore'
 $tmp  = if ($env:TEMP) { $env:TEMP } else { '/tmp' }
-$tests = @('tests\test_presence.cpp', 'tests\test_rockreg.cpp', 'tests\test_designer_stub.cpp', 'tests\test_wclass.cpp', 'tests\test_combat_logic.cpp', 'tests\test_dockkind.cpp', 'tests\test_threat_logic.cpp', 'tests\test_strafe_logic.cpp', 'tests\test_capture_logic.cpp', 'tests\test_ballistics_logic.cpp', 'tests\test_floaters_logic.cpp')
+$tests = @('tests\test_presence.cpp', 'tests\test_rockreg.cpp', 'tests\test_designer_stub.cpp', 'tests\test_wclass.cpp', 'tests\test_combat_logic.cpp', 'tests\test_dockkind.cpp', 'tests\test_threat_logic.cpp', 'tests\test_strafe_logic.cpp', 'tests\test_capture_logic.cpp', 'tests\test_ballistics_logic.cpp', 'tests\test_floaters_logic.cpp', 'tests\test_estation_logic.cpp')
 
 $vcvars = "$bt\VC\Auxiliary\Build\vcvars64.bat"
 $useCl = Test-Path $vcvars

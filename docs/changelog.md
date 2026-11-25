@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased - chunk stats (API 28)
+- **New:** C export `MSCore_chunk_stats(int* chunks, int* owners)`: distinct held chunks and owners with a cube. Container sizes only, no game reads. Native API 27 -> 28.
+- **Changed:** chunk hold cap removed (`CH_MAX_CHUNKS` 1,000,000; real limit = chunks the game can load).
+- **Changed:** `MsStationName.pad` flag bit0 = player-station class, bit1 = valid.
+
 ## Unreleased - floaters (API 27)
 - **New:** floaters module, on unless `Mods\MSCore\floaters_off.txt` exists: C export `MSCore_floaters` (floating ore per sector, `MsFloaterSec` 40 B: id, sys, count, ch). Selfcheck `ships.floaters`. One-time `PROBE floaters` log line (totals, class histogram, item crate count). Native API 27. Unverified in game.
 
