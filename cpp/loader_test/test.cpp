@@ -307,6 +307,22 @@ int main(int argc, char** argv) {
     CHECK(check_mod(mod, "0.5.0").state == "update");
     CHECK(check_mod(mod, "0.0.1").state == "skipped:min_native");
 
+    // min_ue4ss gate: no marker = 3.0.1 -> refused; marker 4.0.0 -> allowed
+    write_text(rel / L"manifest.txt", std::string("name=M\nversion=1.1.0\nzip=x.zip\nsha256=") + sha +
+                                          "\nsize=" + std::to_string(m.size) + "\nmin_ue4ss=4.0.0\n");
+    CHECK(parse_manifest(read_text(rel / L"manifest.txt"), m, err));
+    CHECK(m.min_ue4ss == "4.0.0");
+    fs::remove(P.ue4ss / L"ue4ss_version.txt");
+    CHECK(installed_ue4ss(P) == "3.0.1");
+    CHECK(check_mod(mod, "0.5.0", &P).state == "skipped:min_ue4ss");
+    fs::create_directories(P.ue4ss);
+    write_text(P.ue4ss / L"ue4ss_version.txt", "4.0.0\n");
+    CHECK(installed_ue4ss(P) == "4.0.0");
+    CHECK(check_mod(mod, "0.5.0", &P).state == "update");
+    write_text(rel / L"manifest.txt", std::string("name=M\nversion=1.1.0\nzip=x.zip\nsha256=") + sha +
+                                          "\nsize=" + std::to_string(m.size) + "\nmin_mscore_native=0.1.0\n");
+    CHECK(parse_manifest(read_text(rel / L"manifest.txt"), m, err));
+
     CHECK(stage_update(P, mod, m, err));
     CHECK(read_text(P.core / L"pending.txt") == "M|1.1.0\n");
     CHECK(read_text(P.core / L"updates" / L"M" / L"1.1.0" / L"Mods" / L"M" / L"dlls" / L"main.dll") == "NEW");

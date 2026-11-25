@@ -1337,6 +1337,7 @@ namespace
         {
             if (g_loader_stop) return;
             mscl::Check c = mscl::check_mod(m, kVersion);
+            if (c.state == "update" && !mscl::ue4ss_ok(paths, c.m)) c.state = "skipped:min_ue4ss";   // newer mod needs a newer UE4SS: the manager upgrades it
             const std::string state = c.state;
             if (state == "update") say("[MSCore] update available " + m.name + " " + m.version + "->" + c.m.version);
             else if (state.compare(0, 6, "error:") == 0) say("[MSCore] loader: " + m.name + " " + state);

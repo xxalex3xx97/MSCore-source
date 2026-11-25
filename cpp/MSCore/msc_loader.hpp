@@ -694,7 +694,7 @@ inline std::vector<Mod> scan_mods(const Paths& p) {
 }
 
 struct Manifest {
-    std::string name, version, zip, sha256, min_native, ue4ss_version, ue4ss_zip, ue4ss_sha256;
+    std::string name, version, zip, sha256, min_native, min_ue4ss, ue4ss_version, ue4ss_zip, ue4ss_sha256;
     long long size = 0, ue4ss_size = 0;
     std::vector<Dep> requires_;
 };
@@ -715,6 +715,7 @@ inline bool parse_manifest(const std::string& text, Manifest& m, std::string& er
     m.sha256 = kv["sha256"];
     m.size = std::strtoll(kv["size"].c_str(), nullptr, 10);
     m.min_native = kv["min_mscore_native"];
+    m.min_ue4ss = kv["min_ue4ss"];
     m.ue4ss_version = kv["ue4ss_version"];
     m.ue4ss_zip = kv["ue4ss_zip"];
     m.ue4ss_sha256 = kv["ue4ss_sha256"];
@@ -758,10 +759,23 @@ inline std::vector<std::string> dependents_of(const Paths& p, const std::string&
     return out;
 }
 
+// UE4SS version marker: the manager writes ue4ss\ue4ss_version.txt when it installs the ue4ss zip. No marker = a pre-v4 install (3.0.1).
+// WHY: UE4SS.dll has no readable file version, and a mod DLL built on UE4SS v4 cannot load on 3.x (C++ ABI).
+inline std::string installed_ue4ss(const Paths& p) {
+    std::ifstream f(p.ue4ss / L"ue4ss_version.txt");
+    std::string s;
+    std::getline(f, s);
+    s = trim(s);
+    return s.empty() ? "3.0.1" : s;
+}
+inline bool ue4ss_ok(const Paths& p, const Manifest& m) {
+    return m.min_ue4ss.empty() || ver_cmp(installed_ue4ss(p), m.min_ue4ss) >= 0;
+}
+
 struct Check {
     Mod mod;
     Manifest m;
-    std::string state;  // uptodate | update | needs:<repo> | error:<msg> | skipped:min_native
+    std::string state;  // uptodate | update | needs:<repo> | error:<msg> | skipped:min_native | skipped:min_ue4ss
 };
 
 // p (optional): when set, an installed mod whose requires_ is not satisfied gets state needs:<repo>.
@@ -779,6 +793,10 @@ inline Check check_mod(const Mod& mod, const std::string& core_native_ver, const
     }
     if (!c.m.min_native.empty() && ver_cmp(core_native_ver, c.m.min_native) < 0) {
         c.state = "skipped:min_native";
+        return c;
+    }
+    if (p && !ue4ss_ok(*p, c.m)) {
+        c.state = "skipped:min_ue4ss";
         return c;
     }
     c.state = ver_cmp(c.m.version, mod.version) > 0 ? "update" : "uptodate";

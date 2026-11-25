@@ -3,19 +3,20 @@
 # Reads game files from the installed copy (read-only). Usage: powershell -File scripts\release.ps1 -Version 0.7.6
 # Env overrides: MS_GAME_DIR (game root), MS_UE4SS_ROOT (RE-UE4SS source tree, same as build.ps1).
 # MS_UE4SS_ROOT: build.ps1 compiles MSCore.dll into that tree. If the dev probe build shares the default tree
-#   (F:\MSDemoMods\build\RE-UE4SS), set MS_UE4SS_ROOT to an isolated mirror (e.g. F:\mscore-build\RE-UE4SS) first.
+#   (F:\MSDemoMods\build\RE-UE4SS), set MS_UE4SS_ROOT to an isolated mirror (e.g. F:\mscore-build\RE-UE4SS-v4) first. Default is the UE4SS v4 tree.
 # Dry run: there is no -DryRun switch. The script never publishes, tags, uploads or copies zips anywhere.
 #   It writes only: the RE-UE4SS build tree (build.ps1), build\MSCoreManager.exe (build-manager.ps1),
 #   build\release\<Version>\ (zips, manifest.txt, exe), and a temp dir that is removed at the end. Safe to run.
 param(
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
-    [string]$Ue4ssVersion = '3.0.1-beta',
+    [string]$Ue4ssVersion = '4.0.0',   # plain x.y.z: ver_cmp can't parse suffixes
+    [string]$MinUe4ss = '4.0.0',       # MSCore.dll is built on UE4SS v4: refuse installs on older UE4SS (manager + in-game loader gate)
     [string]$MinNative = '0.5.0'   # oldest MSCore native that may be updated by this manifest (kept at 0.5.0)
 )
 $ErrorActionPreference = 'Stop'
 $root  = Split-Path -Parent $PSScriptRoot
 $game  = if ($env:MS_GAME_DIR) { $env:MS_GAME_DIR } else { 'F:\SteamLibrary\steamapps\common\Main Sequence Demo' }
-$re    = if ($env:MS_UE4SS_ROOT) { $env:MS_UE4SS_ROOT } else { 'F:\MSDemoMods\build\RE-UE4SS' }
+$re    = if ($env:MS_UE4SS_ROOT) { $env:MS_UE4SS_ROOT } else { 'F:\mscore-build\RE-UE4SS-v4' }
 $win64 = "$game\Windows\MainSequence\Binaries\Win64"
 $dll   = "$re\build\Game__Shipping__Win64\bin\MSCore.dll"
 $tar   = Join-Path $env:SystemRoot 'System32\tar.exe'   # Git's tar cannot write zip
@@ -43,7 +44,7 @@ if (-not (Test-Path $exe)) { throw "missing $exe" }
 
 # game UE4SS files (read-only source)
 $ue = Join-Path $win64 'ue4ss'
-$ueFiles = @((Join-Path $win64 'dwmapi.dll'), (Join-Path $ue 'UE4SS.dll'), (Join-Path $ue 'UE4SS-settings.ini'), (Join-Path $ue 'LICENSE'))
+$ueFiles = @((Join-Path $win64 'dwmapi.dll'), (Join-Path $ue 'UE4SS.dll'), (Join-Path $ue 'UE4SS-settings.ini'), (Join-Path $ue 'UE4SS-LICENSE.txt'))
 foreach ($f in $ueFiles) { if (-not (Test-Path -LiteralPath $f)) { throw "missing game file $f (paths differ?)" } }
 $third = Join-Path $ue 'THIRD-PARTY.txt'
 $hasThird = Test-Path -LiteralPath $third
@@ -103,6 +104,7 @@ try {
         "sha256=$zSha"
         "size=$((Get-Item $zipPath).Length)"
         "min_mscore_native=$MinNative"
+        "min_ue4ss=$MinUe4ss"
         "ue4ss_version=$Ue4ssVersion"
         "ue4ss_zip=$ueZipName"
         "ue4ss_sha256=$uSha"
