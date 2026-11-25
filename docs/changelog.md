@@ -5,6 +5,12 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased - floaters (API 27)
+- **New:** floaters module, on unless `Mods\MSCore\floaters_off.txt` exists: C export `MSCore_floaters` (floating ore per sector, `MsFloaterSec` 40 B: id, sys, count, ch). Selfcheck `ships.floaters`. One-time `PROBE floaters` log line (totals, class histogram, item crate count). Native API 27. Unverified in game.
+
+## Unreleased - enemy stations (API 26)
+- **New:** estations module, on unless `Mods\MSCore\estations_off.txt` exists: C export `MSCore_enemy_stations` (enemy stations in the ship's system, nearest first, `MsEnemyStation` 64 B: id, sys, hull, max_hull, flags, build_pct, d_m, rel_m, radius_m). Radius is not read yet (flag bit2 clear). Native API 25 -> 26, kill switch module_disable("estations"), selfcheck ships.estations, PROBE estation / estation_collider lines. Game names are unverified (static RE, never run live).
+
 ## Unreleased - ballistics (API 25)
 - **New:** ballistics module, on unless `Mods\MSCore\ballistics_off.txt` exists: C exports `MSCore_ship_guns` (aim gun group: bullet speed per frame, lifetime, range, shot period, group size) and `MSCore_sim_rate` (measured sim ticks per second, median of the cannon `LastShotTime` rate). Native API 24 -> 25, kill switch module_disable("ballistics"), selfcheck ships.ballistics, PROBE bullet_gun / bullet_speed / sim_rate lines.
 - **Changed:** `MSCore_enemy_velocity` and `MSCore_enemy_motion` use the measured sim rate (fallback 22.4) instead of 60 (speeds were about 2.7x too high).

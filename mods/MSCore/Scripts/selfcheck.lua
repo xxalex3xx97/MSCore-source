@@ -248,6 +248,8 @@ function M.run(MSCore)
     check("ships.threat", nativeCheck("threat"))   -- API 21
     check("ships.strafe", nativeCheck("strafe"))   -- API 22
     check("ships.ballistics", nativeCheck("ballistics"))   -- API 25
+    check("ships.estations", nativeCheck("estations"))   -- API 26
+    check("ships.floaters", nativeCheck("floaters"))   -- API 27
     check("deveval", function()
         local D = MSCore.deveval
         if not D then return "SKIP", "module not loaded" end

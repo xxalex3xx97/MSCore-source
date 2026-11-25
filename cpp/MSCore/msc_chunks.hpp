@@ -27,7 +27,7 @@
 namespace
 {
     constexpr int64_t CH_PLAYER_ZONE = 2;               // the player's own loaded set: PlayerCachedChunkLocation +- this (ChunkLoadingDistance)
-    constexpr size_t CH_MAX_CHUNKS = 150;               // cap on distinct held chunks (all owners together)
+    constexpr size_t CH_MAX_CHUNKS = 1000000;           // no practical cap on distinct held chunks (user 2026-11-25: cap removed)
     constexpr ULONGLONG CH_LOG_EVERY_MS = 10000;        // refusal lines that repeat every call are logged at most this often (ms)
     constexpr size_t CH_KEY_SIZE = 12;
 

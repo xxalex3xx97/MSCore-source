@@ -2,6 +2,7 @@
 // WHAT: native unit test for cpp/MSCore/msc_capture_logic.hpp (change detection, rate counter). Pure C++.
 #include <cstdio>
 #include "msc_capture_logic.hpp"
+#include "msc_log_logic.hpp"
 
 static int g_fail = 0, g_run = 0;
 #define CHECK(cond) do { ++g_run; if (!(cond)) { ++g_fail; std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); } } while (0)
@@ -24,6 +25,13 @@ int main()
     CHECK(!cap_rate_tick(r, 2500, n));
     cap_rate_add(r);
     CHECK(cap_rate_tick(r, 3000, n) && n == 1);
+
+    CHECK(!msc_log_pass(L"PROBE input_capture rate cmds_per_s=0", false));
+    CHECK(msc_log_pass(L"PROBE input_capture rate cmds_per_s=0", true));
+    CHECK(!msc_log_pass(L"SCAN walk ship", false));
+    CHECK(msc_log_pass(L"PROBE input_capture fault, probe off", false));
+    CHECK(msc_log_pass(L"selfcheck ok", false));
+    CHECK(msc_log_pass(L"SCAN native fault: native scan OFF", false));
 
     std::printf("test_capture_logic: %d checks, %d failed\n", g_run, g_fail);
     return g_fail ? 1 : 0;

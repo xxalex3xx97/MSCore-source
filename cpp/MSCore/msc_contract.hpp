@@ -24,6 +24,10 @@ namespace
     constexpr const char* kClsAsteroid = "SmallResourceAsteroidObject";
     constexpr const char* kClsAsteroidActor = "BP_GenericResourceAsteroid_C";
     constexpr const char* kClsFloatingOre = "BP_FloatingOre_C";
+    constexpr const char* kClsFloatingOreObject = "FloatingOreObject";   // sim object of a floater (per-sector counts, msc_floaters.hpp). UNVERIFIED until PROBE floaters
+    constexpr const char* kClsRelicShardDrop = "BP_RelicShardDrop_C";   // actor, UNVERIFIED (vault game-map-bp-sim-ui.md)
+    constexpr const char* kClsRelicCoreDrop = "BP_RelicCoreDrop_C";     // actor, UNVERIFIED
+    constexpr const char* kClsItemCrateObject = "ItemCrateObject";      // info count only (PROBE floaters crates=)
     constexpr const char* kClsStation = "StationObject";
     constexpr const char* kClsPlayerStation = "BP_StationObject_C";
     constexpr const char* kClsContainer = "ContainerObject";
@@ -36,6 +40,7 @@ namespace
     struct ClassName { const char* logical; const char* name; };
     constexpr ClassName kClasses[] = {
         { "asteroid", kClsAsteroid }, { "asteroid_actor", kClsAsteroidActor }, { "floating_ore", kClsFloatingOre },
+        { "floating_ore_object", kClsFloatingOreObject }, { "relic_shard_drop", kClsRelicShardDrop }, { "relic_core_drop", kClsRelicCoreDrop }, { "item_crate_object", kClsItemCrateObject },
         { "station", kClsStation }, { "player_station", kClsPlayerStation }, { "container", kClsContainer },
         { "container_actor", kClsContainerActor }, { "item_crate", kClsItemCrate }, { "ship", kClsShip }, { "fleet_tag", kClsFleetTag }, { "enemy_ship", kClsEnemyShip },
         { "player_obj", kClsPlayerObj } };

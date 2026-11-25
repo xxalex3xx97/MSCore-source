@@ -47,6 +47,7 @@ Every export, in the order of the groups below. Args are listed without the func
 | `MSCore_chunk_hold2` | `int owner, int sys, const long long* ch3, int radius, wchar_t* err, int errlen` | `int` (`0` fail, `1` set, `2` unchanged) | Same as `MSCore_chunk_hold` with `radius`: `1` = 3x3x3 cube, `0` = centre chunk only. Other values fail with `radius must be 0 or 1`. | Not verified in game |
 | `MSCore_chunk_release` | `int owner` | `int` (`1` done, `0` exception) | Drops the owner's cube. `1` also when it had none. | Not verified in game |
 | `MSCore_chunk_ready` | `wchar_t* why, int len` | `int` (`1` ready, `0` not) | `1` when the chunk-hold natives were found by byte pattern. `why` gets the reason otherwise. Read-only. | Not verified in game |
+| `MSCore_chunk_stats` | `int* chunks, int* owners` | `1` ok, `0` fail (both set to 0) | Distinct chunks held and owners with a chunk-hold cube (API 28). Read-only. | Not verified in game |
 | `MSCore_send_typed` | `int receiver, void* cmd, int type_id, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `cmd` to `receiver` with AddInputCommand. Writes `type_id` at `cmd+0x28` only when that int is `0`. `type_id` `0` is refused. | Not verified in game |
 | `MSCore_find_buildable` | `const char* dat_name` | `void*` (Buildable UObject, or `NULL`) | Buildable data asset by object name, for example `DAT_Refinery`. First match. | Not verified in game |
 | `MSCore_build_place` | `int station, void* buildable, int x, int y, int height, int rot, const uint8_t* cfg, int cfglen, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | BuildInput at receiver `0`: `buildable` = `MSCore_find_buildable` result, `AttachTargetID` = `station`, GridTransform (`x`, `y`, `height`, `rot`), identity quat, `MachineConfigData` = `cfg` (`NULL`/`0` = none). Type id `0x2e`. | Not verified in game |
@@ -175,6 +176,8 @@ Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_
 |---|---|---|---|
 | `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Each call does a full scan (the count call and the fill call are two scans). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
 
+`MsStationName.pad` flags (Fleet reads them as `player`): bit0 = station class is `BP_StationObject_C` (player station), bit1 = flag valid (set by this build; old builds leave `pad` 0 = unknown).
+
 ## API 13: fleets
 
 | Export | Signature | Returns | Notes |
@@ -222,6 +225,18 @@ The combat module is OFF until the file `Mods\MSCore\combat_on.txt` exists (read
 | Export | Args | Returns | Notes |
 |---|---|---|---|
 | `MSCore_dock_kind` | `void* dock` | `int` | `1` industrial, `0` normal, `-1` unknown, `-2` stations module off. Rule in `cpp\MSCore\msc_dockkind.hpp`. Selfcheck `stations.dock_kind`. |
+
+## API 27: floaters (on unless Mods\MSCore\floaters_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_floaters` | `MsFloaterSec* out, int max` | row count, `-1` fault (module turns off), `-2` module off | Floating ore per sector: one row per sector with at least one floater, count desc then id asc, up to `max` rows. `MsFloaterSec` (40 B): `int32 id, sys, count, pad; int64 ch[3]` (sector chunk). Cached 10 s. Unverified in game: `FloatingOreObject` and its chunk property, see the `PROBE floaters` line (`classes=`, `crates=`). |
+
+## API 26: enemy stations (on unless Mods\MSCore\estations_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_enemy_stations` | `int sid, double radius_m, MsEnemyStation* out, int max` | total count, `-1` fault (module turns off), `-2` module off | Enemy stations in the system of ship `sid` within `radius_m`, nearest first, up to `max` rows. `MsEnemyStation` (64 B): `int32 id, sys, hull, max_hull, flags, build_pct; double d_m, rel_m[3], radius_m`. `rel_m` = station minus ship, world axes. flags: bit0 alive (hull > 0), bit1 hull unreadable (hull = -1, not targetable), bit2 radius known (else `radius_m = -1`). `build_pct` -1 = unknown. Unverified in game. |
 
 ## API 25: ballistics (on unless Mods\MSCore\ballistics_off.txt exists)
 

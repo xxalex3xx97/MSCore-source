@@ -123,6 +123,9 @@ namespace
                 if (!alive(o) || o->GetName().rfind(STR("Default__"), 0) == 0) return;
                 r.id = obj_id(o);
                 if (r.id <= 0) return;
+                // pad flags for the Fleet mod: bit1 = flag valid, bit0 = class is the player station (kClsPlayerStation)
+                const std::wstring cls(o->GetClassPrivate()->GetName());
+                r.pad = 2 | (cls == widen(kClsPlayerStation) ? 1 : 0);
                 name_field_copy(r.name, 96, stn_name(o));   // name from kStnCands
                 keep = true;
             });
