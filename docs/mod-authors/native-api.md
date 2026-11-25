@@ -8,7 +8,7 @@ nav_order: 3
 
 The native part is `MSCore.dll`, installed as `ue4ss\Mods\MSCore\dlls\main.dll`. It exports C functions that other native mods (C++ UE4SS mods) can call with `GetProcAddress`.
 
-**Native API version: 16.** `MSCore_api()` returns `16`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section). Version 16 added the rock registry exports `MSCore_rockreg_*` (API 16 section).
+**Native API version: 28.** `MSCore_api()` returns `28`. This counter is separate from the Lua API version (3). Check it before you use the other exports. Version 3 added `MSCore_scan`, `MSCore_chunk_hold`, `MSCore_chunk_release` and `MSCore_chunk_ready`. A mod that needs them refuses to load below 3. Version 4 added the factory exports `MSCore_send_typed` to `MSCore_inv_move` (see the API 4 section). A mod that needs them checks `MSCore_api() >= 4`. Version 5 added the station block natives (`add_block`, `remove_block`, `pending`, `read_block_class`). They are Lua only, so there is no new C export in version 5 (see the API 5 section). Version 6 added `read_docks` (Lua only), the block id column of `read_station`, and its 9th column `mids` (child MachineIDs of each block, comma-separated; see `msc_station.hpp`). Version 7 added `MSCore_chunk_hold2` (radius 0 or 1; see the table row below). Version 8 added `MSCore_class` and `MSCore_scan_rocks`. Version 9 added `MSCore_ship_shields`. Version 10 added the flight exports (see the API 10 section). Version 11 added `MSCore_ship_repair` and `MSCore_ship_repair_need` (API 11 section). Version 12 added `MSCore_stations` (API 12 section). Version 13 added `MSCore_fleet_tags` and `MSCore_fleet_ships` (API 13 section). Version 14 added `MSCore_ship_hull` (API 14 section). Version 15 added `MSCore_ship_mining_caps` and `MSCore_presence_step` (API 15 section). Version 16 added the rock registry exports `MSCore_rockreg_*` (API 16 section). Version 17 added `MSCore_ship_caps` (API 17 section). Version 18 added `MSCore_enemies_near`, `MSCore_ship_fire` and `MSCore_ship_weapon_range` (API 18 section). Version 19 added `MSCore_dock_kind` (API 19 section). Version 20 added `MSCore_spawn_practice_enemy`. Version 21 added `MSCore_ship_threat`. Version 22 added `MSCore_ship_strafe`, `MSCore_ship_strafe_zero` and `MSCore_strafe_tick`. Version 23 added `MSCore_enemy_velocity` and `MSCore_enemy_aim`. Version 24 added `MSCore_enemy_motion`. Version 25 added `MSCore_ship_guns` and `MSCore_sim_rate`. Version 26 added `MSCore_enemy_stations`. Version 27 added `MSCore_floaters`. Version 28 added `MSCore_chunk_stats` (distinct held chunks and owners).
 
 Conventions: all exports use the C calling convention and are declared `extern "C"`. Pointers are game `UObject*` values as `void*`. Chunk and location arrays hold 3 `long long` values in `X, Y, Z` order.
 
@@ -18,7 +18,7 @@ Every export, in the order of the groups below. Args are listed without the func
 
 | Export | Args | Returns | What it does | Status |
 |---|---|---|---|---|
-| `MSCore_api` | `void` | `int` (`16`) | Native API version. Check it first. | Not verified in game |
+| `MSCore_api` | `void` | `int` (`28`) | Native API version. Check it first. | Not verified in game |
 | `MSCore_add_input` | `int receiver, void* cmd, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `DMSPlayerController.AddInputCommand`. `receiver` = ship id. `cmd` = live input command UObject. Does not apply the ShipMovementInputCommand type id fix that `cmd.send` applies. | In game (MiningBench) |
 | `MSCore_view_send` | `int cid, long long yaw_raw, long long pitch_raw, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sets the view offset. `cid` = PilotConsole ID. `yaw_raw` and `pitch_raw` are raw values, 65536 per degree. | In game (MiningBench) |
 | `MSCore_throttle` | `int sid, int delta, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends one ShipMovementInputCommand with `DeltaThrottle = delta`. `sid` = ship id. | In game (MiningBench) |
@@ -47,6 +47,7 @@ Every export, in the order of the groups below. Args are listed without the func
 | `MSCore_chunk_hold2` | `int owner, int sys, const long long* ch3, int radius, wchar_t* err, int errlen` | `int` (`0` fail, `1` set, `2` unchanged) | Same as `MSCore_chunk_hold` with `radius`: `1` = 3x3x3 cube, `0` = centre chunk only. Other values fail with `radius must be 0 or 1`. | Not verified in game |
 | `MSCore_chunk_release` | `int owner` | `int` (`1` done, `0` exception) | Drops the owner's cube. `1` also when it had none. | Not verified in game |
 | `MSCore_chunk_ready` | `wchar_t* why, int len` | `int` (`1` ready, `0` not) | `1` when the chunk-hold natives were found by byte pattern. `why` gets the reason otherwise. Read-only. | Not verified in game |
+| `MSCore_chunk_stats` | `int* chunks, int* owners` | `1` ok, `0` fail (both set to 0) | Distinct chunks held and owners with a chunk-hold cube (API 28). Read-only. | Not verified in game |
 | `MSCore_send_typed` | `int receiver, void* cmd, int type_id, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | Sends `cmd` to `receiver` with AddInputCommand. Writes `type_id` at `cmd+0x28` only when that int is `0`. `type_id` `0` is refused. | Not verified in game |
 | `MSCore_find_buildable` | `const char* dat_name` | `void*` (Buildable UObject, or `NULL`) | Buildable data asset by object name, for example `DAT_Refinery`. First match. | Not verified in game |
 | `MSCore_build_place` | `int station, void* buildable, int x, int y, int height, int rot, const uint8_t* cfg, int cfglen, wchar_t* err, int errlen` | `int` (1 ok, 0 fail) | BuildInput at receiver `0`: `buildable` = `MSCore_find_buildable` result, `AttachTargetID` = `station`, GridTransform (`x`, `y`, `height`, `rot`), identity quat, `MachineConfigData` = `cfg` (`NULL`/`0` = none). Type id `0x2e`. | Not verified in game |
@@ -175,6 +176,8 @@ Flag bits (`FF_*`): 1 ALIVE, 2 HAS_ACTOR (Actor non-null), 4 ACTOR_FRAME, 8 OBJ_
 |---|---|---|---|
 | `MSCore_stations` | `MsStationName* out, int max` | `int` (`n` stations found, `-2` stations module off, `-1` fault or exception) | Writes at most `max` rows into `out` (skipped when `out` is null or `max <= 0`; `n` is still the total, so call once with `NULL, 0` to size the buffer). `MsStationName` = `int32 id, int32 pad, wchar_t name[96]` (200 bytes); `name` is the DisplayName, tab / CR / LF turned into spaces, max 95 chars + NUL, empty when unset. Reads only (no ProcessEvent). Each call does a full scan (the count call and the fill call are two scans). Kill switch: `module_disable("stations")`. Source `cpp\MSCore\msc_stnames.hpp`. |
 
+`MsStationName.pad` flags (Fleet reads them as `player`): bit0 = station class is `BP_StationObject_C` (player station), bit1 = flag valid (set by this build; old builds leave `pad` 0 = unknown).
+
 ## API 13: fleets
 
 | Export | Signature | Returns | Notes |
@@ -198,6 +201,51 @@ Call from the game thread (`MSCore_ship_mining_caps` reads game objects). `MSCor
 |---|---|---|---|
 | `MSCore_ship_mining_caps` | `void* ship` | `int` bitmask: `1` MiningLaser present, `2` ItemScooper present, `0` readable with no mining weapon, `-1` unknown, `-2` ships module off, `-1` also on exception | Reads `DMSPlayerShipObject.Weapons` and matches each weapon's class name (`MiningLaser`, `ItemScooper`). `-1` unknown: ship null or dead, array unreadable, count outside 0..100000, or a native fault (logged once). An empty readable array is `0`, not `-1`. Kill switch: `module_disable("ships")`. Source `cpp\MSCore\msc_weapons.hpp`. Native API 15. |
 | `MSCore_presence_step` | `int bad_n, int listed, int read, int* bad_out` | `int` listed flag `1` / `0` | Debounce for "still in the list". `read`: `1` present, `0` absent, any other value (`-1` unknown) = unknown. `read 1`: bad = 0, listed. Unknown: bad unchanged, keeps `listed`. `read 0`: bad = min(bad_n + 1, 3); a never-listed ship is rejected at once, a listed one is dropped on the 3rd consecutive absent read. `bad_out` may be `NULL`. Source `cpp\MSCore\msc_presence.hpp`. Native API 15. |
+
+## API 18: combat (off by default)
+
+The combat module is OFF until the file `Mods\MSCore\combat_on.txt` exists (read at start). While off every export returns `-2` (`MSCore_ship_fire` returns `0`, err `combat off`). Game names (`EnemyShipObject`, `Health`, `ShipFiringInput`) are UNVERIFIED (static RE only); the selfcheck `world.combat` probes them. Source `cpp\MSCore\msc_combat.hpp`, pure logic `msc_combat_logic.hpp`. Kill switch: `module_disable("combat")`. Optional marker `combat_fire_console.txt` sends the fire command to the pilot console instead of the ship.
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_enemies_near` | `int sid, double radius_m, MsEnemy* out, int max` | total enemies within `radius_m` (same system), `-2` combat off, `-1` fault (module off) | `out` gets `min(total, max)` rows nearest first; `out = NULL` or `max = 0` only counts. `MsEnemy` is 48 bytes: `int32 id, sys, hull, pad; double d_m; double rel_m[3]` (enemy minus ship, metres). Snapshot refreshed at most every 500 ms. |
+| `MSCore_ship_fire` | `int sid, int on, wchar_t* err, int errlen` | `1` ok, `0` fail | Primary weapons on / off with `ShipFiringInput`. Sent on change only. Fails closed when the command class or its factory is missing. |
+| `MSCore_ship_weapon_range` | `int sid` | `-1` | STUB: the range formula needs a live probe. `-2` combat off. |
+
+## API 17: ship caps
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_caps` | `void* ship` | `int` bitmask | Bits: `1` MiningLaser, `2` ItemScooper, `4` attack weapon (Cannon, Lance, Missile), `8` auto defence (Turret names, never armed), `16` tractor. `32` reserved (cargo, always 0 for now). `0` readable with no weapon, `-1` unknown, `-2` ships module off. Source `cpp\MSCore\msc_wclass.hpp`. Selfcheck `ships.ship_caps`. |
+
+`MSCore_ship_mining_caps` keeps its API 15 contract (0..3).
+
+## API 19: dock kind
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_dock_kind` | `void* dock` | `int` | `1` industrial, `0` normal, `-1` unknown, `-2` stations module off. Rule in `cpp\MSCore\msc_dockkind.hpp`. Selfcheck `stations.dock_kind`. |
+
+## API 27: floaters (on unless Mods\MSCore\floaters_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_floaters` | `MsFloaterSec* out, int max` | row count, `-1` fault (module turns off), `-2` module off | Floating ore per sector: one row per sector with at least one floater, count desc then id asc, up to `max` rows. `MsFloaterSec` (40 B): `int32 id, sys, count, pad; int64 ch[3]` (sector chunk). Cached 10 s. Unverified in game: `FloatingOreObject` and its chunk property, see the `PROBE floaters` line (`classes=`, `crates=`). |
+
+## API 26: enemy stations (on unless Mods\MSCore\estations_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_enemy_stations` | `int sid, double radius_m, MsEnemyStation* out, int max` | total count, `-1` fault (module turns off), `-2` module off | Enemy stations in the system of ship `sid` within `radius_m`, nearest first, up to `max` rows. `MsEnemyStation` (64 B): `int32 id, sys, hull, max_hull, flags, build_pct; double d_m, rel_m[3], radius_m`. `rel_m` = station minus ship, world axes. flags: bit0 alive (hull > 0), bit1 hull unreadable (hull = -1, not targetable), bit2 radius known (else `radius_m = -1`). `build_pct` -1 = unknown. Unverified in game. |
+
+## API 25: ballistics (on unless Mods\MSCore\ballistics_off.txt exists)
+
+| Export | Args | Returns | Notes |
+|---|---|---|---|
+| `MSCore_ship_guns` | `int sid, double* out, wchar_t* err, int errlen` | `1` ok, `0` fail (err says why) | `out[8]` (caller MUST pass 8): `0` bullet speed m/frame, `1` BulletLifetime frames, `2` range m (speed x lifetime, tick independent), `3` TimeBetweenShots frames (`0` unknown), `4` guns in the aim group, `5` distinct speeds, `6` min speed, `7` max speed. Aim group = primary, non-turret weapons with readable BulletSpeed and BulletLifetime; most guns wins, tie = slower speed. Samples the sim rate as a side effect: call every fight tick. Implausible values fail closed. |
+| `MSCore_sim_rate` | `double* tps, int* samples, double* age_s, wchar_t* err, int errlen` | `1` ok, `0` not measured yet (needs firing) or off | Sim ticks per wall second: median of the cannon `LastShotTime` stamp rate. `samples` = rates in the median, `age_s` = seconds since the last update. |
+
+Changed: `MSCore_enemy_velocity` and `MSCore_enemy_motion` convert per-frame values with the measured sim rate instead of 60 (the old 60 made speeds about 2.7x too high). Fallback 22.4 until measured. Selfcheck `ships.ballistics`. PROBE lines: `bullet_gun`, `bullet_speed mixed=1` (two speeds in one group), `sim_rate`.
 
 ## API 16: rock registry (0.8.15)
 

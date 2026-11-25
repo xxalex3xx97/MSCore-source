@@ -20,6 +20,10 @@ C.classes = {
   asteroid        = "SmallResourceAsteroidObject",
   asteroid_actor  = "BP_GenericResourceAsteroid_C",
   floating_ore    = "BP_FloatingOre_C",
+  floating_ore_object = "FloatingOreObject",
+  relic_shard_drop = "BP_RelicShardDrop_C",
+  relic_core_drop = "BP_RelicCoreDrop_C",
+  item_crate_object = "ItemCrateObject",
   station         = "StationObject",
   player_station  = "BP_StationObject_C",
   container       = "ContainerObject",
@@ -27,6 +31,7 @@ C.classes = {
   item_crate      = "BP_ItemCrateObject_C",
   ship            = "DMSPlayerShipObject",
   fleet_tag       = "FleetTag",
+  enemy_ship      = "EnemyShipObject",
   player_obj      = "DMSPlayerObject",
 }
 -- blocks module names (registry class, research class and dir, default category)

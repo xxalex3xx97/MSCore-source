@@ -9,6 +9,8 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace
@@ -80,8 +82,19 @@ namespace
         return ok;
     }
 
+    // WHAT: prop name of o as text: int value, else PNum raw/65536 as "<raw>/65536", else "?". Read-only probe helper.
+    std::string hull_prop_text(UObject* o, const TCHAR* name)
+    {
+        int32_t v = 0;
+        int64_t r = 0;
+        if (get_int_prop(o, name, v)) return std::to_string(v);
+        if (pnum_raw(o, name, r)) return std::to_string(r) + "/65536";
+        return "?";
+    }
+
     // WHAT: current and total hull of ship (GetCurrentHull / GetTotalHull, int). Unreadable value = -1. true when at least one value was read.
-    // WHY: the export derives its bitmask from cur >= 0 / tot >= 0. Same call style as ship_repair_need (msc_repair.hpp).
+    // WHY: the export derives its bitmask from cur >= 0 / tot >= 0. Same call style as ship_repair_need (msc_repair.hpp). Only caller: MSCore_ship_hull.
+    // PROBE: logs once per ship on change the raw hull-like props (Health, MaxHealth, Hull, Weight) next to the getters, to find what MaxHealth=500 is. Read-only, no effect on the result.
     bool ship_hull_read(UObject* ship, int32_t& cur, int32_t& tot)
     {
         cur = -1;
@@ -89,9 +102,17 @@ namespace
         if (!alive(ship)) return false;
         int32_t c = -1, t = -1;
         bool a = false, b = false;
-        if (!seh_run([&] { a = call_int(ship, STR("GetCurrentHull"), c); b = call_int(ship, STR("GetTotalHull"), t); })) return false;
+        std::string probe;
+        if (!seh_run([&] { a = call_int(ship, STR("GetCurrentHull"), c); b = call_int(ship, STR("GetTotalHull"), t);
+                           probe = " Health=" + hull_prop_text(ship, STR("Health")) + " MaxHealth=" + hull_prop_text(ship, STR("MaxHealth")) +
+                                   " Hull=" + hull_prop_text(ship, STR("Hull")) + " Weight=" + hull_prop_text(ship, STR("Weight")); })) return false;
         cur = a ? c : -1;
         tot = b ? t : -1;
+        static std::map<int64_t, std::string> last;
+        const int64_t sid = static_cast<int64_t>(obj_id(ship));
+        const std::string key = std::to_string(cur) + "/" + std::to_string(tot) + probe;
+        std::string& l = last[sid];
+        if (l != key) { l = key; msc_log(STR("hull ship=") + widen(std::to_string(sid)) + STR(" cur=") + widen(std::to_string(cur)) + STR(" total=") + widen(std::to_string(tot)) + widen(probe)); }
         return a || b;
     }
 }

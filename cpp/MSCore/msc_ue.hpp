@@ -5,6 +5,7 @@
 // USED BY: msc_orders.hpp, msc_warp.hpp, msc_pin.hpp, dllmain.cpp.
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
 #include <cstring>
 #include <functional>
@@ -13,11 +14,14 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "msc_log_logic.hpp"
 
 namespace
 {
+    std::atomic<bool> g_probe_log{false};   // marker Mods\MSCore\debug_probes.txt (read once at MSCore Lua start); default OFF
+
     // WHAT: writes a line to the UE4SS log with an [MSCore] prefix. WHY: every export logs through here.
-    void msc_log(const std::wstring& s) { Output::send<LogLevel::Normal>(STR("[MSCore] {}\n"), s); }
+    void msc_log(const std::wstring& s) { if (!msc_log_pass(s, g_probe_log.load())) return; Output::send<LogLevel::Normal>(STR("[MSCore] {}\n"), s); }
 
     // WHAT: SEH-guarded raw copy. POD only (MSVC: no C++ objects in a function with __try). Existing per-module helpers (ref_rd, ch_seh_copy) are left as they are.
     template <typename T>

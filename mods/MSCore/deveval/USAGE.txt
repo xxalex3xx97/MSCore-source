@@ -1,0 +1,31 @@
+DevEval usage (DEV ONLY; MSCore Lua side). Never opens sockets. Does nothing unless Mods\MSCore\deveval_on.txt exists
+(deleted = stops, checked every 250 ms poll; Mods\MSCore\deveval_off.txt = kill switch even when the on-marker exists).
+
+Folder: Mods\MSCore\deveval\   (eval_in\  eval_out\  eval_out.txt)
+1. Write eval_in\NAME.lua   (NAME = letters, digits, _ - .)
+2. Append the line NAME to eval_in\_go.txt   (Lua cannot list directories; this is the trigger)
+   Shortcut: a file named eval_in\now.lua runs by itself.
+3. Within ~250 ms: eval_out\NAME.txt has "# time NAME OK|ERROR|LOADERR" + output (max 64 KB),
+   eval_out.txt gets a tagged one-line summary (ring ~200 KB, cut from the front), NAME.lua is renamed NAME.lua.done.
+Requests run on the game thread. A long loop blocks the game and cannot be interrupted: use timer()/watch().
+
+Helpers (sandbox globals; all pcall-safe, nil/false on failure):
+  log(...)/print(...)        append to this request's output (objects shown by full name)
+  first(cls) findall(cls) find(path)   FindFirstOf / FindAllOf / StaticFindObject, only valid objects
+  obj_ok(o)                  IsValid wrapper
+  get(o, "Prop")             property value (unwraps :get())      set(o, "Prop" | "Struct.Field", v)
+  pnum(raw_or_struct)        PNum int32 16.16 -> float (raw/65536); to set a PNum write the raw int32
+  call(o, "Func", ...)       ok, result  (pcall'd UFunction call). NEVER on CDOs / objects without UberGraphFrame, never BP custom events
+  dump(o)                    class chain + every property value
+  ships() / enemies()        MSCore.ships.list() entries {id,name,obj} / FindAllOf EnemyShipObject with ID
+  native(name, ...)          MSCore.native[name] or global MSCoreNative_<name> or global <name> (Fleet/ShipControl exports)
+  hook(path, fn?) -> id      RegisterHook, args logged raw to eval_out.txt + ring (refused until a world is up ~8 s)
+  hooklog(id, n)             last n logged hook calls    unhook(id) only DISABLES the logger (UnregisterHook crashed the game before); unhook(id,true) really unregisters (risky)
+  timer(name, ms, fn, max)   250 ms resolution, default max 600 runs, error stops it    stop(name)
+  watch(name, fn, ms)        logs fn() to eval_out.txt whenever its value changes (max 2400 polls)
+  csv(name, {header}) csv_row(name, ...)   eval_out\NAME.csv
+  fmt(v)  MSCore             formatter, the MSCore table
+
+Examples: examples\capture_input.lua (A/D/Shift/Ctrl via input setter hooks + strafe watch), examples\dump_ship.lua.
+Safety: gated by marker, game-thread only, every call pcall'd, no sockets, output size capped, never ship the marker.
+Selftest: MSCore selfcheck prints a `deveval` line (loaded/enabled/polls/runs).

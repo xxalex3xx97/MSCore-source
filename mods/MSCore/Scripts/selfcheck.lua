@@ -239,10 +239,24 @@ function M.run(MSCore)
             return yes(ok == true, tostring(d))
         end
     end
-    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write", "rockreg" }) do
+    for _, n in ipairs({ "classes", "controller", "sectors", "arrival", "jump_cost", "pin_hook", "filters_read", "find_item", "find_dock", "scan", "rocks", "ships", "flight", "repair", "chunks", "paused", "stations", "fleets", "fleets_write", "rockreg", "combat" }) do
         check("world." .. n, nativeCheck(n))
     end
     check("ships.mining_caps", nativeCheck("mining_caps"))   -- API 15, C++ check_one "mining_caps" (first live ship)
+    check("ships.ship_caps", nativeCheck("ship_caps"))   -- API 17
+    check("stations.dock_kind", nativeCheck("dock_kind"))   -- API 19
+    check("ships.threat", nativeCheck("threat"))   -- API 21
+    check("ships.strafe", nativeCheck("strafe"))   -- API 22
+    check("ships.ballistics", nativeCheck("ballistics"))   -- API 25
+    check("ships.estations", nativeCheck("estations"))   -- API 26
+    check("ships.floaters", nativeCheck("floaters"))   -- API 27
+    check("deveval", function()
+        local D = MSCore.deveval
+        if not D then return "SKIP", "module not loaded" end
+        if not D.enabled then return "SKIP", "disabled (no Mods/MSCore/deveval_on.txt or deveval_off.txt present)" end
+        return "OK", "loaded, enabled, polls=" .. D.polls .. " runs=" .. D.runs
+    end)
+    check("ships.capture", nativeCheck("capture"))   -- probe, SKIP unless strafe_probe_on.txt
     check("fleets.list", function()
         if not MSCore.fleets then return "BROKEN", "MSCore.fleets missing" end
         local l, why = MSCore.fleets.list()

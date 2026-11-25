@@ -7,7 +7,7 @@
 // WHY: LoadChunks() streams only the player's surroundings, so far-away chunks stay unloaded until a caller holds their cube.
 // RULES: the player's own loaded set (player chunk +- CH_PLAYER_ZONE) is never set or cleared: a cube chunk in it is pending (ChRec.pend)
 //        and is set by a later hold / drain call once the player has left the zone (ch_fill_rec); a clear there is deferred;
-//        a chunk held by several owners is cleared when the last one drops it; at most CH_MAX_CHUNKS held chunks;
+//        a chunk held by several owners is cleared when the last one drops it; held chunks capped at CH_MAX_CHUNKS (cap effectively disabled (1,000,000); real limit = chunks the game can load);
 //        only chunks that have a Chunk object are set (the rest is counted as no_object in the log).
 // SAFETY: game thread only. The natives are found by byte pattern (msc_natives.hpp, nat_resolve: exactly one match each, else
 //         the feature is off) and ch_native_check (get_system(PlayerObject) == FindAllOf SolarSystem) runs once per session before
@@ -27,7 +27,7 @@
 namespace
 {
     constexpr int64_t CH_PLAYER_ZONE = 2;               // the player's own loaded set: PlayerCachedChunkLocation +- this (ChunkLoadingDistance)
-    constexpr size_t CH_MAX_CHUNKS = 150;               // cap on distinct held chunks (all owners together)
+    constexpr size_t CH_MAX_CHUNKS = 1000000;           // cap effectively disabled (1,000,000); real limit = chunks the game can load
     constexpr ULONGLONG CH_LOG_EVERY_MS = 10000;        // refusal lines that repeat every call are logged at most this often (ms)
     constexpr size_t CH_KEY_SIZE = 12;
 

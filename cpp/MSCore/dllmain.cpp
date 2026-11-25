@@ -40,10 +40,17 @@ using namespace RC::Unreal;
 #include "msc_presence.hpp"
 #include "msc_flight.hpp"
 #include "msc_repair.hpp"
+#include "msc_combat.hpp"
+#include "msc_estation.hpp"
+#include "msc_floaters.hpp"
+#include "msc_threat.hpp"
+#include "msc_strafe.hpp"
+#include "msc_capture.hpp"
 #include "msc_stnames.hpp"
 #include "msc_fleets.hpp"
 #include "msc_rockreg.hpp"
 #include "msc_world.hpp"
+#include "msc_ballistics.hpp"
 #include "msc_factory.hpp"
 #include "msc_station.hpp"
 #include "msc_rename.hpp"
@@ -51,6 +58,7 @@ using namespace RC::Unreal;
 #include "msc_refund.hpp"
 #include "msc_designer.hpp"
 #include "msc_loader.hpp"
+#include "msc_dockkind.hpp"
 
 namespace
 {
@@ -90,6 +98,16 @@ namespace
 
     // WHAT: one read-only world check by name (Lua: MSCoreNative_check). detail says what was seen. ok = false with "SKIP ..." when the world it needs is not loaded.
     // WHY: runs from selfcheck only; it never sends a command.
+    // dock kind (API 19): 1 industrial dock, 0 normal dock, -1 unknown (null, dead, class unreadable, not a dock, native fault). Rule: msc_dockkind.hpp. Game thread.
+    // The read stays here because msc_dockkind.hpp is pure (no UObject).
+    int dock_kind_read(UObject* o)
+    {
+        if (!alive(o)) return -1;
+        int r = -1;
+        if (!seh_run([&] { UClass* c = o->GetClassPrivate(); if (c) r = dock_kind_from_class(std::wstring(c->GetName())); })) return -1;
+        return r;
+    }
+
     bool check_one(const std::string& name, std::string& detail)
     {
         std::wstring why;
@@ -154,6 +172,26 @@ namespace
             detail = "mining_caps=" + std::to_string(r);
             return r >= 0;
         }
+        if (name == "ship_caps")
+        {
+            if (!module_ok(STR("ships"))) { detail = "ships off: " + caps_text(); return false; }
+            if (!alive(ship)) { detail = "SKIP no ships"; return false; }
+            const int r = ship_caps_read(ship);
+            detail = "ship_caps=" + std::to_string(r);
+            return r >= 0;
+        }
+        if (name == "dock_kind")
+        {
+            if (!module_ok(STR("stations"))) { detail = "stations off"; return false; }
+            UObject* dock = nullptr;
+            std::vector<UObject*> v;
+            if (!seh_run([&] { UObjectGlobals::FindAllOf(STR("Dock"), v); })) { detail = "SKIP no docks (FindAllOf faulted)"; return false; }
+            for (UObject* o : v) if (alive(o)) { dock = o; break; }
+            if (!dock) { detail = "SKIP no docks"; return false; }
+            const int r = dock_kind_read(dock);
+            detail = "dock_kind=" + std::to_string(r);
+            return r >= 0;
+        }
         if (name == "stations")
         {
             if (!module_ok(STR("stations"))) { detail = "stations off: " + caps_text(); return false; }
@@ -215,6 +253,60 @@ namespace
             bool ok = false;
             if (!seh_run([&] { ok = repair_selftest(detail); })) { detail = "repair selftest faulted"; module_disable(STR("repair"), STR("selfcheck fault")); return false; }
             return ok;
+        }
+        if (name == "combat")
+        {
+            if (!g_combat_on.load()) { detail = "SKIP combat_on.txt missing (feature off)"; return false; }
+            if (!module_ok(STR("combat"))) { detail = "combat off: " + caps_text(); return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = combat_selftest(detail); })) { detail = "combat selftest faulted"; module_disable(STR("combat"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "threat")
+        {
+            if (!module_ok(STR("threat"))) { detail = "threat off: " + caps_text(); return false; }
+            if (g_threat_off.load()) { detail = "SKIP threat_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = threat_selftest(detail); })) { detail = "threat selftest faulted"; module_disable(STR("threat"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "estations")
+        {
+            if (!module_ok(STR("estations"))) { detail = "estations off: " + caps_text(); return false; }
+            if (g_est_off.load()) { detail = "SKIP estations_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = estations_selftest(detail); })) { detail = "estations selftest faulted"; module_disable(STR("estations"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "floaters")
+        {
+            if (!module_ok(STR("floaters"))) { detail = "floaters off: " + caps_text(); return false; }
+            if (g_flo_off.load()) { detail = "SKIP floaters_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = floaters_selftest(detail); })) { detail = "floaters selftest faulted"; module_disable(STR("floaters"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "ballistics")
+        {
+            if (!module_ok(STR("ballistics"))) { detail = "ballistics off: " + caps_text(); return false; }
+            if (g_bal_off.load()) { detail = "SKIP ballistics_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = ballistics_selftest(detail); })) { detail = "ballistics selftest faulted"; module_disable(STR("ballistics"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "strafe")
+        {
+            if (!module_ok(STR("strafe"))) { detail = "strafe off: " + caps_text(); return false; }
+            if (g_strafe_off.load()) { detail = "SKIP strafe_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = strafe_selftest(detail); })) { detail = "strafe selftest faulted"; module_disable(STR("strafe"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "capture")
+        {
+            if (!g_cap_on.load()) { detail = "SKIP strafe_probe_on.txt missing (probe off)"; return false; }
+            detail = std::string(g_cap_dead ? "probe dead (fault)" : (g_cap_hooked ? "hook armed" : "polling (hook not armed)"));
+            return !g_cap_dead;
         }
         if (name == "chunks")
         {
@@ -606,6 +698,14 @@ namespace
         catch (...) { ok = false; }
         lua.set_bool(ok);
         return 1;
+    }
+
+    // Lua: capture_tick() -> nothing. Input capture probe (msc_capture.hpp), does nothing unless strafe_probe_on.txt exists.
+    int lua_capture_tick(const LuaMadeSimple::Lua&)
+    {
+        try { capture_tick(); }
+        catch (...) { g_cap_dead = true; }
+        return 0;
     }
 
     // Lua: check(name) -> ok, detail (see check_one)
@@ -1161,6 +1261,16 @@ namespace
         std::error_code ec;
         static bool dgOnce = false;   // designer guard: decided once per process (the kill-switch file is read once)
         if (!dgOnce) { dgOnce = true; if (!mscl::fs::exists(dir / L"designer_guard_off.txt", ec)) dg_install(); }
+        if (mscl::fs::exists(dir / L"weapons_probe.txt", ec)) g_weapons_probe.store(true);
+        if (mscl::fs::exists(dir / L"debug_probes.txt", ec)) g_probe_log.store(true);
+        if (mscl::fs::exists(dir / L"combat_on.txt", ec)) g_combat_on.store(true);
+        if (mscl::fs::exists(dir / L"threat_off.txt", ec)) g_threat_off.store(true);
+        if (mscl::fs::exists(dir / L"estations_off.txt", ec)) g_est_off.store(true);
+        if (mscl::fs::exists(dir / L"floaters_off.txt", ec)) g_flo_off.store(true);
+        if (mscl::fs::exists(dir / L"ballistics_off.txt", ec)) g_bal_off.store(true);
+        if (mscl::fs::exists(dir / L"strafe_off.txt", ec)) g_strafe_off.store(true);
+        if (mscl::fs::exists(dir / L"strafe_probe_on.txt", ec)) g_cap_on.store(true);
+        if (mscl::fs::exists(dir / L"combat_fire_console.txt", ec)) g_fire_console.store(true);
         if (mscl::fs::exists(dir / L"refund_probe.txt", ec)) ref_set(true);
         if (mscl::fs::exists(dir / L"refund_redirect_on.txt", ec) && !mscl::fs::exists(dir / L"refund_redirect_off.txt", ec)) { ref_set_redirect(true); g_ref.opt_in = true; }
     }
@@ -1297,6 +1407,7 @@ static void register_globals(LuaMadeSimple::Lua& lua, const std::wstring& mod_na
     lua.register_function("MSCoreNative_warp_send", lua_warp_send);
     lua.register_function("MSCoreNative_pinned", lua_pinned);
     lua.register_function("MSCoreNative_pin_ensure", lua_pin_ensure);
+    lua.register_function("MSCoreNative_capture_tick", lua_capture_tick);
     lua.register_function("MSCoreNative_check", lua_check);
     lua.register_function("MSCoreNative_loader_status", lua_loader_status);
     lua.register_function("MSCoreNative_scan", lua_scan);
@@ -1363,7 +1474,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); combat_resolve(); estations_resolve(); floaters_resolve(); threat_resolve(); strafe_resolve(); ballistics_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1380,8 +1491,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged).
-    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service)
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged). 17-28: see the list on MSCore_api below.
+    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy (combat module); 21 = MSCore_ship_threat (threat module, on unless Mods\MSCore\threat_off.txt exists); 22 = MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick (strafe module, on unless Mods\MSCore\strafe_off.txt exists); 23 = MSCore_enemy_velocity, MSCore_enemy_aim; 24 = MSCore_enemy_motion (combat module); 25 = MSCore_ship_guns, MSCore_sim_rate (ballistics module, on unless Mods\MSCore\ballistics_off.txt exists); 26 = MSCore_enemy_stations (estations module, on unless Mods\MSCore\estations_off.txt exists); 27 = MSCore_floaters (floaters module, on unless Mods\MSCore\floaters_off.txt exists); 28 = MSCore_chunk_stats (chunk hold counters)
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1625,6 +1736,128 @@ extern "C"
     {
         try { if (!module_ok(STR("ships"))) return -2; return ship_mining_caps_read(static_cast<UObject*>(ship)); }
         catch (...) { module_disable(STR("ships"), STR("ship_mining_caps exception")); return -1; }
+    }
+
+    // ship caps (API 17): bitmask 1 mining laser, 2 scooper, 4 attack weapon, 8 auto defence (never armed), 16 tractor; 32 reserved (cargo, 0 for now). 0 = readable, none. -1 unknown, -2 ships module off.
+    MSCORE_API int MSCore_ship_caps(void* ship)
+    {
+        try { if (!module_ok(STR("ships"))) return -2; return ship_caps_read(static_cast<UObject*>(ship)); }
+        catch (...) { module_disable(STR("ships"), STR("ship_caps exception")); return -1; }
+    }
+
+    // combat (API 18, off until Mods\MSCore\combat_on.txt exists): enemy ships within radius_m of ship sid, nearest first, into out (max rows). Returns the total count, -1 fault, -2 combat off.
+    MSCORE_API int MSCore_enemies_near(int sid, double radius_m, MsEnemy* out, int max)
+    {
+        try { return enemies_near(sid, radius_m, out, max); }
+        catch (...) { module_disable(STR("combat"), STR("enemies_near exception")); return -1; }
+    }
+
+    // enemy stations (API 26, on unless Mods\MSCore\estations_off.txt exists): enemy stations in the system of ship sid within radius_m, nearest first, into out (max rows, MsEnemyStation 64 B). Returns the total count, -1 fault, -2 module off.
+    MSCORE_API int MSCore_enemy_stations(int sid, double radius_m, MsEnemyStation* out, int max)
+    {
+        try { return enemy_stations(sid, radius_m, out, max); }
+        catch (...) { module_disable(STR("estations"), STR("enemy_stations exception")); return -1; }
+    }
+
+    // floaters (API 27, on unless Mods\MSCore\floaters_off.txt exists): floating ore per sector (sectors with at least one floater, most first) into out (max rows, MsFloaterSec 40 B). Returns the row count, -1 fault, -2 module off.
+    MSCORE_API int MSCore_floaters(MsFloaterSec* out, int max)
+    {
+        try { return floaters_read(out, max); }
+        catch (...) { module_disable(STR("floaters"), STR("floaters exception")); return -1; }
+    }
+
+    // combat (API 18): fire primary weapons of ship sid on / off (command sent on change only). 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_ship_fire(int sid, int on, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return ship_fire(sid, on != 0, e); }, err, errlen, STR("combat"));
+    }
+
+    // combat (API 20): spawn a practice enemy near ship sid (game's own creative-enemy command). 1 ok, 0 fail (err says why). Off until combat_on.txt.
+    MSCORE_API int MSCore_spawn_practice_enemy(int sid, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return combat_spawn_enemy(sid, e); }, err, errlen, STR("combat"));
+    }
+
+    // combat (API 18): weapon range in metres. STUB: -1 unknown, -2 combat off.
+    MSCORE_API int MSCore_ship_weapon_range(int sid)
+    {
+        try { return ship_weapon_range(sid); }
+        catch (...) { module_disable(STR("combat"), STR("ship_weapon_range exception")); return -1; }
+    }
+
+    // ballistics (API 25, on unless Mods\MSCore\ballistics_off.txt exists): aim gun group of ship sid into out[8] (caller MUST pass 8): 0 bullet speed m/frame,
+    // 1 BulletLifetime frames, 2 range m (speed x lifetime), 3 TimeBetweenShots frames (0 unknown), 4 guns in the group, 5 distinct speeds, 6 min speed m/frame, 7 max speed m/frame.
+    // Samples the sim rate as a side effect: call every fight tick. 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_ship_guns(int sid, double* out, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            if (!out) { e = STR("null out"); return false; }
+            return ship_guns_read(sid, out, e);
+        }, err, errlen, STR("ballistics"));
+    }
+
+    // sim rate (API 25): tps = sim ticks per wall second (median of the cannon LastShotTime stamp rate), samples = rates in the median, age_s = seconds since the last update.
+    // 1 ok, 0 not measured yet (needs firing) or off.
+    MSCORE_API int MSCore_sim_rate(double* tps, int* samples, double* age_s, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) {
+            if (!tps || !samples || !age_s) { e = STR("null out"); return false; }
+            return sim_rate_read(tps, samples, age_s, e);
+        }, err, errlen, STR("ballistics"));
+    }
+
+    // threat (API 21, on unless Mods\MSCore	hreat_off.txt exists): IsShipInCombat + TargettedBy of ship sid. hostile_n = entries within range_m, far_n = beyond range_m or unresolved,
+    // nearest_d_m = nearest hostile in metres (-1 none). Any out pointer may be null. 1 ok, 0 fail or off.
+    MSCORE_API int MSCore_ship_threat(int sid, double range_m, int* hostile_n, int* far_n, int* in_combat, double* nearest_d_m)
+    {
+        try { return ship_threat(sid, range_m, hostile_n, far_n, in_combat, nearest_d_m); }
+        catch (...) { module_disable(STR("threat"), STR("ship_threat exception")); return 0; }
+    }
+
+    // strafe (API 22, on unless Mods\MSCore\strafe_off.txt exists): axis 0 = right(+)/left(-), 1 = up(+)/down(-); value -1..1 (|v| > 0.3 = push, magnitude ignored, unverified). Game slots: right = StrafeImpulse Y, up = X (live-verified). Fleet must call MSCore_strafe_tick about once a second while strafing.
+    // Held by the game until changed: call MSCore_strafe_tick about once a second while strafing (a strafe not refreshed for 10 s is auto-zeroed). 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_ship_strafe(int sid, int axis, double value, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return ship_strafe(sid, axis, value, e); }, err, errlen, STR("strafe"));
+    }
+
+    // combat (API 23, needs combat on): enemy velocity from EnemyShipObject.CachedVelocity. v_mps[3] = metres per second (per-frame * sim_tps_conv(): measured sim ticks/s, fallback 22.4), v_per_frame[3] (or null) = metres per frame. 1 ok, 0 fail (err says why).
+    MSCORE_API int MSCore_enemy_velocity(int enemy_id, double* v_mps, double* v_per_frame, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return enemy_velocity(enemy_id, v_mps, v_per_frame, e); }, err, errlen, STR("combat"));
+    }
+
+    // combat (API 23): enemy aim calibration, out[4] = AlignmentToTarget, RequiredAlignmentToFire (0..1), AttackDistance m, ReleaseTargetDistance m; missing prop = -1. 1 ok, 0 fail.
+    MSCORE_API int MSCore_enemy_aim(int enemy_id, double* out, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return enemy_aim(enemy_id, out, e); }, err, errlen, STR("combat"));
+    }
+
+    // combat (API 24): enemy motion, out[14] (caller MUST pass 14) = CurrentTask, attack_speed_mps (per-frame * sim_tps_conv(): measured, fallback 22.4), fatigue, fatigue_frames, flyaway_frames, avoid_frames, target_id (-1 none), target x,y,z metres relative to ship sid (same axes as MsEnemy.rel_m; 1e30 x3 = unreadable), pathfinding_rot_speed (raw/65536 * sim_tps_conv(), UNVERIFIED unit), attack_distance_m, avoidance_distance_m, avoidance_speed_mps (per-frame * sim_tps_conv()); missing prop = -1. 1 ok, 0 fail.
+    MSCORE_API int MSCore_enemy_motion(int sid, int enemy_id, double* out, wchar_t* err, int errlen)
+    {
+        return export_call([&](std::wstring& e) { return enemy_motion(sid, enemy_id, out, e); }, err, errlen, STR("combat"));
+    }
+
+    // strafe (API 22): both axes 0 for ship sid (one zero command if either was non-zero). 1 ok, 0 fail.
+    MSCORE_API int MSCore_ship_strafe_zero(int sid)
+    {
+        try { ship_strafe_zero(sid); return 1; }
+        catch (...) { module_disable(STR("strafe"), STR("ship_strafe_zero exception")); return 0; }
+    }
+
+    // strafe (API 22): watchdog, zeroes strafes older than 10 s and forgets gone ships. Returns how many ships were zeroed, -1 fault.
+    MSCORE_API int MSCore_strafe_tick()
+    {
+        try { return strafe_watchdog(); }
+        catch (...) { module_disable(STR("strafe"), STR("strafe_tick exception")); return -1; }
+    }
+
+    // dock kind (API 19): 1 industrial, 0 normal, -1 unknown, -2 stations module off.
+    MSCORE_API int MSCore_dock_kind(void* dock)
+    {
+        try { if (!module_ok(STR("stations"))) return -2; return dock_kind_read(static_cast<UObject*>(dock)); }
+        catch (...) { module_disable(STR("stations"), STR("dock_kind exception")); return -1; }
     }
 
     // presence debounce (API 15): pure, no game access. read 1 present, 0 absent, -1 unknown. Returns the listed flag (1 / 0); bad_out (may be null) gets the absent count (0..3).
@@ -1954,6 +2187,20 @@ extern "C"
         catch (...) { ok = 0; w = STR("exception"); module_disable(STR("chunkhold"), STR("chunk_ready exception")); }
         copy_err(w, why, len);
         return ok;
+    }
+
+    // chunk hold counters (API 28): distinct chunks held (refs) and owners with a cube. Container sizes only (no game reads). 1 = written, 0 = fail (both 0).
+    // game thread only (same as chunk_hold)
+    MSCORE_API int MSCore_chunk_stats(int* chunks, int* owners)
+    {
+        try
+        {
+            if (!chunks || !owners) return 0;
+            *chunks = static_cast<int>(g_ch.refs.size());
+            *owners = static_cast<int>(g_ch.owners.size());
+            return 1;
+        }
+        catch (...) { *chunks = 0; *owners = 0; return 0; }
     }
 
     // ---- API 4: factory commands (msc_factory.hpp). Type ids: BuildInput 0x2e, DisassembleInput 0x2f, InventoryInput 12, SetRecipeInput 20, MachinePortInput 17. ----

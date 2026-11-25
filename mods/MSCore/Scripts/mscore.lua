@@ -1,6 +1,6 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
--- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 16).
+-- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 28: 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy; 21 = MSCore_ship_threat; 22 = MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick; 23 = MSCore_enemy_velocity, MSCore_enemy_aim; 24 = MSCore_enemy_motion; 25 = MSCore_ship_guns, MSCore_sim_rate; 26 = MSCore_enemy_stations; 27 = MSCore_floaters).
 local MSCore = { api = 3, version = "0.8.15", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
@@ -11,7 +11,7 @@ MSCore.native = rawget(_G, "MSCoreNative_version") and {
     offsets = _G.MSCoreNative_offsets, check_offsets = _G.MSCoreNative_check_offsets,
     new_order = _G.MSCoreNative_new_order, update_order = _G.MSCoreNative_update_order, delete_order = _G.MSCoreNative_delete_order,
     autopilot = _G.MSCoreNative_autopilot, skip_to = _G.MSCoreNative_skip_to, filter_send = _G.MSCoreNative_filter_send,
-    warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure,
+    warp_send = _G.MSCoreNative_warp_send, pinned = _G.MSCoreNative_pinned, pin_ensure = _G.MSCoreNative_pin_ensure, capture_tick = _G.MSCoreNative_capture_tick,
     check = _G.MSCoreNative_check, loader_status = _G.MSCoreNative_loader_status,
     scan = _G.MSCoreNative_scan, chunk_hold = _G.MSCoreNative_chunk_hold, chunk_release = _G.MSCoreNative_chunk_release,
     refund_enable = nat("MSCoreNative_refund_enable"), redirect_enable = nat("MSCoreNative_redirect_enable"),
