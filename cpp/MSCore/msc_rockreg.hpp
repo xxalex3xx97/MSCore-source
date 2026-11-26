@@ -52,6 +52,7 @@ namespace
     constexpr double RR_UU_PER_M = 100.0;
 
     // WHAT: periods and caps of the registry (ms / count).
+    constexpr ULONGLONG RR_DIAG_MS = 10000;             // "RR world probe fail" line at most this often while the world is not loaded
     constexpr ULONGLONG RR_TICK_MS = 200;               // rr_tick runs when this long passed since the last one
     constexpr ULONGLONG RR_FEED_MAX_MS = 2000;          // a feed older than this is ignored by the merge
     constexpr ULONGLONG RR_SEED_REFRESH_MS = 600000;    // safety full pass every 10 min
@@ -385,12 +386,12 @@ namespace
     size_t rr_alive_count(const RrState& s) { return s.tab.alive_count(); }
 
     // WHAT: the player's system and a world identity (controller + PlayerObject); run under seh_run. sys = 0 when unreadable.
-    struct RrWorldCtx { int sys = 0; uint64_t id = 0; };
+    struct RrWorldCtx { int sys = 0; uint64_t id = 0; ChDiag d; };
     void rr_world_probe(RrWorldCtx& x)
     {
         int64_t pch[3] = {0, 0, 0};
         int ps = 0;
-        if (ch_player(ps, pch)) x.sys = ps;
+        if (ch_player(ps, pch, &x.d)) x.sys = ps;
         if (x.sys > 0)
         {
             UObject* c = ch_ctrl();
@@ -1140,6 +1141,16 @@ namespace
         const RrWorldEv we = rr_world_step(s.wt, rd ? wc.id : 0, RR_NOWORLD_TICKS);
         if (rd) s.world_sys = wc.sys;   // a warp only updates the system: pointers stay bound
         s.world_ok = s.wt.ok;
+        if (!s.world_ok)   // diagnostics for a session where the world never loads (at most one line per 10 s)
+        {
+            static ULONGLONG diag_ms = 0;
+            if (now - diag_ms >= RR_DIAG_MS)
+            {
+                diag_ms = now;
+                msc_log(STR("RR world probe fail ctrl=") + std::to_wstring(wc.d.ctrl) + STR(" chunk_ok=") + std::to_wstring(wc.d.chunk)
+                    + STR(" pobj_alive=") + std::to_wstring(wc.d.pobj) + STR(" sys=") + std::to_wstring(wc.sys));
+            }
+        }
         if (rd) { if (s.rd_ok_ticks < 1000) ++s.rd_ok_ticks; } else s.rd_ok_ticks = 0;
         const bool may_kill = rr_kill_allowed(s.world_ok, s.rd_ok_ticks, RR_NOWORLD_TICKS);   // a failing / unknown world probe never kills
         const bool mass = overflow || hit.size() > RR_MASS_DEAD;

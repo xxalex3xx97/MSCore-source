@@ -31,6 +31,7 @@ int main()
     CHECK(!msc_log_pass(L"SCAN walk ship", false));
     CHECK(msc_log_pass(L"PROBE input_capture fault, probe off", false));
     CHECK(msc_log_pass(L"selfcheck ok", false));
+    CHECK(msc_log_pass(L"RR world probe fail ctrl=1 chunk_ok=0 pobj_alive=0 sys=0", false));
     CHECK(msc_log_pass(L"SCAN native fault: native scan OFF", false));
 
     std::printf("test_capture_logic: %d checks, %d failed\n", g_run, g_fail);
