@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.9.0 - UE4SS 4.0.0
+- **Changed:** MSCore and the manager now target UE4SS 4.0.0. The release ships `ue4ss-4.0.0.zip`; the manager installs it.
+- **New:** `min_ue4ss` gate: the manager and the loader refuse to run on an older UE4SS, with a message that says which version is needed.
+- **Changed:** build and release scripts default to the v4 tree (guarded). `scripts/setup-ue4ss-v4.ps1` builds it.
+
 ## Unreleased - chunk stats (API 28)
 - **New:** C export `MSCore_chunk_stats(int* chunks, int* owners)`: distinct held chunks and owners with a cube. Container sizes only, no game reads. Native API 27 -> 28.
 - **Changed:** chunk hold cap removed (`CH_MAX_CHUNKS` 1,000,000; real limit = chunks the game can load).
