@@ -110,15 +110,15 @@ static void scrub_tests() {
     ss::Parsed PA, PC;
     std::string why;
     CHECK(ss::parse(a, PA, why) && ss::parse(o.data, PC, why));
-    CHECK(PC.table.size() == PA.table.size() && PC.table[7] == ss::standins()[0] && PC.table[6] == kStk && PC.table[8] == kOth);
+    CHECK(PC.table.size() == PA.table.size() && PC.table[7] == kStk && PC.table[6] == kStk && PC.table[8] == kOth);
     CHECK(ss::usage(o.data, 7, PC).empty());
     CHECK(ss::usage(o.data, 6, PC).size() == ss::usage(a, 6, PA).size() + 3);
     auto fm = ss::find_flatmaps(o.data, kStk, PC.tab_end);
     CHECK(fm.size() == 1 && fm[0].N == 2);
     auto md = ss::mapdict(o.data, fm[0].p);
     CHECK(md.size() == 2 && md[0].first == kOth && md[0].second == 9 && md[1].first == kStk && md[1].second == 7);
-    // size: stats entry removed, table slot renamed to the stand-in (other length)
-    CHECK(o.data.size() == a.size() - (ss::fstr(kMod).size() + 4) + (ss::fstr(ss::standins()[0]).size() - ss::fstr(kMod).size()));
+    // size: stats entry removed, table slot renamed to the stock path (a duplicate entry)
+    CHECK(o.data.size() == a.size() - (ss::fstr(kMod).size() + 4) + (ss::fstr(kStk).size() - ss::fstr(kMod).size()));
     // scrubbing again is a no-op (nothing modded left)
     CHECK(scrub_bytes(o.data, pairs).st == ScrubSt::Skip);
 
@@ -141,14 +141,16 @@ static void scrub_tests() {
     CHECK(r.st == ScrubSt::Refused && r.data.empty() && r.why.find("another length") != std::string::npos);
     // save without the class: skipped, not written
     CHECK(scrub_bytes(make_save(true, false, false, false, 0), pairs).st == ScrubSt::Skip);
-    // a [0][idx][id][0] entry for the modded slot that is not a node (list inside an embedded design copy): the class word is
-    // remapped to the stock slot like a node, counted in rep.lists, and nothing is left pointing at the modded slot
+    // a [0][idx][id][0] entry for the modded slot that is not a node (list inside an embedded design copy) is left as is: the
+    // slot itself now holds the stock path, so it lands on the stock class
     {
         std::string sus = make_save(true, true, false, true, 1);
         sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]
         ScrubOut rf = scrub_bytes(sus, pairs);
-        CHECK(rf.st == ScrubSt::Ok && rf.rep.lists == 1);
-        CHECK(rf.data.size() >= 24 && ss::U(rf.data, rf.data.size() - 20) != 7);
+        ScrubOut rg = rf;
+        CHECK(rf.st == ScrubSt::Ok && rg.data.find(kMod) == std::string::npos);
+        ss::Parsed PS;
+        CHECK(ss::parse(rf.data, PS, why) && PS.table[7] == kStk && ss::U(rf.data, rf.data.size() - 20) == 7);
         // the same shape with a repeated id is a repeated record: explained, not a refusal
         std::string rep2 = make_save(true, true, false, true, 1) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);
         CHECK(scrub_bytes(rep2, pairs).st == ScrubSt::Ok);
