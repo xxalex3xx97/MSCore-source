@@ -13,22 +13,22 @@ nav_order: 6
 - **New:** `min_ue4ss` gate: the manager and the loader refuse to run on an older UE4SS, with a message that says which version is needed.
 - **Changed:** build and release scripts default to the v4 tree (guarded). `scripts/setup-ue4ss-v4.ps1` builds it.
 
-## 0.9.1 - Remove mod fix - chunk stats (API 28)
+## Unreleased - chunk stats (API 28)
 - **New:** C export `MSCore_chunk_stats(int* chunks, int* owners)`: distinct held chunks and owners with a cube. Container sizes only, no game reads. Native API 27 -> 28.
 - **Changed:** chunk hold cap removed (`CH_MAX_CHUNKS` 1,000,000; real limit = chunks the game can load).
 - **Changed:** `MsStationName.pad` flag bit0 = player-station class, bit1 = valid.
 
-## 0.9.1 - Remove mod fix - floaters (API 27)
+## Unreleased - floaters (API 27)
 - **New:** floaters module, on unless `Mods\MSCore\floaters_off.txt` exists: C export `MSCore_floaters` (floating ore per sector, `MsFloaterSec` 40 B: id, sys, count, ch). Selfcheck `ships.floaters`. One-time `PROBE floaters` log line (totals, class histogram, item crate count). Native API 27. Unverified in game.
 
-## 0.9.1 - Remove mod fix - enemy stations (API 26)
+## Unreleased - enemy stations (API 26)
 - **New:** estations module, on unless `Mods\MSCore\estations_off.txt` exists: C export `MSCore_enemy_stations` (enemy stations in the ship's system, nearest first, `MsEnemyStation` 64 B: id, sys, hull, max_hull, flags, build_pct, d_m, rel_m, radius_m). Radius is not read yet (flag bit2 clear). Native API 25 -> 26, kill switch module_disable("estations"), selfcheck ships.estations, PROBE estation / estation_collider lines. Game names are unverified (static RE, never run live).
 
-## 0.9.1 - Remove mod fix - ballistics (API 25)
+## Unreleased - ballistics (API 25)
 - **New:** ballistics module, on unless `Mods\MSCore\ballistics_off.txt` exists: C exports `MSCore_ship_guns` (aim gun group: bullet speed per frame, lifetime, range, shot period, group size) and `MSCore_sim_rate` (measured sim ticks per second, median of the cannon `LastShotTime` rate). Native API 24 -> 25, kill switch module_disable("ballistics"), selfcheck ships.ballistics, PROBE bullet_gun / bullet_speed / sim_rate lines.
 - **Changed:** `MSCore_enemy_velocity` and `MSCore_enemy_motion` use the measured sim rate (fallback 22.4) instead of 60 (speeds were about 2.7x too high).
 
-## 0.9.1 - Remove mod fix - dock kind (API 19)
+## Unreleased - dock kind (API 19)
 - **New:** C export MSCore_dock_kind(dock), Native API 18 -> 19, kill switch module_disable("stations"), selfcheck stations.dock_kind.
 
 ## 0.8.15 - Holograms, item icons, fleets, repair, ship hull
