@@ -147,11 +147,10 @@ static void scrub_tests() {
         std::string sus = make_save(true, true, false, true, 1);
         sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]
         ScrubOut rf = scrub_bytes(sus, pairs);
-        ScrubOut rg = rf;
-        CHECK(rf.st == ScrubSt::Ok && rg.data.find(kMod) == std::string::npos);
+        CHECK(rf.st == ScrubSt::Ok && rf.data.find(kMod) == std::string::npos);
         ss::Parsed PS;
         CHECK(ss::parse(rf.data, PS, why) && PS.table[7] == kStk && ss::U(rf.data, rf.data.size() - 20) == 7);
-        // the same shape with a repeated id is a repeated record: explained, not a refusal
+        // a repeated record is accepted the same way
         std::string rep2 = make_save(true, true, false, true, 1) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);
         CHECK(scrub_bytes(rep2, pairs).st == ScrubSt::Ok);
     }

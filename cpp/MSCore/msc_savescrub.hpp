@@ -204,7 +204,10 @@ inline std::string verify(const std::string& a, const std::string& c, const std:
     if (A.table.size() != C.table.size()) return "class table size changed";
     for (size_t i = 0; i < A.table.size(); ++i) {
         if (mp.count(static_cast<uint32_t>(i))) {
-            if (C.table[i] == A.table[i]) return "modded table entry not replaced";
+            std::string want;
+            for (const auto& s : active)
+                if (s.modded == A.table[i]) want = s.stock;
+            if (C.table[i] != want) return "modded table entry is not the stock path";
         } else if (C.table[i] != A.table[i]) {
             return "table changed at " + std::to_string(i);
         }
