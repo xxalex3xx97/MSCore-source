@@ -986,6 +986,13 @@ void create_controls(HWND h) {
     g_details = mk(h, L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER, 12, 452, 988, 150, 0);
 }
 
+// Called wherever g_busy goes false: hands a parked manager update (see WM_APP_SELFUPD) back to the message loop.
+void flush_su_pending(HWND h) {
+    if (!g_su_pending) return;
+    PostMessageW(h, WM_APP_SELFUPD, 0, reinterpret_cast<LPARAM>(g_su_pending));
+    g_su_pending = nullptr;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
@@ -999,10 +1006,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_rows = std::move(*v);
             delete v;
             g_busy = false;
-            if (g_su_pending) {
-                PostMessageW(hwnd, WM_APP_SELFUPD, 0, reinterpret_cast<LPARAM>(g_su_pending));
-                g_su_pending = nullptr;
-            }
+            flush_su_pending(hwnd);
             refresh_list();
             set_status((g_last.empty() ? std::string() : g_last + " | ") + "Checked " +
                        std::to_string(g_rows.size()) + " mod(s).");
@@ -1081,6 +1085,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             set_status(*s);
             delete s;
             g_busy = false;
+            flush_su_pending(hwnd);
             update_ui();
             start_check();
             return 0;
