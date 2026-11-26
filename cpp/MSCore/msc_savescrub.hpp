@@ -5,7 +5,8 @@
 // ("Failed to load class") when the mod's pak is gone. A mod declares `save_scrub=<modded>><stock>` (see SaveScrub).
 // Per save, per pair (copy-on-write, original untouched until verified):
 //   nodes [0|65536][0][classIdx][id<=NextId][0] using the modded table index -> stock index
-//   class table entry of the modded class -> an unused vanilla class (kStandins)
+//   class table entry of the modded class -> the stock path (a duplicate table entry; so every other reference to the slot,
+//   in whatever record shape, already lands on the stock class and never has to be found)
 //   Statistics flat map [u32 N][N x (FString path, u32 count)]: modded count merged into the stock entry, key removed, N-1
 //   (stock entry absent: key renamed); other length-prefixed path strings (per-ship tables) -> stock path, same length only
 // Format facts: u32 0, u32 version, u32 N, N x FString, root block (1,1,5,2,3,4,NextId,Ticks), tree without lengths.
@@ -37,19 +38,6 @@ inline uint32_t U(const std::string& b, size_t o) {
 }
 inline std::string pk(uint32_t v) { return std::string(reinterpret_cast<const char*>(&v), 4); }
 inline std::string fstr(const std::string& s) { return pk(static_cast<uint32_t>(s.size() + 1)) + s + std::string(1, '\0'); }
-
-// vanilla classes (all exist in the stock pak) that can take an unused table slot; first one not in the table wins
-inline const std::vector<std::string>& standins() {
-    static const std::vector<std::string> v = {
-        "/Game/Blueprints/BuildingBlocks/BPO_LadderBlock.BPO_LadderBlock_C",
-        "/Game/Blueprints/BuildingBlocks/BPO_Station_2x1.BPO_Station_2x1_C",
-        "/Game/Blueprints/BuildingBlocks/BPO_ScannerModule.BPO_ScannerModule_C",
-        "/Game/Blueprints/Machines/BPO_Ladder_01.BPO_Ladder_01_C",
-        "/Game/Blueprints/Machines/BPO_SignWall.BPO_SignWall_C",
-        "/Game/Blueprints/Machines/BPO_Elevator.BPO_Elevator_C",
-        "/Game/Blueprints/Machines/BPO_Teleporter.BPO_Teleporter_C"};
-    return v;
-}
 
 struct Parsed {
     uint32_t version = 0, nextid = 0, ticks = 0;
@@ -169,21 +157,6 @@ inline std::vector<size_t> usage(const std::string& b, uint32_t idx, const Parse
     return r;
 }
 
-// Fail-closed residual scan: after the rewrite, every plausible reference to a neutralised class index that is not
-// understood. Plausible = [idx][id in 1..NextId][0] preceded by a 0 word (what a sibling node looks like) with an id that is
-// not repeated by another hit (repeated ids are repeated records, e.g. the embedded blueprint copies). Returns offsets.
-inline std::vector<size_t> residual(const std::string& b, uint32_t idx, const Parsed& P) {
-    std::vector<size_t> hits, r;
-    std::string key = pk(idx);
-    for (size_t pos = b.find(key); pos != std::string::npos; pos = b.find(key, pos + 4))
-        if (pos > P.tab_end && pos >= 4 && U(b, pos + 4) >= 1 && U(b, pos + 4) <= P.nextid && U(b, pos + 8) == 0) hits.push_back(pos);
-    std::map<uint32_t, int> cnt;
-    for (size_t h : hits) ++cnt[U(b, h + 4)];
-    for (size_t h : hits)
-        if (cnt[U(b, h + 4)] == 1 && U(b, h - 4) == 0) r.push_back(h);
-    return r;
-}
-
 struct Edit {
     size_t a, e;
     std::string d;
@@ -231,9 +204,10 @@ inline std::string verify(const std::string& a, const std::string& c, const std:
     if (A.table.size() != C.table.size()) return "class table size changed";
     for (size_t i = 0; i < A.table.size(); ++i) {
         if (mp.count(static_cast<uint32_t>(i))) {
-            if (C.table[i] == A.table[i]) return "modded table entry not replaced";
-            for (const auto& t : A.table)
-                if (t == C.table[i]) return "stand-in already in table";
+            std::string want;
+            for (const auto& s : active)
+                if (s.modded == A.table[i]) want = s.stock;
+            if (C.table[i] != want) return "modded table entry is not the stock path";
         } else if (C.table[i] != A.table[i]) {
             return "table changed at " + std::to_string(i);
         }
@@ -297,24 +271,14 @@ inline ScrubOut scrub_bytes(const std::string& b, const std::vector<SaveScrub>& 
     };
 
     std::map<uint32_t, uint32_t> mp;                 // modded idx -> stock idx
-    std::map<uint32_t, std::string> standin;         // modded idx -> vanilla stand-in
-    std::set<std::string> used;
+    std::map<uint32_t, std::string> standin;         // modded idx -> stock path (the slot is renamed to it; a duplicate table entry is fine)
     for (const auto& p : pairs) {
         int j = idx_of(p.stock);
         if (j < 0) return refuse("needs manual: stock class " + p.stock + " is not in the save's class table");
         int i = idx_of(p.modded);
         if (i < 0) continue;
         mp[static_cast<uint32_t>(i)] = static_cast<uint32_t>(j);
-        std::string n = p.standin;
-        if (n.empty())
-            for (const auto& c : standins())
-                if (idx_of(c) < 0 && !used.count(c)) {
-                    n = c;
-                    break;
-                }
-        if (n.empty() || idx_of(n) >= 0 || used.count(n)) return refuse("no unused vanilla stand-in class for " + p.modded);
-        used.insert(n);
-        standin[static_cast<uint32_t>(i)] = n;
+        standin[static_cast<uint32_t>(i)] = p.stock;
     }
 
     std::vector<Edit> edits;
@@ -400,20 +364,6 @@ inline ScrubOut scrub_bytes(const std::string& b, const std::vector<SaveScrub>& 
         if (edits[i - 1].e > edits[i].a) return refuse("overlapping edits");
 
     std::string out = apply_edits(b, edits);
-    {
-        Parsed PO;
-        std::string w2;
-        if (!parse(out, PO, w2)) return refuse("re-parse failed: " + w2);
-        for (const auto& kv : mp) {
-            std::vector<size_t> rs = residual(out, kv.first, PO);
-            if (!rs.empty()) {
-                std::string at;
-                for (size_t i = 0; i < rs.size() && i < 5; ++i) at += (i ? "," : "") + std::to_string(rs[i]);
-                return refuse("cannot revert safely: " + std::to_string(rs.size()) + " unexplained reference(s) to class index " +
-                              std::to_string(kv.first) + " (" + T[kv.first] + ") at offset(s) " + at + ": save left untouched");
-            }
-        }
-    }
     std::string v = verify(b, out, mp, pairs);
     if (!v.empty()) return refuse("verification failed: " + v);
     R.st = ScrubSt::Ok;

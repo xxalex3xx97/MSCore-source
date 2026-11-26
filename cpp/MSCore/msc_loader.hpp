@@ -36,7 +36,7 @@ namespace mscl {
 
 // THE MSCore version and native API number: dllmain.cpp (kVersion, MSCore_api) and the manager (title, --version) use these.
 // Keep kVersion equal to MSCore.version in mscore.lua and ModVersion in mscore.mod.
-inline constexpr const char* kVersion = "0.9.0";
+inline constexpr const char* kVersion = "0.9.1";
 inline constexpr int kNativeApi = 28;
 
 namespace fs = std::filesystem;
@@ -624,8 +624,8 @@ inline bool same_deps(const std::vector<Dep>& a, const std::vector<Dep>& b) {
 }
 
 // mscore.mod "save_scrub=<modded class path>><stock class path>" (repeatable): what Remove rewrites in the user's saves.
-// Paths exactly as in the save's class table, e.g. /Game/Blueprints/BuildingBlocks/BPO_X.BPO_X_C. standin = optional
-// vanilla class that takes the now unused class-table slot (empty = msc_savescrub.hpp picks one). Bad lines are ignored.
+// Paths exactly as in the save's class table, e.g. /Game/Blueprints/BuildingBlocks/BPO_X.BPO_X_C. standin is parsed but
+// no longer used: the modded class-table slot is renamed to the stock path (msc_savescrub.hpp). Bad lines are ignored.
 struct SaveScrub {
     std::string modded, stock, standin;
 };

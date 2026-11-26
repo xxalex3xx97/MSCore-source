@@ -5,6 +5,9 @@ nav_order: 6
 
 # Changelog
 
+## 0.9.1 - Remove mod fix
+- **Fixed:** Remove mod refused or could leave broken references in some saves (stray modded class entries in embedded design copies; all stand-in classes already used). The modded class slot in the save now points at the stock class, so other references to it land on the stock class too. Verified in game on one save that failed before; other saves are checked by the scrubber's own verification only.
+
 ## 0.9.0 - UE4SS 4.0.0
 - **Changed:** MSCore and the manager now target UE4SS 4.0.0. The release ships `ue4ss-4.0.0.zip`; the manager installs it.
 - **New:** `min_ue4ss` gate: the manager and the loader refuse to run on an older UE4SS, with a message that says which version is needed.
