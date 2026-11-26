@@ -309,6 +309,10 @@ bool install_ue4ss(const mscl::Paths& p, const mscl::Manifest& m, std::string& e
             fs::path f = find(n);
             if (!f.empty()) fs::copy_file(f, p.ue4ss / mscl::to_wide(n), ow);
         }
+        {   // version marker read by mscl::installed_ue4ss (min_ue4ss gate)
+            std::ofstream mk(p.ue4ss / L"ue4ss_version.txt", std::ios::binary | std::ios::trunc);
+            mk << m.ue4ss_version << "\n";
+        }
         return true;
     } catch (const std::exception& e) {
         err = e.what();
@@ -423,6 +427,11 @@ bool add_mod_core(const mscl::Paths& p, const std::string& repo, std::string& ms
         if (mod.name == "MSCore") core = mod.version;
     if (!m.min_native.empty() && mscl::ver_cmp(core, m.min_native) < 0) {
         err = "needs MSCore >= " + m.min_native + " (installed " + core + ")";
+        return false;
+    }
+
+    if (!mscl::ue4ss_ok(p, m)) {
+        err = "needs UE4SS >= " + m.min_ue4ss + " (installed " + mscl::installed_ue4ss(p) + "): run MSCoreManager install to upgrade UE4SS first";
         return false;
     }
 

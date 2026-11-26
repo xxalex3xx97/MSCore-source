@@ -3,9 +3,12 @@
 param([switch]$Install)
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$re   = if ($env:MS_UE4SS_ROOT) { $env:MS_UE4SS_ROOT } else { 'F:\MSDemoMods\build\RE-UE4SS' }
+$re   = if ($env:MS_UE4SS_ROOT) { $env:MS_UE4SS_ROOT } else { 'F:\mscore-build\RE-UE4SS-v4' }
 $game = if ($env:MS_GAME_DIR) { $env:MS_GAME_DIR } else { 'F:\SteamLibrary\steamapps\common\Main Sequence Demo' }
 $bt   = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools'
+# UE4SS v4 gate: mods built here must come from a v4 tree (3.0.1 headers give DLLs v4 cannot load)
+$ueTag = (git -C $re describe --tags --exact-match 2>$null)
+if ("$ueTag" -notmatch '^v[4-9]\.') { throw "UE4SS tree '$re' is not a v4 tag (got '$ueTag'). Run scripts\setup-ue4ss-v4.ps1 or set MS_UE4SS_ROOT to a v4 tree." }
 $mod  = "$game\Windows\MainSequence\Binaries\Win64\ue4ss\Mods\MSCore"
 
 # mirror sources into the RE-UE4SS tree (build compiles from there)
