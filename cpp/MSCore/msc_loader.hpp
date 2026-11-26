@@ -36,7 +36,7 @@ namespace mscl {
 
 // THE MSCore version and native API number: dllmain.cpp (kVersion, MSCore_api) and the manager (title, --version) use these.
 // Keep kVersion equal to MSCore.version in mscore.lua and ModVersion in mscore.mod.
-inline constexpr const char* kVersion = "0.9.0";
+inline constexpr const char* kVersion = "0.9.1";
 inline constexpr int kNativeApi = 28;
 
 namespace fs = std::filesystem;

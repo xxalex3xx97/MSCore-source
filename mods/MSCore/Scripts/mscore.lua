@@ -1,7 +1,7 @@
 -- MSCore: shared helpers for Main Sequence UE4SS Lua mods. API v3. Read-only unless a command function is called.
 -- Each UE4SS mod has its own Lua state: a consumer require()s its own copy of this file.
 -- api = Lua module API (MSCore.require / MSCore.api). Separate counter from the native ABI (MSCore_api() in dllmain.cpp, now 28: 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy; 21 = MSCore_ship_threat; 22 = MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick; 23 = MSCore_enemy_velocity, MSCore_enemy_aim; 24 = MSCore_enemy_motion; 25 = MSCore_ship_guns, MSCore_sim_rate; 26 = MSCore_enemy_stations; 27 = MSCore_floaters).
-local MSCore = { api = 3, version = "0.9.0", verified_build = 149329408 }
+local MSCore = { api = 3, version = "0.9.1", verified_build = 149329408 }
 -- C++ part (Mods/MSCore/dlls/main.dll) registers MSCoreNative_* globals before this file runs; nil if the DLL is not installed
 -- wrapper: calls the MSCoreNative_* global at call time; nil when the DLL does not provide it
 local function nat(name) return function(...) local f = _G[name] if f then return f(...) end return nil end end
