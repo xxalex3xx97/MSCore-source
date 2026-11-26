@@ -141,12 +141,14 @@ static void scrub_tests() {
     CHECK(r.st == ScrubSt::Refused && r.data.empty() && r.why.find("another length") != std::string::npos);
     // save without the class: skipped, not written
     CHECK(scrub_bytes(make_save(true, false, false, false, 0), pairs).st == ScrubSt::Skip);
-    // fail closed: a plausible reference to the modded slot that is not a known node shape leaves the save untouched
+    // a [0][idx][id][0] entry for the modded slot that is not a node (list inside an embedded design copy): the class word is
+    // remapped to the stock slot like a node, counted in rep.lists, and nothing is left pointing at the modded slot
     {
         std::string sus = make_save(true, true, false, true, 1);
-        sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]: looks like a node, wrong payload
+        sus += w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);  // [0][idx 7][id 777][0]
         ScrubOut rf = scrub_bytes(sus, pairs);
-        CHECK(rf.st == ScrubSt::Refused && rf.data.empty() && rf.why.find("cannot revert safely") != std::string::npos);
+        CHECK(rf.st == ScrubSt::Ok && rf.rep.lists == 1);
+        CHECK(rf.data.size() >= 24 && ss::U(rf.data, rf.data.size() - 20) != 7);
         // the same shape with a repeated id is a repeated record: explained, not a refusal
         std::string rep2 = make_save(true, true, false, true, 1) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2) + w32(0) + w32(7) + w32(777) + w32(0) + w32(1) + w32(2);
         CHECK(scrub_bytes(rep2, pairs).st == ScrubSt::Ok);

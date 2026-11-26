@@ -15,7 +15,7 @@
 namespace mscl {
 
 struct ScrubRep {
-    int nodes = 0, table = 0, paths = 0, merged = 0, renamed = 0, removed = 0;
+    int nodes = 0, table = 0, paths = 0, merged = 0, renamed = 0, removed = 0, lists = 0;
 };
 
 enum class ScrubSt { Skip, Ok, Refused };
@@ -47,7 +47,16 @@ inline const std::vector<std::string>& standins() {
         "/Game/Blueprints/Machines/BPO_Ladder_01.BPO_Ladder_01_C",
         "/Game/Blueprints/Machines/BPO_SignWall.BPO_SignWall_C",
         "/Game/Blueprints/Machines/BPO_Elevator.BPO_Elevator_C",
-        "/Game/Blueprints/Machines/BPO_Teleporter.BPO_Teleporter_C"};
+        "/Game/Blueprints/Machines/BPO_Teleporter.BPO_Teleporter_C",
+        // more vanilla classes (each seen in real saves) so a save that already uses the first seven still has free slots
+        "/Game/Blueprints/BuildingBlocks/BPO_Station_03.BPO_Station_03_C",
+        "/Game/Blueprints/BuildingBlocks/BPO_StationAdapter_01.BPO_StationAdapter_01_C",
+        "/Game/Blueprints/BuildingBlocks/BPO_StationCorridor_02.BPO_StationCorridor_02_C",
+        "/Game/Blueprints/BuildingBlocks/BPO_Connector_07T.BPO_Connector_07T_C",
+        "/Game/Blueprints/BuildingBlocks/BPO_Connector_07B.BPO_Connector_07B_C",
+        "/Game/Blueprints/BuildingBlocks/BPO_XLargeConnector.BPO_XLargeConnector_C",
+        "/Game/Blueprints/Machines/BPO_ElevatorFiller.BPO_ElevatorFiller_C",
+        "/Game/Blueprints/Machines/BPO_BeltBalancer_03.BPO_BeltBalancer_03_C"};
     return v;
 }
 
@@ -331,6 +340,14 @@ inline ScrubOut scrub_bytes(const std::string& b, const std::vector<SaveScrub>& 
             ++rep.nodes;
         }
     }
+    // [classIdx][id][0] entries that are not nodes (lists inside embedded design copies, unique ids): same class word,
+    // same stock native parent, so remap like a node. Anything still plausible afterwards is refused below.
+    for (const auto& kv : mp)
+        for (size_t o : residual(b, kv.first, P))
+            if (std::find(allnodes.begin(), allnodes.end(), o) == allnodes.end()) {
+                edits.push_back({o, o + 4, pk(kv.second)});
+                ++rep.lists;
+            }
     std::sort(allnodes.begin(), allnodes.end());
     for (size_t i = 1; i < allnodes.size(); ++i)
         if (allnodes[i] - allnodes[i - 1] < 16) return refuse("ambiguous overlapping node matches");

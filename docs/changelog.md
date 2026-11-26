@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased
+- **Fixed:** Remove mod no longer refuses saves that hold stray modded class entries inside embedded design copies (the Mining Bench `BPO_MiningMod` case, same for Blueprint Unit). They are remapped to the stock class like nodes.
+- **Fixed:** Remove mod no longer refuses a save that already uses all seven built-in stand-in classes; eight more vanilla stand-ins were added.
+
 ## 0.9.0 - UE4SS 4.0.0
 - **Changed:** MSCore and the manager now target UE4SS 4.0.0. The release ships `ue4ss-4.0.0.zip`; the manager installs it.
 - **New:** `min_ue4ss` gate: the manager and the loader refuse to run on an older UE4SS, with a message that says which version is needed.
