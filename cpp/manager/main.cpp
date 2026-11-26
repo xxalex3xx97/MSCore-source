@@ -46,6 +46,7 @@ std::string g_add_repo;  // set by the Add mod dialog
 mscl::Paths g_paths;
 bool g_has_game = false;
 bool g_busy = false;
+mscl::SelfUpdateInfo* g_su_pending = nullptr;  // manager update that arrived while a job ran: re-posted when the job ends
 std::string g_self_ver;  // version being installed by the self-update
 std::string g_last;  // last work result, shown together with the next check result
 std::vector<mscl::Check> g_rows;
@@ -998,6 +999,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_rows = std::move(*v);
             delete v;
             g_busy = false;
+            if (g_su_pending) {
+                PostMessageW(hwnd, WM_APP_SELFUPD, 0, reinterpret_cast<LPARAM>(g_su_pending));
+                g_su_pending = nullptr;
+            }
             refresh_list();
             set_status((g_last.empty() ? std::string() : g_last + " | ") + "Checked " +
                        std::to_string(g_rows.size()) + " mod(s).");
@@ -1018,7 +1023,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto* i = reinterpret_cast<mscl::SelfUpdateInfo*>(lp);
             mscl::SelfUpdateInfo info = *i;
             delete i;
-            if (g_busy) return 0;  // a mod operation is running: never swap the exe now, the next start tries again
+            if (g_busy) {  // a job (the startup mod check, a mod operation) is running: never swap the exe now, retry when it ends
+                delete g_su_pending;
+                g_su_pending = new mscl::SelfUpdateInfo(info);
+                return 0;
+            }
             g_busy = true;
             update_ui();
             set_status("Manager update available v" + info.version + " (installing...)");
