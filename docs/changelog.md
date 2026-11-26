@@ -5,6 +5,9 @@ nav_order: 6
 
 # Changelog
 
+## 0.9.2 - Manager auto-update fix
+- **Fixed:** the manager's startup self-update was silently dropped whenever it arrived while the startup mod check was still running (nearly always), so the manager never updated itself on its own. It now waits for the check to finish and then updates.
+
 ## 0.9.1 - Remove mod fix
 - **Fixed:** Remove mod refused or could leave broken references in some saves (stray modded class entries in embedded design copies; all stand-in classes already used). The modded class slot in the save now points at the stock class, so other references to it land on the stock class too. Verified in game on one save that failed before; other saves are checked by the scrubber's own verification only.
 

@@ -46,6 +46,7 @@ std::string g_add_repo;  // set by the Add mod dialog
 mscl::Paths g_paths;
 bool g_has_game = false;
 bool g_busy = false;
+mscl::SelfUpdateInfo* g_su_pending = nullptr;  // manager update that arrived while a job ran: re-posted when the job ends
 std::string g_self_ver;  // version being installed by the self-update
 std::string g_last;  // last work result, shown together with the next check result
 std::vector<mscl::Check> g_rows;
@@ -985,6 +986,13 @@ void create_controls(HWND h) {
     g_details = mk(h, L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER, 12, 452, 988, 150, 0);
 }
 
+// Called wherever g_busy goes false: hands a parked manager update (see WM_APP_SELFUPD) back to the message loop.
+void flush_su_pending(HWND h) {
+    if (!g_su_pending) return;
+    PostMessageW(h, WM_APP_SELFUPD, 0, reinterpret_cast<LPARAM>(g_su_pending));
+    g_su_pending = nullptr;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
@@ -998,6 +1006,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_rows = std::move(*v);
             delete v;
             g_busy = false;
+            flush_su_pending(hwnd);
             refresh_list();
             set_status((g_last.empty() ? std::string() : g_last + " | ") + "Checked " +
                        std::to_string(g_rows.size()) + " mod(s).");
@@ -1018,7 +1027,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto* i = reinterpret_cast<mscl::SelfUpdateInfo*>(lp);
             mscl::SelfUpdateInfo info = *i;
             delete i;
-            if (g_busy) return 0;  // a mod operation is running: never swap the exe now, the next start tries again
+            if (g_busy) {  // a job (the startup mod check, a mod operation) is running: never swap the exe now, retry when it ends
+                delete g_su_pending;
+                g_su_pending = new mscl::SelfUpdateInfo(info);
+                return 0;
+            }
             g_busy = true;
             update_ui();
             set_status("Manager update available v" + info.version + " (installing...)");
@@ -1072,6 +1085,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             set_status(*s);
             delete s;
             g_busy = false;
+            flush_su_pending(hwnd);
             update_ui();
             start_check();
             return 0;
