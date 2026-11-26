@@ -5,7 +5,7 @@ nav_order: 6
 
 # Changelog
 
-## Unreleased
+## 0.9.2 - Manager auto-update fix
 - **Fixed:** the manager's startup self-update was silently dropped whenever it arrived while the startup mod check was still running (nearly always), so the manager never updated itself on its own. It now waits for the check to finish and then updates.
 
 ## 0.9.1 - Remove mod fix
