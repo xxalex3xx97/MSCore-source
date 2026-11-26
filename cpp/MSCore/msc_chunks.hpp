@@ -167,25 +167,56 @@ namespace
         return ch_seh_apply(g_nat.apply, S, k);
     }
 
-    // WHAT: the player controller. Cached: first_of is a full UObject walk.
-    // WHY: the cache is checked with cached_ok (SEH), so a freed controller is looked up again.
+    // WHAT: true when o has a live PlayerObject. SEH: o may be freed.
+    bool ch_pobj_ok(UObject* o)
+    {
+        __try { return alive(get_obj_prop(o, STR("PlayerObject"))); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    // WHAT: the player controller that owns a live PlayerObject; else the first live one; nullptr when none.
+    // WHY: a menu controller (PlayerObject null) can come first in FindAllOf; first_of would keep returning it.
+    UObject* ch_find_ctrl()
+    {
+        std::vector<UObject*> v;
+        UObjectGlobals::FindAllOf(STR("DMSPlayerController"), v);
+        UObject* any = nullptr;
+        for (UObject* o : v)
+        {
+            if (!o) continue;
+            if (ch_pobj_ok(o)) return o;
+            if (!any) any = o;
+        }
+        return any;
+    }
+
+    // WHAT: the player controller. Cached: ch_find_ctrl is a full UObject walk.
+    // WHY: the cache is kept only while the controller is alive AND its PlayerObject is alive (cached_ok is SEH). A stale controller
+    // with PlayerObject null kept ch_player false for the whole session; then it is looked up again (once per call).
     UObject* ch_ctrl()
     {
         static UObject* c = nullptr;
         static int cid = 0;
-        if (c && cached_ok(c, cid)) return c;
-        c = first_of(STR("DMSPlayerController"));
+        if (c && cached_ok(c, cid) && ch_pobj_ok(c)) return c;
+        c = ch_find_ctrl();
         cid = alive(c) ? obj_id(c) : 0;
         return c;
     }
 
+    // WHAT: which link of ch_player failed (diagnostics only).
+    struct ChDiag { bool ctrl = false, chunk = false, pobj = false; };
+
     // WHAT: player chunk (PlayerCachedChunkLocation) and the player's solar system. false when unreadable: then nothing is set or cleared.
-    bool ch_player(int& psys, int64_t pch[3])
+    bool ch_player(int& psys, int64_t pch[3], ChDiag* d = nullptr)
     {
         UObject* ctrl = ch_ctrl();
+        if (d) d->ctrl = alive(ctrl);
         if (!alive(ctrl) || !sec_axes(ctrl, STR("PlayerCachedChunkLocation"), pch)) return false;
+        if (d) d->chunk = true;
         UObject* pobj = get_obj_prop(ctrl, STR("PlayerObject"));
-        psys = alive(pobj) ? sys_id(pobj) : 0;
+        const bool pal = alive(pobj);
+        if (d) d->pobj = pal;
+        psys = pal ? sys_id(pobj) : 0;
         return psys > 0;
     }
 
