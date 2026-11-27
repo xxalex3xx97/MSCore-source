@@ -1770,7 +1770,7 @@ extern "C"
         catch (...) { module_disable(STR("estations"), STR("enemy_stations exception")); return -1; }
     }
 
-    // station zones (API 29, on unless Mods\MSCore\stshield_off.txt exists): every station (all systems), ordered by id, into out (max rows, MsStationZone 48 B: id, sys, pos[3] absolute metres (rockreg frame), extent_m, range_m; -1 = unknown, range_m is -1 until the probe finds the shield range field). Returns the total count, -1 fault, -2 module off.
+    // station zones (API 29, on unless Mods\MSCore\stshield_off.txt exists): player stations only (class BP_StationObject_C, all systems), ordered by id, into out (max rows, MsStationZone 48 B: id, sys, pos[3] absolute metres (rockreg frame), extent_m, range_m; -1 = unknown, range_m is -1 until the probe finds the shield range field). Returns the total count, -1 fault, -2 module off.
     MSCORE_API int MSCore_station_zones(MsStationZone* out, int max)
     {
         try { return station_zones(out, max); }

@@ -132,7 +132,7 @@ namespace
                         stz_dump(gens[0], STR("gen=unlinked class=") + gens[0]->GetClassPrivate()->GetName());
                     }
                 }
-                keep = true;
+                keep = sz_is_player_station(std::wstring(o->GetClassPrivate()->GetName()));   // probe above logs every station, rows are player stations only
             });
             if (!ok) return false;
             if (keep) rows.push_back(r);

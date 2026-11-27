@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace
@@ -13,6 +14,9 @@ namespace
     // extent_m = station extent in metres, -1 unknown. range_m = station shield range in metres, -1 unknown (not readable until the probe shows the field).
     struct MsStationZone { int32_t id; int32_t sys; double pos[3]; double extent_m; double range_m; };
     static_assert(sizeof(MsStationZone) == 48, "MsStationZone layout is part of the C API");
+
+    // WHAT: true only for a player station (class name exactly BP_StationObject_C); abandoned (BP_AbandonedStationObject_0x_C) and NPC outposts (BPO_TradingOutpost...) are false.
+    inline bool sz_is_player_station(const std::wstring& cls) { return cls == L"BP_StationObject_C"; }
 
     // WHAT: rows with id > 0, sys > 0 and a finite position, ordered by id, at most max rows (max < 0 = all). Unknown extent/range are normalised to -1.
     inline std::vector<MsStationZone> sz_filter(const std::vector<MsStationZone>& rows, int max)

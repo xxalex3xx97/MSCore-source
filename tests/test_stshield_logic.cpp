@@ -33,6 +33,10 @@ int main()
     CHECK(sz_filter(v, 2).size() == 2);
     CHECK(sz_filter(v, 0).empty());
     CHECK(sz_filter({}, 10).empty());
+    CHECK(sz_is_player_station(L"BP_StationObject_C"));
+    CHECK(!sz_is_player_station(L"BP_AbandonedStationObject_01_C"));
+    CHECK(!sz_is_player_station(L"BPO_TradingOutpost_C"));
+    CHECK(!sz_is_player_station(L""));
     std::printf("test_stshield_logic: %d passed, %d failed\n", g_run - g_fail, g_fail);
     return g_fail ? 1 : 0;
 }
