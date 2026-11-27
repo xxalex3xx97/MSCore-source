@@ -920,7 +920,7 @@ void do_remove() {
                     " file(s) installed by " + join_names(names) +
                     ", their backups and their mods.txt lines. Nothing of them stays loadable.\n"
                     "Saves containing these mods' blocks will be backed up and scrubbed.\n"
-                    "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
+                    "Their whole folders (settings and logs included) are deleted. Other mods are kept.";
     if (names.size() > 1)
         q += "\n\nAlso removed because nothing else needs them: " + join_names(std::vector<std::string>(names.begin() + 1, names.end()));
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;

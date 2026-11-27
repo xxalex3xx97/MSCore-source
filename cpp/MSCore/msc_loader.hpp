@@ -36,7 +36,7 @@ namespace mscl {
 
 // THE MSCore version and native API number: dllmain.cpp (kVersion, MSCore_api) and the manager (title, --version) use these.
 // Keep kVersion equal to MSCore.version in mscore.lua and ModVersion in mscore.mod.
-inline constexpr const char* kVersion = "0.9.4";
+inline constexpr const char* kVersion = "0.9.5";
 inline constexpr int kNativeApi = 29;
 
 namespace fs = std::filesystem;
@@ -1400,7 +1400,7 @@ inline bool set_mod_enabled(const Paths& p, const std::string& mod, bool on, std
 // a backup file is the previous version of the same mod (or of another Mods\ folder it ships), and putting it back
 // left a half-installed mod behind (bug: Mods\MiningUnitUI, pak98, enabled.txt survived Remove).
 // Then: install list, backup dir, staged update, pending line, legacy loader.ini force_install.<mod> lines, mods.txt lines.
-// Refuses MSCore, refuses paths outside Mods\ and Paks\, never touches protected/user files (see protected_name).
+// Refuses MSCore, refuses paths outside Mods\ and Paks\. Remove is for good: the mod's own Mods\<dir> folders go whole, settings and logs included.
 // The caller must check the game is not running.
 inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err) {
     std::vector<RemoveItem> items;
@@ -1417,6 +1417,18 @@ inline bool remove_mod(const Paths& p, const std::string& mod, std::string& err)
         if (failed) {
             err = std::to_string(failed) + " file(s) could not be removed (locked?); nothing else changed, run Remove again";
             return false;
+        }
+
+        // for good: the whole folder of the mod and of every Mods\<dir> it shipped goes (generated data, settings, logs).
+        // Never MSCore, never a folder that still holds another mod's mscore.mod.
+        {
+            std::set<std::string> own = mod_dirs(items);
+            own.insert(mod);
+            for (const auto& n : own) {
+                if (lower(n) == "mscore") continue;
+                const fs::path d = p.mods / to_wide(n);
+                if (!fs::exists(d / L"mscore.mod", ec)) fs::remove_all(d, ec);
+            }
         }
 
         fs::remove_all(bdir, ec);
