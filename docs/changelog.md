@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## 0.9.5 - Clean removal
+- **Changed:** Remove is for good. The mod's whole `Mods\<folder>` (and every other `Mods\` folder its package shipped) is deleted, settings, data files and logs included. A folder that still holds another mod's `mscore.mod` is never touched, and MSCore is never removed. The confirm box says so. Save backups under `MSCore\save-backup` are kept.
+- **Changed:** Remove is refused while another installed mod requires the mod (the message names them), and it also removes every dependency that no remaining mod needs (the confirm box lists them). One save scrub covers every mod removed.
+
 ## 0.9.4 - Station zones (API 29)
 - **New:** stshield module, on unless `Mods\MSCore\stshield_off.txt` exists: C export `MSCore_station_zones` (player stations only, `MsStationZone` 48 B: id, sys, pos[3] absolute metres, extent_m, range_m). extent_m and range_m are -1 (the bubble radius is fixed by the calling mod). A station without a readable Location gets no row. Native API 28 -> 29, kill switch module_disable("stshield"), selfcheck ships.stshield.
 

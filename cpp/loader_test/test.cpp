@@ -352,7 +352,7 @@ int main(int argc, char** argv) {
 
     // remove: listed files go, overwritten-by-update file restored from backup, user files stay
     write_text(P.mods / L"M" / L"dlls" / L"main.dll", "NEW");  // back to the installed 1.1.0 state
-    write_text(P.mods / L"M" / L"x.log", "log");               // not listed: must stay
+    write_text(P.mods / L"M" / L"x.log", "log");               // not listed: goes with the mod folder (remove is for good)
     write_text(P.paks / L"keep.pak", "keep");                  // not listed: must stay
     write_text(P.mods / L"Other" / L"main.dll", "other");      // unrelated mod: must stay
     write_text(P.core / L"loader.ini", "force_install.M=1\nforce_install.Other=1\n");
@@ -362,7 +362,7 @@ int main(int argc, char** argv) {
     CHECK(remove_mod(P, "M", err));
     CHECK(!fs::exists(P.mods / L"M" / L"dlls" / L"main.dll"));
     CHECK(!fs::exists(P.paks / L"p.pak"));
-    CHECK(read_text(P.mods / L"M" / L"x.log") == "log");
+    CHECK(!fs::exists(P.mods / L"M"));
     CHECK(read_text(P.paks / L"keep.pak") == "keep");
     CHECK(read_text(P.mods / L"Other" / L"main.dll") == "other");
     CHECK(!fs::exists(P.core / L"backup" / L"M"));
@@ -370,13 +370,13 @@ int main(int argc, char** argv) {
     CHECK(read_text(P.core / L"loader.ini") == "force_install.Other=1\n");
     CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
 
-    // remove without install list: the mod folder is the list (mscore.mod, files; .log stays)
+    // remove without install list: the mod folder is the list (mscore.mod, files); the whole folder goes
     write_text(P.mods / L"U" / L"mscore.mod", "name=U\n");
     write_text(P.mods / L"U" / L"dlls" / L"main.dll", "U");
     write_text(P.mods / L"U" / L"a.log", "log");
     CHECK(remove_mod(P, "U", err));
     CHECK(!fs::exists(P.mods / L"U" / L"dlls" / L"main.dll"));
-    CHECK(read_text(P.mods / L"U" / L"a.log") == "log");
+    CHECK(!fs::exists(P.mods / L"U"));
     CHECK(!remove_mod(P, "U", err));  // mscore.mod gone: not installed
 
     // toggle: enabled.txt + mods.txt line (CRLF kept)
@@ -431,7 +431,7 @@ int main(int argc, char** argv) {
             write_text(P.core / L"installed" / L"MiningBenchMod.txt", kList);
             write_text(P.mods / L"mods.txt", "# hdr\nMiningBenchMod : 1\nMiningUnitUI : 1\nOther : 1\n");
             write_text(P.mods / L"Other" / L"main.dll", "other");
-            write_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini", "ini");  // user file
+            write_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini", "ini");  // settings: removed with the mod (for good)
         };
         auto none_left = [&]() {
             for (const auto& r : rels) CHECK(!fs::exists(target_for(P, r)));
@@ -441,7 +441,7 @@ int main(int argc, char** argv) {
         CHECK(remove_mod(P, "MiningBenchMod", err));
         none_left();
         CHECK(!fs::exists(P.mods / L"MiningUnitUI"));  // no empty mod folder left
-        CHECK(read_text(P.mods / L"MiningBenchMod" / L"MiningBench.ini") == "ini");  // only the user file keeps its folder
+        CHECK(!fs::exists(P.mods / L"MiningBenchMod"));  // remove is for good: no folder, settings or logs left
         CHECK(!fs::exists(P.core / L"backup" / L"MiningBenchMod"));
         CHECK(!fs::exists(P.core / L"installed" / L"MiningBenchMod.txt"));
         CHECK(read_text(P.mods / L"mods.txt") == "# hdr\nOther : 1\n");
