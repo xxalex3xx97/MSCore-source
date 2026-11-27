@@ -5,6 +5,11 @@ nav_order: 6
 
 # Changelog
 
+## 0.9.3 - Rock registry fix
+- **Fixed:** the rock registry world could fail to load in sessions that start while piloting a ship (a stale menu controller was kept), so rock-dependent features stayed idle. It now looks the controller up again until it has a live player. Not yet run in game.
+- **Fixed:** the manager's self-update is also handed back when an install or remove finishes, not only after the startup check.
+- **Added:** the log now reports why the rock registry world is not loading (at most every 10 s).
+
 ## 0.9.2 - Manager auto-update fix
 - **Fixed:** the manager's startup self-update was silently dropped whenever it arrived while the startup mod check was still running (nearly always), so the manager never updated itself on its own. It now waits for the check to finish and then updates.
 
