@@ -460,7 +460,7 @@ if (view_send && !view_send(cid, 0, 0, err, 256)) {
 
 | Export | Arguments | Returns | What | Verified |
 |---|---|---|---|---|
-| `MSCore_station_zones` | `MsStationZone* out, int max` | total count, `-1` fault (module turns off), `-2` module off | Player stations only (class BP_StationObject_C; abandoned stations and NPC outposts are excluded) in all systems, ordered by id, up to `max` rows. `MsStationZone` (48 B): `int32 id, sys; double pos[3], extent_m, range_m`. `pos` = station centre in absolute metres (same frame as the rock registry: chunk * chunk size + Location / 65536). `extent_m` and `range_m` are `-1` when unknown. `range_m` (station shield range) is `-1` for now: the PROBE `stshield` / `stshield_prop` lines (with `debug_probes.txt`) are there to find the field. | Not verified in game |
+| `MSCore_station_zones` | `MsStationZone* out, int max` | total count, `-1` fault (module turns off), `-2` module off | Player stations only (class BP_StationObject_C; abandoned stations and NPC outposts are excluded) in all systems, ordered by id, up to `max` rows. `MsStationZone` (48 B): `int32 id, sys; double pos[3], extent_m, range_m`. `pos` = station centre in absolute metres (same frame as the rock registry: chunk * chunk size + Location / 65536). `extent_m` and `range_m` are `-1` when unknown. `range_m` is `-1` (the shield bubble radius is fixed by the calling mod). A station without a readable Location gets no row. | Not verified in game |
 
 ## Gotchas
 
