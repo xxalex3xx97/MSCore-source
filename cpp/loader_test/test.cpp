@@ -715,6 +715,25 @@ int main(int argc, char** argv) {
         std::string me;
         CHECK(remove_mod(MP, "Old", me));
         CHECK(read_text(MP.mods / L"Ui" / L"Scripts" / L"main.lua") == "new ui");
+        // package with two Mods\ folders and a Paks file: install records all of them, remove takes all of them
+        Paths PP = fresh();
+        fs::path st = PP.core / L"updates" / L"A" / L"1.0.0";
+        write_text(st / L"Mods" / L"A" / L"mscore.mod", "name=A\nrepo=owner/a\nversion=1.0.0\nsave_scrub=" + kMod + ">" + kStk + "\n");
+        write_text(st / L"Mods" / L"A" / L"dlls" / L"a.dll", "a");
+        write_text(st / L"Mods" / L"B" / L"mscore.mod", "name=B\nrepo=owner/b2\nversion=1.0.0\n");
+        write_text(st / L"Mods" / L"B" / L"dlls" / L"b.dll", "b");
+        write_text(st / L"Paks" / L"x_P.pak", "pak");
+        write_text(PP.core / L"pending.txt", "A|1.0.0\n");
+        CHECK(apply_pending(PP, {}) == 1);
+        CHECK(read_text(PP.core / L"installed" / L"A.txt").find("Mods/B/dlls/b.dll") != std::string::npos);
+        CHECK(read_text(PP.core / L"installed" / L"A.txt").find("Paks/x_P.pak") != std::string::npos);
+        CHECK(fs::exists(PP.paks / L"x_P.pak") && fs::exists(PP.mods / L"B" / L"dlls" / L"b.dll"));
+        CHECK(scrub_declarations(PP, "A").size() == 1);  // declaration read before the removal
+        std::string me2;
+        CHECK(remove_mod(PP, "A", me2));
+        CHECK(!fs::exists(PP.mods / L"A" / L"mscore.mod") && !fs::exists(PP.mods / L"A" / L"dlls" / L"a.dll"));
+        CHECK(!fs::exists(PP.mods / L"B" / L"mscore.mod") && !fs::exists(PP.mods / L"B" / L"dlls" / L"b.dll"));
+        CHECK(!fs::exists(PP.paks / L"x_P.pak"));
         fs::remove_all(lt, lec);
     }
 
