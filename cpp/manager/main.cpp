@@ -496,29 +496,57 @@ int add_cli(const fs::path& win64, const std::string& arg) {
 
 // ---------- remove mod ----------
 
-// Game must be closed. Only listed files are deleted (see mscl::remove_mod).
+// Removes names in order (caller passes the cascade, mod first). Each name's save-scrub declarations are read before its
+// files go; stops at the first failure. Then one scrub of the declarations of the removed mods. text = result lines.
+// Returns 0, 1 (a removal failed), or 3 (a save/design was refused).
+int remove_all(const mscl::Paths& p, const std::vector<std::string>& names, std::string& text,
+               const std::function<void(const std::string&)>& progress = {}) {
+    int rc = 0;
+    std::vector<std::string> removed;
+    std::vector<mscl::SaveScrub> decl;
+    std::string body;
+    for (const auto& n : names) {
+        std::vector<mscl::SaveScrub> d = mscl::scrub_declarations(p, n);  // before the mscore.mod files are deleted
+        std::string e;
+        if (!mscl::remove_mod(p, n, e)) {
+            body += "Remove " + n + " failed: " + e + "\n";
+            rc = 1;
+            break;
+        }
+        removed.push_back(n);
+        for (const auto& s : d) {
+            bool seen = false;
+            for (const auto& u : decl) seen = seen || u.modded == s.modded;
+            if (!seen) decl.push_back(s);
+        }
+    }
+    text = removed.empty() ? "" : "Removed " + join_names(removed) + ".\n";
+    text += body;
+    if (decl.empty()) return rc;
+    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, false, mscl::kScrubSaves | mscl::kScrubDesigns, progress);
+    text += sum.text();
+    return rc ? rc : (sum.refused() || sum.designs_refused() ? 3 : 0);
+}
+
+// Game must be closed. Blocked while another mod requires mod. Removes mod plus the dependencies nothing else needs.
 int remove_cli(const fs::path& win64, const std::string& mod) {
     if (game_running_under(win64)) {
         log_line("remove: game is running - close it first");
         return 1;
     }
     mscl::Paths p = mscl::paths_from_win64(win64);
-    std::vector<std::string> deps = mscl::dependents_of(p, mod);
-    if (!deps.empty()) log_line("remove: warning: required by " + join_names(deps) + ": they will stop working");
-    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, mod);  // before the mscore.mod files are deleted
-    std::string err;
-    if (!mscl::remove_mod(p, mod, err)) {
-        log_line("remove: FAILED " + err);
-        out_text("remove: FAILED " + err + "\n");
+    std::vector<std::string> blk = mscl::blockers_of(p, mod);
+    if (!blk.empty()) {
+        std::string m = "remove: FAILED " + mod + " is required by " + join_names(blk) + ": remove them first";
+        log_line(m);
+        out_text(m + "\n");
         return 1;
     }
-    log_line("remove: OK " + mod);
-    out_text("remove: OK " + mod + "\n");
-    if (decl.empty()) return 0;
-    mscl::ScrubSummary sum = mscl::scrub_saves(save_dir(), p.core / L"save-backup", decl, false);
-    log_line(sum.text());
-    out_text(sum.text());
-    return sum.refused() || sum.designs_refused() ? 3 : 0;
+    std::string text;
+    int rc = remove_all(p, mscl::remove_cascade(p, mod), text);
+    log_line(text);
+    out_text(text);
+    return rc;
 }
 
 // --self-update: same check and swap as the startup one, no restart (tests, scripts). 0 = done / nothing to do, 1 = failed.
@@ -876,32 +904,35 @@ void do_remove() {
         set_status("Remove " + name + ": " + err);
         return;
     }
-    std::vector<std::string> deps = mscl::dependents_of(p, name);
-    std::string q = "Remove " + name + "?\n\nThis deletes " + std::to_string(items.size()) +
-                    " file(s) installed by " + name +
-                    ", its backup and its mods.txt lines. Nothing of it stays loadable.\n"
-                    "Saves containing this mod's blocks will be backed up and scrubbed.\n"
+    std::vector<std::string> blk = mscl::blockers_of(p, name);
+    if (!blk.empty()) {
+        set_status("Cannot remove " + name + ": required by " + join_names(blk) + ". Remove them first.");
+        return;
+    }
+    std::vector<std::string> names = mscl::remove_cascade(p, name);
+    size_t nfiles = items.size();
+    for (size_t k = 1; k < names.size(); ++k) {
+        std::vector<mscl::RemoveItem> extra;
+        std::string e2;
+        if (mscl::remove_plan(p, names[k], extra, e2)) nfiles += extra.size();
+    }
+    std::string q = "Remove " + join_names(names) + "?\n\nThis deletes " + std::to_string(nfiles) +
+                    " file(s) installed by " + join_names(names) +
+                    ", their backups and their mods.txt lines. Nothing of them stays loadable.\n"
+                    "Saves containing these mods' blocks will be backed up and scrubbed.\n"
                     "Your own files (MiningBench.ini, loader.ini, *.log, other mods) are kept.";
-    if (!deps.empty()) q += "\n\nRequired by " + join_names(deps) + ": they will stop working";
+    if (names.size() > 1)
+        q += "\n\nAlso removed because nothing else needs them: " + join_names(std::vector<std::string>(names.begin() + 1, names.end()));
     if (MessageBoxW(g_hwnd, mscl::to_wide(q).c_str(), L"Remove mod", MB_YESNO | MB_ICONWARNING) != IDYES) return;
-    std::vector<mscl::SaveScrub> decl = mscl::scrub_declarations(p, name);  // before the mscore.mod files are deleted
-    fs::path sd = save_dir();
-    run_work([p, name, decl, sd]() -> std::string {
+    run_work([p, names]() -> std::string {
         if (game_running_under(p.win64)) return "Game is running - close it first";
-        std::string e;
-        if (!mscl::remove_mod(p, name, e)) return "Remove " + name + " failed: " + e;
-        std::string r = "Removed " + name + ".";
-        if (decl.empty()) return r;
         auto progress = [](const std::string& t) {  // worker thread: the UI only shows the line, it never blocks
             if (g_hwnd) PostMessageW(g_hwnd, WM_APP_PROGRESS, 0, reinterpret_cast<LPARAM>(new std::string(t)));
         };
-        mscl::ScrubSummary sum = mscl::scrub_saves(sd, p.core / L"save-backup", decl, false, mscl::kScrubSaves | mscl::kScrubDesigns, progress);
-        log_line(sum.text());
-        r += " Saves scrubbed: " + std::to_string(sum.scrubbed()) + ", refused: " + std::to_string(sum.refused()) +
-             "; designs scrubbed: " + std::to_string(sum.designs_scrubbed()) + ", refused: " + std::to_string(sum.designs_refused()) +
-             (sum.refused() || sum.designs_refused() ? ". Refused files still need the mod (see below)." : ".");
-        r += "\n" + sum.text();
-        return r;
+        std::string text;
+        remove_all(p, names, text, progress);
+        log_line(text);
+        return text;
     });
 }
 
