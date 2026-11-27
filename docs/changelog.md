@@ -5,6 +5,10 @@ nav_order: 6
 
 # Changelog
 
+## Unreleased
+- **New:** stshield module, on unless `Mods\MSCore\stshield_off.txt` exists: C export `MSCore_station_zones` (every station, `MsStationZone` 48 B: id, sys, pos[3] absolute metres, extent_m, range_m). extent_m and range_m are -1 (unknown): the station shield range is not read yet, PROBE stshield / stshield_prop lines (need `debug_probes.txt`) show the candidate fields. Native API 28 -> 29, kill switch module_disable("stshield"), selfcheck ships.stshield.
+- **New:** PROBE caps line (ship id, Weapons count, non-alive weapons, bits) logged when a ship caps read changes. Return values unchanged.
+
 ## 0.9.3 - Rock registry fix
 - **Fixed:** the rock registry world could fail to load in sessions that start while piloting a ship (a stale menu controller was kept), so rock-dependent features stayed idle. It now looks the controller up again until it has a live player. Not yet run in game.
 - **Fixed:** the manager's self-update is also handed back when an install or remove finishes, not only after the startup check.

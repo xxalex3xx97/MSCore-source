@@ -42,6 +42,7 @@ using namespace RC::Unreal;
 #include "msc_repair.hpp"
 #include "msc_combat.hpp"
 #include "msc_estation.hpp"
+#include "msc_stshield.hpp"
 #include "msc_floaters.hpp"
 #include "msc_threat.hpp"
 #include "msc_strafe.hpp"
@@ -276,6 +277,14 @@ namespace
             if (g_est_off.load()) { detail = "SKIP estations_off.txt exists (feature off)"; return false; }
             bool ok = false;
             if (!seh_run([&] { ok = estations_selftest(detail); })) { detail = "estations selftest faulted"; module_disable(STR("estations"), STR("selfcheck fault")); return false; }
+            return ok;
+        }
+        if (name == "stshield")
+        {
+            if (!module_ok(STR("stshield"))) { detail = "stshield off: " + caps_text(); return false; }
+            if (g_stsh_off.load()) { detail = "SKIP stshield_off.txt exists (feature off)"; return false; }
+            bool ok = false;
+            if (!seh_run([&] { ok = stshield_selftest(detail); })) { detail = "stshield selftest faulted"; module_disable(STR("stshield"), STR("selfcheck fault")); return false; }
             return ok;
         }
         if (name == "floaters")
@@ -1266,6 +1275,7 @@ namespace
         if (mscl::fs::exists(dir / L"combat_on.txt", ec)) g_combat_on.store(true);
         if (mscl::fs::exists(dir / L"threat_off.txt", ec)) g_threat_off.store(true);
         if (mscl::fs::exists(dir / L"estations_off.txt", ec)) g_est_off.store(true);
+        if (mscl::fs::exists(dir / L"stshield_off.txt", ec)) g_stsh_off.store(true);
         if (mscl::fs::exists(dir / L"floaters_off.txt", ec)) g_flo_off.store(true);
         if (mscl::fs::exists(dir / L"ballistics_off.txt", ec)) g_bal_off.store(true);
         if (mscl::fs::exists(dir / L"strafe_off.txt", ec)) g_strafe_off.store(true);
@@ -1475,7 +1485,7 @@ public:
         register_globals(lua, STR("MSCore"));
         try { static bool once = false; if (!once) { once = true; refund_file_switch(); } } catch (...) {}
         // WHAT: one startup line of the capabilities. split and refund offsets resolve on first use, so they are not in it yet.
-        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); combat_resolve(); estations_resolve(); floaters_resolve(); threat_resolve(); strafe_resolve(); ballistics_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
+        try { static bool caps_once = false; if (!caps_once) { caps_once = true; nat_resolve(); scan_resolve(); rr_resolve(); ships_resolve(); flight_resolve(); repair_resolve(); combat_resolve(); estations_resolve(); stshield_resolve(); floaters_resolve(); threat_resolve(); strafe_resolve(); ballistics_resolve(); world_resolve(); stnames_resolve(); fleets_resolve(); msc_log(STR("COMPAT CAPS ") + widen(caps_text()) + STR("(split/refund offsets resolve on first use)")); } } catch (...) {}
     }
 
     auto on_lua_start(RC::StringViewType mod_name, LuaMadeSimple::Lua& lua, LuaMadeSimple::Lua&, LuaMadeSimple::Lua&, LuaMadeSimple::Lua*) -> void override
@@ -1492,8 +1502,8 @@ extern "C"
 
     // C API for other native mods (MiningBenchMod). Each call returns 1 on success, 0 on failure; err gets the reason (errlen wide chars).
     // Native ABI counter, separate from the Lua API (MSCore.api in mscore.lua, now 3).
-    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged). 17-28: see the list on MSCore_api below.
-    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy (combat module); 21 = MSCore_ship_threat (threat module, on unless Mods\MSCore\threat_off.txt exists); 22 = MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick (strafe module, on unless Mods\MSCore\strafe_off.txt exists); 23 = MSCore_enemy_velocity, MSCore_enemy_aim; 24 = MSCore_enemy_motion (combat module); 25 = MSCore_ship_guns, MSCore_sim_rate (ballistics module, on unless Mods\MSCore\ballistics_off.txt exists); 26 = MSCore_enemy_stations (estations module, on unless Mods\MSCore\estations_off.txt exists); 27 = MSCore_floaters (floaters module, on unless Mods\MSCore\floaters_off.txt exists); 28 = MSCore_chunk_stats (chunk hold counters)
+    // MSCore_api: 3 = scan and chunk hold (mining refuses to load below 3 when it needs them); 4 = factory exports below; 5 = add_block, pending, read_block_class (Lua only); 6 = read_docks and the block id column of read_station (Lua only); 7 = MSCore_chunk_hold2 (chunk radius); 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = MSCore_ship_flight, MSCore_ship_set_throttle, MSCore_ship_zero, MSCore_ship_console, MSCore_actor_loc (10 also has MSCore_world_paused); 11 = MSCore_ship_repair, MSCore_ship_repair_need; 12 = station names export (MSCore_stations); 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service). set_dock_filter is a Lua native only (no C export, number unchanged). 17-29: see the list on MSCore_api below.
+    MSCORE_API int MSCore_api() { try { return mscl::kNativeApi; } catch (...) { module_disable(STR("misc"), STR("MSCore_api exception")); return 0; } }   // 8 = MSCore_class, MSCore_scan_rocks; 9 = MSCore_ship_shields; 10 = flight exports; 11 = repair exports; 12 = station names export; 13 = fleet exports (MSCore_fleet_tags, MSCore_fleet_ships; Lua natives fleets_read, fleet_cmd, fleets_probe); 14 = MSCore_ship_hull; 15 = MSCore_ship_mining_caps, MSCore_presence_step; 16 = MSCore_rockreg_* (rock registry service); 17 = MSCore_ship_caps; 18 = MSCore_enemies_near, MSCore_ship_fire, MSCore_ship_weapon_range (stub); combat module is off until Mods\MSCore\combat_on.txt exists; 19 = MSCore_dock_kind; 20 = MSCore_spawn_practice_enemy (combat module); 21 = MSCore_ship_threat (threat module, on unless Mods\MSCore\threat_off.txt exists); 22 = MSCore_ship_strafe, MSCore_ship_strafe_zero, MSCore_strafe_tick (strafe module, on unless Mods\MSCore\strafe_off.txt exists); 23 = MSCore_enemy_velocity, MSCore_enemy_aim; 24 = MSCore_enemy_motion (combat module); 25 = MSCore_ship_guns, MSCore_sim_rate (ballistics module, on unless Mods\MSCore\ballistics_off.txt exists); 26 = MSCore_enemy_stations (estations module, on unless Mods\MSCore\estations_off.txt exists); 27 = MSCore_floaters (floaters module, on unless Mods\MSCore\floaters_off.txt exists); 28 = MSCore_chunk_stats (chunk hold counters); 29 = MSCore_station_zones (stshield module, on unless Mods\MSCore\stshield_off.txt exists)
 
     MSCORE_API int MSCore_add_input(int receiver, void* cmd, wchar_t* err, int errlen)
     {
@@ -1758,6 +1768,13 @@ extern "C"
     {
         try { return enemy_stations(sid, radius_m, out, max); }
         catch (...) { module_disable(STR("estations"), STR("enemy_stations exception")); return -1; }
+    }
+
+    // station zones (API 29, on unless Mods\MSCore\stshield_off.txt exists): every station (all systems), ordered by id, into out (max rows, MsStationZone 48 B: id, sys, pos[3] absolute metres (rockreg frame), extent_m, range_m; -1 = unknown, range_m is -1 until the probe finds the shield range field). Returns the total count, -1 fault, -2 module off.
+    MSCORE_API int MSCore_station_zones(MsStationZone* out, int max)
+    {
+        try { return station_zones(out, max); }
+        catch (...) { module_disable(STR("stshield"), STR("station_zones exception")); return -1; }
     }
 
     // floaters (API 27, on unless Mods\MSCore\floaters_off.txt exists): floating ore per sector (sectors with at least one floater, most first) into out (max rows, MsFloaterSec 40 B). Returns the row count, -1 fault, -2 module off.

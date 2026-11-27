@@ -9,8 +9,11 @@
 // USED BY: dllmain.cpp (MSCore_ship_caps, MSCore_ship_mining_caps, check_one "caps" / "mining_caps").
 // DEPENDS ON: msc_cmd.hpp (alive, seh_run), msc_ue.hpp (msc_log), msc_wclass.hpp (weapon_class_bits).
 #pragma once
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include "msc_wclass.hpp"
@@ -42,24 +45,43 @@ namespace
         return weapon_class_bits(cn);
     }
 
-    // WHAT: caps bits 1..31, 0 none, -1 unknown. Never logs per call; a fault is logged once.
+    // WHAT: PROBE caps line per ship, logged only when (weaponsNum, nonAlive, bits) changes for that ship id (not per call). Diagnostic for the ship list gate.
+    void caps_probe_change(int sid, int num, int non_alive, int bits)
+    {
+        static std::map<int, std::array<int, 3>> last;
+        static std::mutex mx;
+        const std::array<int, 3> cur{num, non_alive, bits};
+        {
+            std::lock_guard<std::mutex> lk(mx);
+            auto it = last.find(sid);
+            if (it != last.end() && it->second == cur) return;
+            last[sid] = cur;
+        }
+        msc_log(STR("PROBE caps ship=") + std::to_wstring(sid) + STR(" weaponsNum=") + std::to_wstring(num) + STR(" nonAlive=") + std::to_wstring(non_alive) + STR(" bits=") + std::to_wstring(bits));
+    }
+
+    // WHAT: caps bits 1..31, 0 none, -1 unknown. Never logs per call (PROBE caps only on change); a fault is logged once.
     int ship_caps_read(UObject* ship)
     {
         if (!alive(ship)) return -1;
         static std::atomic<bool> fault_logged{false};
         int bits = 0;
         bool ok = false;
+        int num = -1, non_alive = 0;
         const bool ran = seh_run([&] {
             TArray<UObject*>* a = weapon_array(ship);
             if (!a) return;
             const int32_t n = a->Num();
             if (n < 0 || n > kWeaponsMaxCount) return;
+            num = n;
             for (int32_t i = 0; i < n; ++i)
             {
+                if (!alive((*a)[i])) ++non_alive;
                 bits |= weapon_bits((*a)[i]);
             }
             ok = true;
         });
+        if (ran) { int sid = 0; seh_run([&] { sid = obj_id(ship); }); if (sid > 0) caps_probe_change(sid, num, non_alive, ok ? bits : -1); }
         if (!ran)
         {
             if (!fault_logged.exchange(true)) { msc_log(STR("ship_caps: native fault, returning -1")); }
