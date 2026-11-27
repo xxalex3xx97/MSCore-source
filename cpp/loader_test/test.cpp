@@ -666,6 +666,58 @@ int main(int argc, char** argv) {
     CHECK(dependents_of(DP, "X").empty());
     CHECK(dependents_of(DP, "Nope").empty());
 
+    // ---- linked remove (in-process): blockers, cascade, shared dependency, migration
+    {
+        fs::path lt = fs::temp_directory_path() / (std::string(nm) + "_link");
+        std::error_code lec;
+        auto fresh = [&]() {
+            fs::remove_all(lt, lec);
+            return paths_from_win64(lt / L"game" / L"Windows" / L"MainSequence" / L"Binaries" / L"Win64");
+        };
+        auto mk = [](const Paths& q, const std::string& name, const std::string& repo, const std::string& req) {
+            std::string kv = "name=" + name + "\nrepo=" + repo + "\nversion=1.0.0\n";
+            if (!req.empty()) kv += "requires=" + req + "\n";
+            write_text(q.mods / to_wide(name) / L"mscore.mod", kv);
+        };
+        // block: X requires Dep -> Dep blocked by X only (MSCore requiring Dep does not block)
+        Paths BP = fresh();
+        mk(BP, "Dep", "owner/dep", "");
+        mk(BP, "X", "o/x", "owner/dep@1.0.0");
+        mk(BP, "MSCore", "owner/core", "owner/dep@1.0.0");
+        CHECK((blockers_of(BP, "Dep") == std::vector<std::string>{"X"}));
+        CHECK(blockers_of(BP, "X").empty());
+        // MSCore is never in a cascade (Z requires MSCore's repo)
+        mk(BP, "MSCore", "owner/core", "");
+        mk(BP, "Z", "o/z", "owner/core@1.0.0");
+        CHECK((remove_cascade(BP, "Z") == std::vector<std::string>{"Z"}));
+        // chain: A -> B -> C
+        Paths CP = fresh();
+        mk(CP, "A", "owner/a", "owner/b@1.0.0");
+        mk(CP, "B", "owner/b", "owner/c@1.0.0");
+        mk(CP, "C", "owner/c", "");
+        CHECK((remove_cascade(CP, "A") == std::vector<std::string>{"A", "B", "C"}));
+        CHECK(blockers_of(CP, "A").empty());
+        // shared: D also requires C -> C kept
+        mk(CP, "D", "owner/d", "owner/c@1.0.0");
+        CHECK((remove_cascade(CP, "A") == std::vector<std::string>{"A", "B"}));
+        CHECK((blockers_of(CP, "C") == std::vector<std::string>{"B", "D"}));
+        // migration: Old owned Mods/Ui/Scripts/main.lua; Ui 1.0.0 takes it over via pending.txt
+        Paths MP = fresh();
+        mk(MP, "Old", "owner/old", "");
+        write_text(MP.mods / L"Old" / L"dlls" / L"old.dll", "old dll");
+        write_text(MP.core / L"installed" / L"Old.txt", "1.0.0\nMods/Old/dlls/old.dll\nMods/Ui/Scripts/main.lua\n");
+        write_text(MP.mods / L"Ui" / L"Scripts" / L"main.lua", "old ui");
+        write_text(MP.core / L"updates" / L"Ui" / L"1.0.0" / L"Mods" / L"Ui" / L"Scripts" / L"main.lua", "new ui");
+        write_text(MP.core / L"pending.txt", "Ui|1.0.0\n");
+        CHECK(apply_pending(MP, {}) == 1);
+        CHECK(read_text(MP.core / L"installed" / L"Ui.txt").find("Mods/Ui/Scripts/main.lua") != std::string::npos);
+        CHECK(read_text(MP.core / L"installed" / L"Old.txt").find("main.lua") == std::string::npos);
+        std::string me;
+        CHECK(remove_mod(MP, "Old", me));
+        CHECK(read_text(MP.mods / L"Ui" / L"Scripts" / L"main.lua") == "new ui");
+        fs::remove_all(lt, lec);
+    }
+
     // check_mod: installed mod whose dependency is missing -> needs:<repo>; without Paths the state is unchanged
     write_text(DP.mods / L"Y" / L"mscore.mod", "name=Y\nrepo=o/x\nversion=1.0.0\nrequires=owner/missing@1.0.0\n");
     fs::path dsrc = dt / L"src";
@@ -743,9 +795,10 @@ int main(int argc, char** argv) {
     CHECK(!fs::exists(EP.mods / L"Bad" / L"mscore.mod"));
     CHECK(run_mgr("--add owner/cyc_a") != 0);
     CHECK(!fs::exists(EP.mods / L"CycA" / L"mscore.mod"));
-    CHECK(run_mgr("--remove Dep") == 0);  // a required mod can still be removed (warn only)
-    CHECK(!fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
-    CHECK(fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
+    CHECK(run_mgr("--remove Dep") != 0);  // Parent requires it: blocked
+    CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod") && fs::exists(EP.mods / L"Parent" / L"mscore.mod"));
+    CHECK(run_mgr("--remove Parent") == 0);  // removes Parent and the Dep nothing else needs
+    CHECK(!fs::exists(EP.mods / L"Parent" / L"mscore.mod") && !fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
 
     // update: Upd installed without its dep; release 1.1.0 requires it -> --update installs the dep, then 1.1.0
     CHECK(run_mgr("--add owner/upd") == 0);
@@ -754,7 +807,11 @@ int main(int argc, char** argv) {
     CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);
     // needs: Upd is 1.1.0 (up to date) but its dep was removed -> --update reinstalls the dep only
-    CHECK(run_mgr("--remove Dep") == 0);
+    {   // Upd requires Dep, so Dep cannot be removed: simulate a missing dependency instead
+        std::error_code de;
+        fs::remove_all(EP.mods / L"Dep", de);
+        fs::remove(EP.core / L"installed" / L"Dep.txt", de);
+    }
     CHECK(run_mgr("--update Upd") == 0);
     CHECK(fs::exists(EP.mods / L"Dep" / L"mscore.mod"));
     CHECK(read_text(EP.mods / L"Upd" / L"mscore.mod").find("version=1.1.0") != std::string::npos);

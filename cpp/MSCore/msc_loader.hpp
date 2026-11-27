@@ -759,6 +759,46 @@ inline std::vector<std::string> dependents_of(const Paths& p, const std::string&
     return out;
 }
 
+// dependents_of minus MSCore (MSCore is never removed, so it never blocks).
+inline std::vector<std::string> blockers_of(const Paths& p, const std::string& mod) {
+    std::vector<std::string> out;
+    for (const auto& n : dependents_of(p, mod))
+        if (lower(n) != "mscore") out.push_back(n);
+    return out;
+}
+
+// mod plus every installed dependency that no mod left after the removal requires (repeat until no growth). Never MSCore.
+// Returns mod first, then the dependencies.
+inline std::vector<std::string> remove_cascade(const Paths& p, const std::string& mod) {
+    std::vector<Mod> mods = scan_mods(p);
+    std::vector<std::string> out{mod};
+    std::set<std::string> gone{lower(mod)};
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (size_t gi = 0; gi < out.size(); ++gi) {
+            const Mod* g = nullptr;
+            for (const auto& m : mods)
+                if (lower(m.name) == lower(out[gi])) g = &m;
+            if (!g) continue;
+            for (const auto& d : g->requires_)
+                for (const auto& c : mods) {
+                    if (lower(c.repo) != lower(d.repo) || lower(c.name) == "mscore" || gone.count(lower(c.name))) continue;
+                    bool needed = false;
+                    for (const auto& o : mods) {
+                        if (gone.count(lower(o.name))) continue;
+                        for (const auto& r : o.requires_)
+                            if (lower(r.repo) == lower(d.repo)) needed = true;
+                    }
+                    if (needed) continue;
+                    gone.insert(lower(c.name));
+                    out.push_back(c.name);
+                    grew = true;
+                }
+        }
+    }
+    return out;
+}
+
 // UE4SS version marker: the manager writes ue4ss\ue4ss_version.txt when it installs the ue4ss zip. No marker = a pre-v4 install (3.0.1).
 // WHY: UE4SS.dll has no readable file version, and a mod DLL built on UE4SS v4 cannot load on 3.x (C++ ABI).
 inline std::string installed_ue4ss(const Paths& p) {
@@ -887,6 +927,46 @@ inline bool stage_update(const Paths& p, const Mod& mod, const Manifest& m, std:
     }
 }
 
+// Drops lines pred() accepts; every other byte stays. Writes only when something was dropped.
+inline bool drop_lines(const fs::path& f, const std::function<bool(const std::string&)>& pred) {
+    std::string text = read_text(f), out;
+    bool any = false;
+    size_t pos = 0;
+    for (;;) {
+        size_t e = text.find('\n', pos);
+        bool last = e == std::string::npos;
+        std::string line = text.substr(pos, last ? std::string::npos : e - pos);
+        if (pred(line)) {
+            any = true;
+        } else {
+            out += line;
+            if (!last) out += '\n';
+        }
+        if (last) break;
+        pos = e + 1;
+    }
+    if (any) write_text(f, out);
+    return any;
+}
+
+// rels now belong to mod: drop them from every OTHER installed\<name>.txt list (line 1 = version, kept), so removing the old
+// owner never deletes a file the new owner holds. Rewrites only lists that change. Deletes nothing.
+inline void claim_files(const Paths& p, const std::string& mod, const std::set<std::string>& rels) {
+    if (rels.empty()) return;
+    std::error_code ec;
+    const fs::path own = to_wide(mod + ".txt");
+    for (fs::directory_iterator it(p.core / L"installed", ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        const fs::path f = it->path();
+        if (f.extension() != L".txt" || f.filename() == own || !it->is_regular_file(e2)) continue;
+        int line = 0;
+        drop_lines(f, [&](const std::string& l) {
+            bool first = line++ == 0;
+            return !first && rels.count(trim(l)) > 0;
+        });
+    }
+}
+
 // Applies pending.txt: old file -> backup\<mod>\<rel>, new file moved in. Returns mods applied.
 inline int apply_pending(const Paths& p, const std::function<void(const std::string&)>& log) {
     auto say = [&](const std::string& s) {
@@ -925,6 +1005,7 @@ inline int apply_pending(const Paths& p, const std::function<void(const std::str
             std::string out = ver + "\n";
             for (const auto& r : all) out += r + "\n";
             write_text(p.core / L"installed" / to_wide(mod + ".txt"), out);
+            claim_files(p, mod, std::set<std::string>(done.begin(), done.end()));
         };
         try {
             std::vector<fs::path> files;
@@ -1113,28 +1194,6 @@ inline bool remove_plan(const Paths& p, const std::string& mod, std::vector<Remo
         return false;
     }
     return true;
-}
-
-// Drops lines pred() accepts; every other byte stays. Writes only when something was dropped.
-inline bool drop_lines(const fs::path& f, const std::function<bool(const std::string&)>& pred) {
-    std::string text = read_text(f), out;
-    bool any = false;
-    size_t pos = 0;
-    for (;;) {
-        size_t e = text.find('\n', pos);
-        bool last = e == std::string::npos;
-        std::string line = text.substr(pos, last ? std::string::npos : e - pos);
-        if (pred(line)) {
-            any = true;
-        } else {
-            out += line;
-            if (!last) out += '\n';
-        }
-        if (last) break;
-        pos = e + 1;
-    }
-    if (any) write_text(f, out);
-    return any;
 }
 
 // mods.txt "mod : v" line (comments and blanks never match). val = trimmed value.
